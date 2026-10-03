@@ -31,7 +31,8 @@ container-crate companion — what each file does and *why*.
 | File | Purpose |
 |------|---------|
 | [`lib.rs`](../crates/container/src/lib.rs) | Crate root + the shared `AudioInfo` mux-input type and `MkvColorInfo` / `MkvMasteringMetadata` extended-metadata carriers. |
-| [`sniff.rs`](../crates/container/src/sniff.rs) | `sniff_container` → `ContainerKind` (ISOBMFF, Matroska, AVI, MPEG-TS, MPEG-PS, native FLAC, bare MP3): the one magic-byte detector every dispatch reads. |
+| [`sniff.rs`](../crates/container/src/sniff.rs) | `sniff_container` → `ContainerKind` (ISOBMFF, Matroska, AVI, MPEG-TS, MPEG-PS, native FLAC, bare MP3, Ogg, and the raw video elementary streams: Annex-B H.264 / HEVC, IVF, AV1 OBU, MPEG-1/2 video): the one magic-byte detector every dispatch reads. |
+| [`es/`](../crates/container/src/es/mod.rs) | Raw video elementary streams as inputs: Annex-B H.264 / HEVC (`annexb.rs`), IVF with VP8 / VP9 / AV1 (`ivf.rs`), AV1 OBU streams in the §5 and Annex B formats (`obu.rs`), MPEG-1/2 video (`mpegv.rs`) — indexed whole, one sample per picture, the frame rate the stream states or 25 fps. See [Raw elementary streams](#raw-elementary-streams). |
 | [`ps.rs`](../crates/container/src/ps.rs) | MPEG program stream demux (`.mpg` / `.vob`): MPEG-1 system and MPEG-2 program streams, the first video (MPEG-1 / MPEG-2) and the first MPEG audio or DVD AC-3 sub-stream. |
 | [`webm.rs`](../crates/container/src/webm.rs) | The WebM muxer: VP8 / VP9 with Opus or Vorbis audio, one Matroska file built in memory (SeekHead, Info, Tracks, a Cluster per key frame, Cues). |
 | [`ogg.rs`](../crates/container/src/ogg.rs) | Ogg Opus (RFC 7845) and Ogg Vorbis files, read and written for audio-only output and input: the codec mappings over rivet-vorbis's RFC 3533 page reader and writer, granule positions as the presentation edit. |
@@ -293,11 +294,52 @@ its decoder what it configures from:
 | MP4 / MOV | `vp08` → `vp8`; `vp09` → `vp9` | the `mp4` crate reads `vp09` only; `vp08` is found by the sample-entry walk |
 | MP4 / MOV | `mp4v` → `mpeg4` (esds object type 0x20), `mpeg2` (0x60-0x65), `mpeg1` (0x6A) | the `esds` DecoderSpecificInfo (MPEG-4's VOL, MPEG-2's sequence header) goes ahead of the first sample when that has none of its own (`demux::mp4::prepend_config`) |
 | MP4 / MOV | `apco` … `ap4x` → `prores` | as before |
+| MP4 / 3GP | `s263` (3GPP TS 26.244, with `d263`), `h263` → `h263` | H.263 baseline pictures, one a sample; the MPEG-4 Part 2 software decoder reads them as short-header VOPs (ISO/IEC 14496-2 §6.2.5.2) — and only it: no hardware tier is handed `h263` |
 | Matroska | `V_MPEG1` / `V_MPEG2` → `mpeg1` / `mpeg2`; `V_MPEG4/ISO/SP`, `/ASP`, `/AP` → `mpeg4` | `CodecPrivate` ahead of the first frame likewise |
 | Matroska | `V_PRORES` → `prores` | Matroska stores a ProRes frame without its first eight bytes (size and `icpf`); they are restored |
 | Matroska | `V_MS/VFW/FOURCC` → by the `BITMAPINFOHEADER`'s FourCC (`XVID`, `DIVX`, … → `mpeg4`) | the bytes after the 40-byte header are the configuration |
 | MPEG-TS | stream type 0x01 → `mpeg1` | sized from its sequence header; the MPEG-2 decoder takes it |
 | MPEG-PS | video `0xE0`-`0xEF` → `mpeg1` / `mpeg2` | see [MPEG-PS](#mpeg-ps-mpg--vob) |
+| AVI | `VP80` → `vp8` | each video chunk one VP8 frame (RFC 6386 §9.1), as a WebM block or an IVF frame holds it |
+
+## Raw elementary streams
+
+**What.** [`es/`](../crates/container/src/es/mod.rs) reads a video bitstream
+with no container around it — `sniff_container` labels them `h264`, `hevc`,
+`ivf`, `obu` and `m2v` — as a `StreamingDemuxer` with no audio:
+
+| Input | Sniffed by | One sample is |
+|---|---|---|
+| Annex-B H.264 (`.h264`, `.264`) | a start code first, then NAL units that are all legal H.264 headers (no type 0 or ≥ 24, `nal_ref_idc` 0 on SEI / delimiters, nonzero on IDR slices), an SPS among them that h26x's parser takes, and a slice after it | an access unit (H.264 §7.4.1.2.3): the parameter sets, SEI and delimiter ahead of a slice with `first_mb_in_slice` 0, through that picture's slices; the second field of a field pair joins its first (same `frame_num`, other parity) |
+| Annex-B HEVC (`.hevc`, `.h265`) | the same, against the two-byte HEVC header (`nuh_temporal_id_plus1` never 0, no reserved types), a VPS (its `0xffff` reserved bits), an SPS h26x parses, a slice | an access unit (H.265 §7.4.2.4.4): from the VPS / SPS / PPS / delimiter / prefix SEI ahead of a slice with `first_slice_segment_in_pic_flag` |
+| IVF (`.ivf`) | `DKIF`, version 0 | an IVF frame; for AV1 its temporal delimiter is dropped, as MP4 and Matroska samples hold none |
+| AV1 OBU (`.obu`) | §5.2 low-overhead: a payload-less temporal delimiter, then sized OBUs up to a sequence header that parses. Annex B: one `temporal_unit()` whose frame-unit and OBU lengths nest exactly and hold a sequence header | a temporal unit (exactly one shown frame, AV1 §7.5) in the low-overhead form, without its delimiter; an Annex-B OBU gets the size field it lacks |
+| MPEG-1/2 video (`.m2v`, `.mpv`, `.m1v`) | a sequence header first with a legal size, aspect and frame-rate code and its marker bit, then a start code that may follow one | a coded frame, as the program-stream reader cuts it (a field pair joined) |
+
+H.264 and HEVC cannot read as each other: HEVC's VPS (`40 01`) is H.264 type 0,
+which is unspecified, and its delimiter (`46 01`) an SEI with a nonzero
+`nal_ref_idc`, which H.264 forbids. A stream that opens before its first SPS
+(H.264 / HEVC) or sequence header (AV1) has those leading units dropped, with a
+warning: they cannot be decoded.
+
+**Frame rate.** The stream's own where it states one: H.264 VUI timing
+(`time_scale / (2 × num_units_in_tick)`), HEVC VUI timing
+(`time_scale / num_units_in_tick`), the AV1 sequence header's `timing_info()`,
+the MPEG-2 `frame_rate_code` (always present), and for IVF the time base over
+the median step between frame timestamps. Otherwise **25 fps**, with a
+warning — the PAL rate, a rate every encoder and player accepts, and the
+first whole-number `frame_rate_code` MPEG-2 has. The `input-fps` setting
+(`--input-fps`) replaces the stream's rate (stated or assumed) for the four
+raw formats, and is refused for any other input, IVF included: a container
+times its own frames ([`ContainerKind::is_video_elementary_stream`](../crates/container/src/sniff.rs)).
+
+**Why index at open.** The pipeline reads `header()` — frame count, size,
+pixel format, colour, sample aspect — before it pulls a sample, and an
+elementary stream states none of them outside its bitstream. The input is in
+memory already, so one pass over the start codes / OBU sizes gives every
+sample's span (zero-copy; only Annex-B AV1 and MPEG-2 field pairs are
+rewritten), and the colour and sample aspect come from the bitstream exactly
+as for a transport stream (`demux::hdr::resolve_source_colour`).
 
 ## MPEG-PS (`.mpg` / `.vob`)
 

@@ -6,6 +6,7 @@ pub mod avi;
 pub mod cmaf;
 pub mod demux;
 pub mod edit;
+pub mod es;
 pub mod hls;
 pub mod language;
 pub mod metadata;

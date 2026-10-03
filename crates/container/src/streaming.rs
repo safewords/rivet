@@ -224,6 +224,7 @@ pub fn demux_streaming_shared(data: bytes::Bytes) -> Result<Box<dyn StreamingDem
         "avi" => Ok(Box::new(demux_avi_streaming_init(data)?)),
         "ts" => Ok(Box::new(demux_ts_streaming_init(data)?)),
         "ps" => Ok(Box::new(crate::ps::demux_ps_streaming_init(data)?)),
+        "h264" | "hevc" | "ivf" | "obu" | "m2v" => Ok(Box::new(crate::es::demux_es_streaming_init(data)?)),
         // Audio-only inputs: `demux_audio` reads them, and a job or a probe
         // that finds no video turns to it.
         "mp3" => bail!("an MP3 file has no video track"),
