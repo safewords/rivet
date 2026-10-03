@@ -2,6 +2,7 @@ use container::AudioInfo;
 
 use super::audio::PreparedAudio;
 use super::splice::{trim_audio, trim_frame};
+use crate::spec::{OutputSpec, Rung};
 
 #[test]
 fn trim_frame_is_half_open_exact() {
@@ -617,4 +618,56 @@ fn opus_asked_of_an_aac_source_transcodes_it() {
     let source_seconds = track.samples.len() as f64 * 1024.0 / f64::from(track.sample_rate);
     let out_seconds = prepared.samples.iter().map(|(_, d)| f64::from(*d)).sum::<f64>() / 48_000.0;
     assert!((out_seconds - source_seconds).abs() < 0.05, "{out_seconds} s from {source_seconds} s");
+}
+
+/// `input-fps` retimes a raw elementary stream's header (the duration with
+/// it) and is refused for an input whose container times its frames.
+#[test]
+fn input_fps_sets_an_elementary_streams_rate_and_only_its() {
+    use container::streaming::demux_streaming;
+    // An MPEG-2 video elementary stream from rivet's own encoder: its
+    // sequence header states 30 fps.
+    let cfg = codec::encode::EncoderConfig {
+        width: 64,
+        height: 48,
+        frame_rate: 30.0,
+        codec: codec::frame::VideoCodec::Mpeg2,
+        threads: 1,
+        ..Default::default()
+    };
+    let mut enc = codec::encode::mpeg2_sw::Mpeg2Encoder::new(cfg).unwrap();
+    use codec::encode::Encoder;
+    for n in 0..4u64 {
+        let data = vec![(n * 40) as u8 + 16; 64 * 48 * 3 / 2];
+        enc.send_frame(&codec::frame::VideoFrame::new(
+            data.into(),
+            64,
+            48,
+            codec::frame::PixelFormat::Yuv420p,
+            codec::frame::ColorSpace::Bt709,
+            n,
+        ))
+        .unwrap();
+    }
+    enc.flush().unwrap();
+    let mut es = Vec::new();
+    while let Some(p) = enc.receive_packet().unwrap() {
+        es.extend_from_slice(&p.data);
+    }
+    let header = demux_streaming(&es).unwrap().header().clone();
+    assert_eq!(header.info.frame_rate, 30.0);
+    let spec = OutputSpec { input_frame_rate: Some(24.0), ..OutputSpec::single_file(vec![Rung::new(64, 48)]) };
+    let set = super::with_input_frame_rate(header.clone(), &es, &spec).unwrap();
+    assert_eq!(set.info.frame_rate, 24.0);
+    assert!((set.info.duration - 4.0 / 24.0).abs() < 1e-9);
+    // Without the setting the stream's own rate stands.
+    let plain = OutputSpec::single_file(vec![Rung::new(64, 48)]);
+    assert_eq!(super::with_input_frame_rate(header.clone(), &es, &plain).unwrap().info.frame_rate, 30.0);
+    // A container is refused, by name: an ISO BMFF `ftyp` first.
+    let mut mp4_head = 24u32.to_be_bytes().to_vec();
+    mp4_head.extend_from_slice(b"ftypisom");
+    mp4_head.extend_from_slice(&[0; 4]);
+    mp4_head.extend_from_slice(b"isomiso2");
+    let err = super::with_input_frame_rate(header, &mp4_head, &spec).unwrap_err();
+    assert!(err.to_string().contains("this mp4 input"), "{err}");
 }

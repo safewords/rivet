@@ -89,6 +89,7 @@ H.265 — pick with `--codec`.
 | `--audio-filter <CHAIN>` | e.g. `channelmap=FL-FL\|FR-FR:stereo` | Audio filter chain applied to decoded PCM before the encoder — see [audio filters](audio-filters.md). Forces a decode/re-encode, so it can't be combined with a passthrough-only source codec. |
 | `--subtitles <SELECTION>` | `all` *(default)*, `none`, `eng,deu` | Which of the source's **text** subtitle tracks to carry: every one, none, or a language list. Single file: a `tx3g` track per language. HLS: a WebVTT rendition per language. Bitmap subtitles (PGS / VobSub / DVB) are always dropped. See [Subtitles](#subtitles). |
 | `--max-fps <FPS\|source>` | default `source` | Cap the output frame rate (source cadence otherwise preserved; frames over the cap are dropped, not retimed). `source` states the default: no cap. |
+| `--input-fps <FPS>` | default: the stream's | The frame rate of a raw video elementary stream input — Annex-B `.h264` / `.hevc`, an AV1 `.obu`, an MPEG-1/2 `.m2v` — which no container times. Without it the rate is the one the bitstream states (H.264 / HEVC VUI timing, the AV1 sequence header's timing info, the MPEG-2 `frame_rate_code`), or 25 fps when it states none; with it, this rate (and the duration it gives). Refused for any other input, a container (IVF included) timing its own frames. See [Elementary streams](container.md#raw-elementary-streams). |
 | `--color <POLICY>` | `sdr` *(default)*, `hdr10`, `hlg`, `passthrough` | Output color / tonemap policy — see [Color & bit depth](#color--bit-depth). |
 | `--pixel-format <FMT>` | `auto` *(default)*, `8bit`, `10bit` | Output luma bit depth. |
 | `--chroma-downsample <FILTER>` | `box` *(default)*, `lanczos` | 4:4:4 → 4:2:0 chroma filter for 4:4:4 sources — see [Color & bit depth](#color--bit-depth). |
@@ -668,7 +669,7 @@ rivet pipe [--crf N] [--target T] [--gop FRAMES|SECONDSs]
            [--audio auto|opus|mp3|aac|he-aac|he-aacv2|vorbis|ac3|eac3|dts|flac|alac|drop] [--audio-bitrate BPS]
            [--audio-channels source|mono|stereo|5.1|7.1] [--audio-filter CHAIN]
            [--color sdr|hdr10|hlg|passthrough] [--bit-depth auto|8bit|10bit]
-           [--chroma-downsample box|lanczos] [--max-fps FPS|source]
+           [--chroma-downsample box|lanczos] [--max-fps FPS|source] [--input-fps FPS]
            [--width W] [--height H] [--fit FIT] [--orientation auto|fixed] [--upscale]
            [--gpu I] [--decode PLAN] [--encode PLAN] [--filter CHAIN]
 ```
@@ -757,7 +758,7 @@ as the CLI flags (`mode` `rung` `fit` `orientation` `upscale` `ladder`
 `video-buffer` `rate-mode` `video-speed` `audio` `audio-bitrate` `audio-channels`
 `audio-stereo-fallback` `audio-bit-depth` `he-aac` `audio-decode-deny`
 `metadata-keep` `flac-compression` `audio-container` `audio-filter`
-`subtitles` `color` `chroma-downsample` `bit-depth` `seam` `max-fps` `encode`
+`subtitles` `color` `chroma-downsample` `bit-depth` `seam` `max-fps` `input-fps` `encode`
 `decode` `gpu` `gpu-family` `single-gpu` `decode-gpu` `encode-policy` `width`
 `height` `filter` `codec`; `rung` takes a comma list), with the same values and
 the same meaning — a `#rivet encode=per-rung decode=whole` header is exactly

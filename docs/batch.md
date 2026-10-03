@@ -121,6 +121,7 @@ like `crff: 24` fails loudly instead of being silently ignored.
 | `encode` | `all` \| `per-rung` \| `single` \| `gpu:N` \| `family:nvidia\|amd\|intel` | The encode plan: which cards, and how the work is laid across them. Wins over `gpu` / `gpu_family` / `single_gpu`. Same words and meaning as the CLI's `--encode` — every surface interprets through [`rivet::settings`](../crates/rivet/src/settings.rs). |
 | `decode` | `auto` \| `whole` \| `fastest` \| `gpu:N` \| `ranges:N` | The decode plan: which card(s), and whether the decode is one pump or split into ranges. Wins over `decode_gpu`. |
 | `max_fps` | number or string | Cap the output frame rate; `source` states the default, no cap. |
+| `input_fps` | number | The frame rate of a raw video elementary stream input (`.h264`, `.hevc`, `.obu`, `.m2v`), replacing the rate it states or the 25 fps assumed; refused for any other input. |
 | `gpu` | int | Pin encode to a GPU index. |
 | `gpu_family` | `nvidia` \| `amd` \| `intel` | Restrict encode to a vendor. |
 | `single_gpu` | bool | Use one GPU (serial). |

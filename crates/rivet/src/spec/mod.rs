@@ -133,6 +133,12 @@ pub struct OutputSpec {
     /// [`crate::decode_pump::decimation`]). A source at or below the cap is
     /// untouched. `None` = source fps.
     pub max_frame_rate: Option<f64>,
+    /// The frame rate of a raw video elementary stream input (`input-fps`):
+    /// an H.264 / HEVC Annex-B, AV1 OBU or MPEG-1/2 video stream has no
+    /// container to time it, so the rate it states (or the 25 fps assumed
+    /// when it states none) is replaced by this one. Refused for any other
+    /// input, whose container times its frames. `None` = the stream's.
+    pub input_frame_rate: Option<f64>,
     /// Pin hardware encode/decode to this GPU index on multi-GPU hosts.
     /// Kept in sync with `encode_policy` (`SingleGpu(idx)` ⇒ `gpu_index = idx`).
     pub gpu_index: Option<u32>,
@@ -225,6 +231,7 @@ impl Default for OutputSpec {
             orientation: Orientation::default(),
             upscale: false,
             max_frame_rate: None,
+            input_frame_rate: None,
             gpu_index: None,
             encode_policy: EncodePolicy::default(),
             decode_policy: DecodePolicy::Auto,

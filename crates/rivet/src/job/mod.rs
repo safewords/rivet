@@ -238,6 +238,29 @@ pub fn single_file_extension(data: &[u8]) -> &'static str {
     }
 }
 
+/// `header` with the spec's `input-fps` in place of its frame rate, for a raw
+/// video elementary stream: no container times one, so the rate its
+/// bitstream states, or the default assumed when it states none, gives way
+/// to the one asked for — the duration with it. Any other input is timed by
+/// its container, and the setting is refused rather than ignored.
+pub(crate) fn with_input_frame_rate(mut header: DemuxHeader, input: &[u8], spec: &OutputSpec) -> Result<DemuxHeader> {
+    let Some(fps) = spec.input_frame_rate else { return Ok(header) };
+    let kind = container::sniff_container(input);
+    if !kind.is_video_elementary_stream() {
+        bail!(
+            "input-fps sets the frame rate of a raw video elementary stream (.h264, .hevc, .obu, .m2v); \
+             this {} input times its own frames",
+            kind.label()
+        );
+    }
+    tracing::info!(stream_fps = header.info.frame_rate, fps, "input-fps: the elementary stream's frame rate set");
+    header.info.frame_rate = fps;
+    if header.info.total_frames > 0 {
+        header.info.duration = header.info.total_frames as f64 / fps;
+    }
+    Ok(header)
+}
+
 async fn run_job_inner(
     input: Bytes,
     spec: &OutputSpec,
@@ -268,7 +291,7 @@ async fn run_job_inner(
             },
         };
         (
-            demuxer.header().clone(),
+            with_input_frame_rate(demuxer.header().clone(), &input, spec)?,
             demuxer.audio().cloned(),
             demuxer.audio_edit(),
             demuxer.audio_gaps().to_vec(),
@@ -679,7 +702,8 @@ async fn run_splice_job_inner(
     for (i, clip) in clips.iter().enumerate() {
         let demuxer = streaming::demux_streaming_shared(clip.input.clone())
             .with_context(|| format!("demuxing splice clip {i}"))?;
-        let header = demuxer.header().clone();
+        let header = with_input_frame_rate(demuxer.header().clone(), &clip.input, spec)
+            .with_context(|| format!("splice clip {i}"))?;
         spec.hooks.emit_probe(
             i,
             crate::hooks::MediaSummary::of_header(

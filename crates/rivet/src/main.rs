@@ -325,6 +325,11 @@ enum Command {
         /// Cap the output frame rate, or `source` (the default: no cap).
         #[arg(long, value_name = "FPS|source")]
         max_fps: Option<String>,
+        /// The frame rate of a raw video elementary stream input (`.h264`,
+        /// `.hevc`, `.obu`, `.m2v`), which no container times: replaces the
+        /// rate the stream states, or the 25 fps assumed when it states none.
+        #[arg(long = "input-fps", value_name = "FPS")]
+        input_fps: Option<String>,
         /// Pin hardware encode/decode to this GPU index (implies single-GPU).
         #[arg(long)]
         gpu: Option<u32>,
@@ -502,6 +507,11 @@ enum Command {
         /// Cap the output frame rate, or `source` (the default: no cap).
         #[arg(long = "max-fps", value_name = "FPS|source")]
         max_fps: Option<String>,
+        /// The frame rate of a raw video elementary stream input (`.h264`,
+        /// `.hevc`, `.obu`, `.m2v`), which no container times: replaces the
+        /// rate the stream states, or the 25 fps assumed when it states none.
+        #[arg(long = "input-fps", value_name = "FPS")]
+        input_fps: Option<String>,
         /// Output width (a box the source is fitted into — see `--fit`;
         /// defaults to source).
         #[arg(long)]
@@ -629,6 +639,7 @@ fn run() -> Result<()> {
             audio_filter,
             subtitles,
             max_fps,
+            input_fps,
             gpu,
             single_gpu,
             gpu_family,
@@ -674,6 +685,7 @@ fn run() -> Result<()> {
             audio_filter,
             subtitles,
             max_fps,
+            input_fps,
             gpu,
             single_gpu,
             gpu_family,
@@ -719,6 +731,7 @@ fn run() -> Result<()> {
             chroma_downsample,
             bit_depth,
             max_fps,
+            input_fps,
             width,
             height,
             gpu,
@@ -742,6 +755,7 @@ fn run() -> Result<()> {
             chroma_downsample,
             bit_depth,
             max_fps,
+            input_fps,
             width,
             height,
             gpu,

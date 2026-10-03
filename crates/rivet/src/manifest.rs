@@ -148,6 +148,9 @@ pub struct JobSpec {
     pub seam: Option<String>,
     /// Cap the output frame rate: a rate, or `source` (default: no cap).
     pub max_fps: Option<SettingValue>,
+    /// The frame rate of a raw video elementary stream input (`.h264`,
+    /// `.hevc`, `.obu`, `.m2v`).
+    pub input_fps: Option<SettingValue>,
     /// The encode plan as one value: `all` (default), `per-rung`, `single`,
     /// `gpu:N`, `family:nvidia|amd|intel`. Wins over `gpu` / `gpu_family` /
     /// `single_gpu`, which are the older per-field spellings and still work.
@@ -215,6 +218,7 @@ impl JobSpec {
             bit_depth: pick!(bit_depth),
             seam: pick!(seam),
             max_fps: pick!(max_fps),
+            input_fps: pick!(input_fps),
             encode: pick!(encode),
             gpu: pick!(gpu),
             gpu_family: pick!(gpu_family),
@@ -320,6 +324,9 @@ impl JobSpec {
         }
         if let Some(v) = &self.max_fps {
             s.apply_kv("max-fps", v.as_str())?;
+        }
+        if let Some(v) = &self.input_fps {
+            s.apply_kv("input-fps", v.as_str())?;
         }
         s.gpu = self.gpu;
         if let Some(f) = &self.gpu_family {

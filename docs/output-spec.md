@@ -679,6 +679,14 @@ output frames. Under a cap the decode is not split into ranges
 before it. A cap at or above the source's rate changes nothing. Settings key
 `max-fps` (`source` states the default).
 
+`OutputSpec::input_frame_rate` (settings key `input-fps`) is the other end:
+the frame rate of a raw video elementary stream input (`.h264`, `.hevc`,
+`.obu`, `.m2v`), which has no container to time it. The reader takes the
+rate the bitstream states, or 25 fps when it states none
+([Elementary streams](container.md#raw-elementary-streams)); `input-fps`
+replaces either, and the duration with it. Any other input — IVF included,
+whose frames carry timestamps — is refused with it rather than retimed.
+
 ---
 
 ## 6. Video filters — `with_filters(...)`

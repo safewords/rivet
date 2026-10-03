@@ -22,6 +22,7 @@ pub(crate) struct PipeArgs {
     pub chroma_downsample: Option<crate::ChromaArg>,
     pub bit_depth: Option<PixelArg>,
     pub max_fps: Option<String>,
+    pub input_fps: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub gpu: Option<u32>,
@@ -53,7 +54,7 @@ pub(crate) fn run(args: PipeArgs) -> Result<()> {
         ..Default::default()
     };
     // Worded values go through the settings vocabulary, like every surface.
-    for (key, value) in [("gop", &args.gop), ("audio-bitrate", &args.audio_bitrate), ("max-fps", &args.max_fps)] {
+    for (key, value) in [("gop", &args.gop), ("audio-bitrate", &args.audio_bitrate), ("max-fps", &args.max_fps), ("input-fps", &args.input_fps)] {
         if let Some(v) = value {
             settings.apply_kv(key, v).with_context(|| format!("parsing --{key}"))?;
         }

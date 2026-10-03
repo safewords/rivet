@@ -168,6 +168,9 @@ pub struct TranscodeSettings {
     pub bit_depth: Option<BitDepth>,
     pub seam: Option<ChunkSeamMode>,
     pub max_fps: Option<f64>,
+    /// `input-fps`: the frame rate of a raw video elementary stream input,
+    /// which no container times (see [`crate::spec::OutputSpec::input_frame_rate`]).
+    pub input_fps: Option<f64>,
     /// Pin encode to one GPU index.
     pub gpu: Option<u32>,
     /// Restrict encode to one vendor family.
@@ -335,6 +338,7 @@ impl TranscodeSettings {
             bail!("audio-container names the file of an audio-only output (mode=audio)");
         }
         spec.max_frame_rate = self.max_fps;
+        spec.input_frame_rate = self.input_fps;
         if let Some(c) = self.color {
             spec = spec.with_color(c);
         }
@@ -625,6 +629,7 @@ impl TranscodeSettings {
             "bit-depth" | "pixel-format" => self.bit_depth = Some(parse_bit_depth(val)?),
             "seam" | "seam-mode" => self.apply_seam(val)?,
             "max-fps" => self.max_fps = parse_max_fps(val)?,
+            "input-fps" => self.input_fps = Some(parse_input_fps(val)?),
             "gpu" => self.gpu = Some(val.parse().context("gpu")?),
             "gpu-family" => self.gpu_family = Some(parse_gpu_family(val)?),
             "single-gpu" => self.single_gpu = parse_bool(val),
@@ -695,7 +700,7 @@ impl TranscodeSettings {
                  target/gop/video-bitrate/video-buffer/rate-mode/video-speed/audio/audio-bitrate/audio-quality/audio-filter/\
                  audio-channels/audio-stereo-fallback/audio-bit-depth/he-aac/audio-decode-deny/flac-compression/audio-container/\
                  subtitles/color/bit-depth/seam/\
-                 max-fps/encode/decode/gpu/gpu-family/single-gpu/decode-gpu/encode-policy/\
+                 max-fps/input-fps/encode/decode/gpu/gpu-family/single-gpu/decode-gpu/encode-policy/\
                  width/height/filter/codec/prores-profile/container; with the image feature: image-format/image-quality/\
                  image-lossless/image-keep-icc/image-speed/frames/frames-at/frames-count/image-decode-deny)"
             ),
@@ -785,6 +790,7 @@ impl TranscodeSettings {
             && self.bit_depth.is_none()
             && self.seam.is_none()
             && self.max_fps.is_none()
+            && self.input_fps.is_none()
             && self.gpu.is_none()
             && self.gpu_family.is_none()
             && !self.single_gpu
@@ -1059,6 +1065,15 @@ pub fn parse_max_fps(s: &str) -> Result<Option<f64>> {
         return Ok(None);
     }
     Ok(Some(s.trim().parse().with_context(|| format!("max-fps must be a frame rate or source, got '{s}'"))?))
+}
+
+/// Parse `input-fps`: a frame rate, positive and at most 1000.
+pub fn parse_input_fps(s: &str) -> Result<f64> {
+    let fps: f64 = s.trim().parse().with_context(|| format!("input-fps must be a frame rate, got '{s}'"))?;
+    if !fps.is_finite() || fps <= 0.0 || fps > 1000.0 {
+        bail!("input-fps must be a frame rate above 0 and at most 1000, got '{s}'");
+    }
+    Ok(fps)
 }
 
 /// Parse `max-short-side`: a cap on the ladder's largest short side, or
@@ -1997,6 +2012,19 @@ mod tests {
         // A library caller's bad value is refused by the spec.
         let spec = OutputSpec::single_file(vec![Rung::new(1280, 720)]).with_gop_seconds(Some(0.0));
         assert!(spec.validate().is_err());
+    }
+
+    #[test]
+    fn input_fps_is_a_positive_rate_that_reaches_the_spec() {
+        let s = TranscodeSettings::parse_kv_line("input-fps=29.97").unwrap();
+        assert_eq!(s.input_fps, Some(29.97));
+        assert!(!s.is_empty(), "a stated input rate is a setting");
+        let spec = s.into_spec(1280, 720).unwrap();
+        assert_eq!(spec.input_frame_rate, Some(29.97));
+        for bad in ["0", "-5", "fast", "1001", "NaN"] {
+            assert!(TranscodeSettings::parse_kv_line(&format!("input-fps={bad}")).is_err(), "{bad}");
+        }
+        assert_eq!(TranscodeSettings::parse_kv_line("").unwrap().into_spec(1280, 720).unwrap().input_frame_rate, None);
     }
 
     #[test]
