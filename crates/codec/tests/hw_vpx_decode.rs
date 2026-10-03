@@ -383,7 +383,13 @@ fn check_tier(tier: &'static str, codec_label: &str, streams: &[Stream], make: M
         // RIVET_VPX_RAW_FEATURES=1 asks for the evidence a policy is relaxed
         // on: feeding a decoder streams outside what it was set up for is
         // how this test once hung an AMD iGPU's video engine (TDR).
-        let passes = codec_label != "vp9" || guard_passes(stream, policy);
+        // What dispatch hands the bare decoder: VP9 what the guard passes;
+        // VP8 an even-sized stream (`decode::nvdec_takes_vp8`).
+        let passes = match codec_label {
+            "vp9" => guard_passes(stream, policy),
+            "vp8" => stream.info.width % 2 == 0 && stream.info.height % 2 == 0,
+            _ => true,
+        };
         if !passes && !required("RIVET_VPX_RAW_FEATURES") {
             eprintln!("  {tier} {}: raw: not run (the guard keeps it from the hardware: {features:?})", stream.name);
         } else {

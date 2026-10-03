@@ -259,6 +259,16 @@ fn nvdec_disabled_for(codec_lower: &str) -> bool {
     env_flag_truthy(&format!("DISABLE_NVDEC_{codec_canonical}"))
 }
 
+/// Whether NVDEC is handed this stream as far as VP8 goes: not when the
+/// picture has an odd side. On an RTX 3090 the 16 even-sized RFC 6386
+/// comprehensive vectors decode bit-exact and the two odd-sized ones
+/// (175x143) come back 174x142; an odd-sized VP8 stream goes to rivet's own
+/// decoder. Other codecs pass (VP9's odd sizes are the VP9 guard's).
+#[cfg(feature = "nvidia")]
+fn nvdec_takes_vp8(codec_lower: &str, info: &StreamInfo) -> bool {
+    codec_lower != "vp8" || (info.width % 2 == 0 && info.height % 2 == 0)
+}
+
 /// Codecs the NVDEC streaming dispatch supports.
 #[cfg(feature = "nvidia")]
 fn nvdec_supports(codec_lower: &str) -> bool {
@@ -436,6 +446,7 @@ pub fn create_decoder_on(
     if let Some(dev) = nvidia
         && nvdec_supports(&codec_lower)
         && !nvdec_disabled_for(&codec_lower)
+        && nvdec_takes_vp8(&codec_lower, &info)
     {
         tracing::info!(
             backend = "nvdec",
@@ -900,6 +911,29 @@ fn intel_can_decode(_c: &str) -> bool {
 mod rotating_decoder_tests {
     use super::*;
     use crate::frame::{ColorSpace, PixelFormat};
+
+    /// NVDEC takes an even-sized VP8 stream only; everything else passes.
+    #[cfg(feature = "nvidia")]
+    #[test]
+    fn nvdec_takes_even_sized_vp8_only() {
+        let mut info = StreamInfo {
+            codec: "vp8".into(),
+            width: 176,
+            height: 144,
+            frame_rate: 30.0,
+            duration: 0.0,
+            pixel_format: PixelFormat::Yuv420p,
+            color_space: ColorSpace::Bt709,
+            total_frames: 0,
+            bitrate: 0,
+            color_metadata: Default::default(),
+        };
+        assert!(nvdec_takes_vp8("vp8", &info));
+        (info.width, info.height) = (175, 143);
+        assert!(!nvdec_takes_vp8("vp8", &info));
+        assert!(nvdec_takes_vp8("vp9", &info));
+        assert!(nvdec_takes_vp8("h264", &info));
+    }
 
     /// An odd-sized NV12 picture: chroma ceil(w / 2) x ceil(h / 2).
     #[cfg(any(feature = "nvidia", feature = "amd", feature = "qsv"))]
