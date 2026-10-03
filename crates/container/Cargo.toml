@@ -33,6 +33,9 @@ vorbis.workspace = true
 # Only the tests reach for a decoder; the library itself needs nothing from
 # rivet-codec any more, which is what lets it build for wasm32.
 codec.workspace = true
+# H.263 baseline pictures (the MPEG-4 encoder's short video header) for the
+# 3GP `s263` fixture, written in the test.
+mpeg4.workspace = true
 
 [lints.rust]
 # `streaming_api_landed` is the post-merge gate flag for the

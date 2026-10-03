@@ -17,9 +17,12 @@ use bytes::Bytes;
 use super::Decoder;
 use crate::frame::{PixelFormat, StreamInfo, VideoFrame};
 
-/// The codec labels the MPEG-4 Part 2 tier serves.
+/// The codec labels the MPEG-4 Part 2 tier serves. `h263` is H.263 baseline
+/// as 3GPP files carry it (`s263`): the short video header of ISO/IEC
+/// 14496-2 §6.2.5.2 is that syntax, so this decoder reads it — and only this
+/// one, since no hardware tier is handed `h263`.
 pub fn supports(codec_lower: &str) -> bool {
-    matches!(codec_lower, "mpeg4" | "mp4v" | "mpeg4part2" | "xvid" | "divx")
+    matches!(codec_lower, "mpeg4" | "mp4v" | "mpeg4part2" | "xvid" | "divx" | "h263")
 }
 
 /// An MPEG-4 Part 2 decoder behind rivet's [`Decoder`] trait.
@@ -105,6 +108,32 @@ mod tests {
     fn only_mpeg4_constructs() {
         assert!(Mpeg4Decoder::new(info("mpeg4")).is_ok());
         assert!(Mpeg4Decoder::new(info("mpeg2")).is_err());
+        assert!(Mpeg4Decoder::new(info("h263")).is_ok());
+    }
+
+    /// H.263 baseline pictures (the short video header, as a 3GP `s263`
+    /// track holds them, one picture a sample and no VOL anywhere) decode
+    /// through the same decoder.
+    #[test]
+    fn short_header_pictures_decode_as_h263() {
+        let (w, h) = (176u32, 144u32);
+        let mut cfg = mpeg4::EncoderConfig::new(w, h, 15);
+        cfg.short_header = true;
+        let mut enc = mpeg4::Encoder::new(cfg).expect("encoder");
+        let mut dec = Mpeg4Decoder::new(info("h263")).expect("decoder");
+        for n in 0..3u32 {
+            let mut frame = mpeg4::Frame::new(w, h);
+            for (i, s) in frame.data.iter_mut().enumerate() {
+                *s = ((i as u32 / 3 + n * 5) % 200) as u8 + 20;
+            }
+            let picture = enc.encode(&frame).expect("encode");
+            assert_eq!(&picture[..2], &[0, 0], "a short_video_start_marker");
+            dec.push_sample(&picture).expect("decode");
+        }
+        dec.finish().unwrap();
+        let frames: Vec<_> = std::iter::from_fn(|| dec.decode_next().unwrap()).collect();
+        assert_eq!(frames.len(), 3);
+        assert!(frames.iter().all(|f| (f.width, f.height) == (w, h)));
     }
 
     /// A stream from the crate's encoder, its VOL in-band, comes back as every
