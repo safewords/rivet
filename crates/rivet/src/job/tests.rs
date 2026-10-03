@@ -566,11 +566,12 @@ fn a_failed_rung_reports_its_whole_error_chain() {
     );
 }
 
-/// A single-file job reports audio the MP4 muxer would refuse as dropped, by
-/// its codec, rather than passed through: every rung would be video-only. A
-/// track the muxer takes (5.0 AAC, which it used to refuse) keeps its handling.
+/// A single-file job whose audio the MP4 muxer would refuse is refused with
+/// the muxer's reason — every rung would be video-only — and told how to ask
+/// for that. A track the muxer takes (5.0 AAC, which it used to refuse)
+/// keeps its handling.
 #[test]
-fn a_track_the_mp4_muxer_refuses_is_reported_dropped() {
+fn a_track_the_mp4_muxer_refuses_refuses_the_job() {
     use super::audio::fit_single_file;
     // AAC-LC at 48 kHz: AOT 2 | SFI 3 | channelConfiguration | GASpecificConfig 000.
     let track = |channels: u16, cfg: u8| PreparedAudio {
@@ -588,13 +589,15 @@ fn a_track_the_mp4_muxer_refuses_is_reported_dropped() {
         file_header: None,
         edit: Default::default(),
     };
-    let kept = fit_single_file(Some(track(5, 5)), crate::spec::Container::Mp4).expect("5.0 is kept");
+    let kept = fit_single_file(Some(track(5, 5)), crate::spec::Container::Mp4).unwrap().expect("5.0 is kept");
     assert_eq!(kept.handling, "aac passthrough");
     assert!(kept.has_samples());
-    let refused = fit_single_file(Some(track(24, 13)), crate::spec::Container::Mp4).expect("22.2 comes back as dropped");
-    assert_eq!(refused.handling, "aac dropped");
-    assert!(!refused.has_samples());
-    assert!(fit_single_file(None, crate::spec::Container::Mp4).is_none());
+    let refused = fit_single_file(Some(track(24, 13)), crate::spec::Container::Mp4)
+        .err()
+        .expect("22.2 is refused, not written video-only")
+        .to_string();
+    assert!(refused.contains("mp4 muxer refuses") && refused.contains("--audio drop"), "{refused}");
+    assert!(fit_single_file(None, crate::spec::Container::Mp4).unwrap().is_none());
 }
 
 #[test]

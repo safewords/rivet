@@ -32,6 +32,7 @@ use crate::validate::needs_chroma_downsample;
 
 mod audio;
 mod audio_only;
+pub(crate) use audio::audio_unusable;
 mod file_mux;
 mod pump;
 mod run;
@@ -411,17 +412,14 @@ async fn run_job_inner(
         None
     };
 
-    // An audio filter that reaches no audio is a mistake worth stopping for.
-    // The demuxer drops a track it can neither pass through nor decode (DTS,
-    // TrueHD, …) and hands us `None`, which would otherwise make `--audio-filter`
-    // and `--audio-bitrate` evaporate into a warning buried in the log while the
-    // output silently ships with no audio at all.
+    // An audio filter that reaches no audio is a mistake worth stopping for:
+    // the input has no audio track at all. (A track the demuxer could not
+    // read comes back named, with no packets, and `prepare_audio` refuses
+    // it by name.)
     if audio_track.is_none() && !spec.audio_filters.is_empty() {
         bail!(
-            "audio filters were requested ({}) but this input has no usable audio track — \
-             either it has none, or its codec can be neither passed through (AAC / Opus / \
-             AC-3 / E-AC-3) nor decoded (Vorbis / MP3). Check the demux warning above for \
-             the codec, and drop `--audio-filter` to continue without it.",
+            "audio filters were requested ({}) but this input has no audio track; drop `--audio-filter` to \
+             continue without it.",
             codec::audio::filter::chain_to_string(&spec.audio_filters)
         );
     }
@@ -429,7 +427,7 @@ async fn run_job_inner(
     let prepared_audio = prepare_audio(audio_track.as_ref(), audio_edit, &audio_gaps, AudioRequest::of(spec))
         .context("preparing audio")?;
     let prepared_audio = match spec.mode {
-        OutputMode::SingleFile => fit_single_file(prepared_audio, spec.container),
+        OutputMode::SingleFile => fit_single_file(prepared_audio, spec.container)?,
         OutputMode::Hls { .. } | OutputMode::AudioOnly => prepared_audio,
     };
     let stereo_fallback = stereo_fallback(spec, prepared_audio.as_ref(), || {
@@ -968,7 +966,7 @@ async fn run_splice_job_inner(
     }
     let effective_total = total_known.then_some(effective_total);
     let combined_audio = match spec.mode {
-        OutputMode::SingleFile => fit_single_file(combined_audio, spec.container),
+        OutputMode::SingleFile => fit_single_file(combined_audio, spec.container)?,
         OutputMode::Hls { .. } | OutputMode::AudioOnly => combined_audio,
     };
     let audio_handling = describe_audio(combined_audio.as_ref(), combined_stereo.as_ref());
