@@ -7,9 +7,9 @@ output codec (4:2:0, Main profile, 8- or 10-bit); H.264 / H.265 are selectable.
 
 | Vendor | Feature | Decode | Encode (AV1) |
 |--------|---------|--------|--------------|
-| Intel  | `qsv`   | ✅ verified | ✅ verified |
+| Intel  | `qsv`   | ✅ verified (VP9 on the CI Arc A750, bit-exact) | ✅ verified (AV1 / H.264 / H.265; VP9 profile 0 / 2 on the CI Arc A750) |
 | NVIDIA | `nvidia`| ✅ verified | ⚠ by-review |
-| AMD    | `amd`   | **✅ verified H.264 / HEVC (8-bit + Main 10) / AV1** on the Ryzen 9 9950X iGPU (VP9 component present, no clip) | ⚠ by-review (AV1); **✅ verified H.264 / H.265** on the Ryzen 9 9950X iGPU |
+| AMD    | `amd`   | **✅ verified H.264 / HEVC (8-bit + Main 10) / AV1** on the Ryzen 9 9950X iGPU; VP9 bit-exact through the guard but **opt-in** (`RIVET_AMF_VP9=1`) after video-engine timeouts (decisions §41) | ⚠ by-review (AV1); **✅ verified H.264 / H.265** on the Ryzen 9 9950X iGPU |
 | Software | `av1` (always) / `av1-sw-fallback` | ✅ AV1, bit-exact on the AOM vectors and Argon | ✅ AV1 8- and 10-bit SDR (profile 0) |
 | Software | `h26x` (always) / `h26x-fallback` | ✅ H.264 + HEVC, conformance bit-exact | ✅ H.264 + H.265 8-bit, SELF + libavcodec cross-checked |
 | Software | `prores` / `vp8` / `vp9` / `mpeg2` / `mpeg4` (always) | ✅ ProRes, VP8, VP9, MPEG-1/2, MPEG-4 Part 2 | ✅ ProRes, VP8, VP9 (8- and 10-bit), MPEG-2, MPEG-4 Part 2 — the only encoder for each |
@@ -126,10 +126,19 @@ headers.
 > driver's spurious `-3`), LowPower=ON, and a frame-sized output buffer.
 
 Verify:
-- [ ] **AMF decode, still owed** — a VP9 pixel clip (the component probes present
-      but no `libvpx-vp9` test clip is generated), decode on a discrete RDNA card,
-      and Linux via `AMFContext1::InitVulkan`. The iGPU H.264 / HEVC / Main 10 /
-      AV1 pixel checks above are done.
+- [ ] **AMF decode, still owed** — decode on a discrete RDNA card, and Linux
+      via `AMFContext1::InitVulkan`. VP9 is opt-in (`RIVET_AMF_VP9=1`): the
+      iGPU's video engine timed out during the VP9 vector runs (decisions
+      §41); whether a discrete card or a newer driver does the same is open.
+- [ ] **AMF H.264 / HEVC / AV1 decode after the `SubmitInput` protocol fix**
+      (`AMF_REPEAT` → resubmit NULL, `AMF_DECODER_NO_FREE_SURFACES`,
+      `AMF_RESOLUTION_CHANGED`): not re-run on hardware —
+      `RIVET_AMF_CLIPS=<clip> cargo test -p rivet-codec --release --features amd
+      --test amf_decode_pixels -- --test-threads=1`, one clip at a time, on a
+      machine where a GPU timeout is acceptable.
+- [ ] **NVDEC VP9 `show_existing_frame`** — CUVID returns no picture for it
+      here (one frame per packet, `CUVID_PKT_ENDOFPICTURE`); find out whether
+      the parser wants it differently, then trust it in `NVDEC_POLICY`.
 - [ ] **AMF AV1 encode** (RDNA3+, RX 7000+) — the AV1 property sequence in
       `encode/amf/av1.rs` is by-review: names/values from `VideoEncoderAV1.h`,
       the same session flow as the validated H.26x components, the QVBR

@@ -426,6 +426,27 @@ surface is used and a warning logged.
   [`deinterleave_p016_to_yuv420p10le`](../crates/codec/src/decode/nvdec/convert.rs#L173)
   does the `>> 6` normalize + UV split and handles odd dimensions. 12-bit shares
   the path (the shift clips to 10-bit range, which is what downstream expects).
+- **VP8 / VP9 on an RTX 3090** (2026-10-03, [`tests/hw_vpx_decode.rs`](../crates/codec/tests/hw_vpx_decode.rs),
+  one stream per process): H.264 bit-exact against `h26x` (the first
+  hardware run since the `CUVID_CREATE_PREFER_CUVID` fix); VP9 profile 0 / 2
+  bit-exact on every WebM project 4:2:0 vector through the
+  [VP9 guard](#the-vp9-guard--decodevp9_hw_guardrs); VP8 bit-exact on rivet's
+  own clip and the 16 even-sized RFC 6386 comprehensive vectors. An
+  odd-sized picture is not handed to NVDEC — the post-processor's target must
+  be even, and VP9 (whose coded size CUVID reports as the odd picture size)
+  and VP8 both came back resampled or short — so it goes to rivet's own
+  decoder.
+- **VP8 / VP9 go to the parser one frame per packet.** The guide (4.1.2):
+  `CUVID_PKT_ENDOFPICTURE` "MUST be set when packet contains exactly one
+  frame", and of a packet with more than one frame "parser will trigger
+  decode callback for first frame data. Rest of the NALU will get dropped".
+  It says nothing of VP9 superframes, so a superframe is split
+  (`convert::split_frames`) and each frame goes as its own packet with
+  `ENDOFPICTURE`; every VP8 packet is marked too.
+- **`CUVIDDECODECAPS` is 88 bytes.** The mirror stopped at `reserved3[8]`
+  (80) where NVIDIA's header has the histogram fields and `reserved3[10]`, so
+  every `cuvidGetDecoderCaps` wrote 8 bytes past it; fixed 2026-10-03, the
+  layout pinned by offset asserts.
 - `CUVID_CREATE_PREFER_CUVID` is `cudaVideoCreate_PreferCUVID` = `0x04`
   (cuviddec.h: "Use dedicated video engines directly", with `_Default` the
   "most optimized" pair), asked for over DXVA and the CUDA-based decoder. Until
@@ -440,7 +461,9 @@ surface is used and a warning logged.
 ### QSV (Intel) — `decode/qsv_dec.rs`
 
 **What.** [`qsv_dec.rs`](../crates/codec/src/decode/qsv_dec.rs) `dlopen`s
-`libvpl` and drives oneVPL: `MFXInit(HW)` →
+`libvpl` and drives oneVPL: a session from the 2.x dispatcher (`MFXLoad` →
+`Impl = HARDWARE` filter → `MFXCreateSession` on the adapter; `MFXInit(HW)`
+only when the dispatcher finds nothing) →
 [`MFXVideoDECODE_DecodeHeader`](../crates/codec/src/decode/qsv_dec.rs#L269) on the
 first buffered samples → `MFXVideoDECODE_Init` → per sample
 [`DecodeFrameAsync` + `SyncOperation`](../crates/codec/src/decode/qsv_dec.rs#L384),
@@ -467,14 +490,24 @@ that forcing those fields ourselves made HEVC Main10 `Init` fail.
   feeding 1088-tall frames into a 1080-configured encoder fails
   `EncodeFrameAsync`. `try_init` fills a zero crop from the coded size and
   aligns the surface to 16 (32 rows for interlaced content).
-- **The adapter index is not used yet.** `QsvDecoder::new(info, _gpu_index)`
-  initialises with `MFX_IMPL_HARDWARE_ANY`, so on a multi-Intel host the
-  runtime picks the adapter, whatever `gpu_index` the caller pinned.
+- **Sessions come from the dispatcher, on the adapter asked for.** Until
+  2026-10-03 the decoder used `MFXInit(MFX_IMPL_HARDWARE_ANY)`, the 1.x entry
+  point, which takes no adapter — and on the Intel CI runner (Arc A750) it
+  reached a runtime that answered every `MFXVideoDECODE_Init` with
+  `MFX_ERR_UNSUPPORTED`, H.264 and HEVC included; the dispatch fell back to
+  software each time, so nothing failed and nothing was decoded on the card.
+  Through the dispatcher, as the encoder has always opened its sessions, the
+  same runner decodes on the card.
 - Plane pointers are valid only between `Map`/`Unmap`; the read copies out inside
   that window.
 - **Hardware-verified on a 3× Intel Arc box** (A310 / A380 / A750, oneVPL 2.16 /
   iHD): H.264, HEVC, VP9, and AV1 each decode end-to-end (transcode to AV1 on a
-  qsv-only build, with the QSV decoder engaged).
+  qsv-only build, with the QSV decoder engaged). VP9 on the CI runner's Arc
+  A750 ([`tests/hw_vpx_decode.rs`](../crates/codec/tests/hw_vpx_decode.rs)):
+  rivet's own profile 0 / 2 clips and the WebM project's 4:2:0 vectors
+  bit-exact against rivet's own decoder through the
+  [VP9 guard](#the-vp9-guard--decodevp9_hw_guardrs). VP8 is not wired: Intel's
+  tables give no VP8 decode on DG2.
 
 **Capability probe.** [`probe_decode_caps`](../crates/codec/src/decode/qsv_dec.rs#L152)
 is the decode side of `rivet capabilities`: it opens one HW `MFXInit` session and
@@ -496,11 +529,23 @@ lifecycle in [`amf_runtime.rs`](../crates/codec/src/amf_runtime.rs), both shared
 with the AMF encoder: `AmfRuntime::open` (dlopen → `AMFInit` → `CreateContext` →
 a context bound to the chosen AMD GPU) → `CreateComponent(<decoder id>)` →
 `Init(NV12 | P010, w, h)`, then per sample `AllocBuffer(HOST)` + copy the
-Annex-B access unit → `SetPts` → `SubmitInput` (with the `AMF_INPUT_FULL`
-drain-and-retry) → loop `QueryOutput` → `QueryInterface(IID_AMFSurface)` →
+Annex-B access unit → `SetPts` → `SubmitInput` → loop `QueryOutput` → `QueryInterface(IID_AMFSurface)` →
 `Convert(HOST)` → read the NV12 / P010 planes into `Yuv420p` / `Yuv420p10le`.
 `finish` is `Drain`, then `QueryOutput` polled to `AMF_EOF` (bounded at 10 s).
 Decodes H.264 / HEVC / VP9 / AV1, as far as the GPU has the block.
+
+**`SubmitInput` follows the decode guide (§2.3).** `AMF_INPUT_FULL` and
+`AMF_DECODER_NO_FREE_SURFACES` suspend submission: drain output, submit the
+same buffer again (bounded). `AMF_REPEAT` means "the currently submitted
+buffer has more than one frame and needs another SubmitInput() call ...
+invoked with NULL", and gets exactly that. Until 2026-10-03 it was handled
+like `AMF_INPUT_FULL` — the same buffer resubmitted up to 64 times, a VP9
+superframe's frames fed to the hardware again and again — and a run of the
+VP9 test vectors through it coincided with video-engine timeouts on the AMD
+iGPU (LiveKernelEvent 141 / a2000002). `AMF_RESOLUTION_CHANGED` (26, "client
+needs to Drain/Terminate/Init") and any other failure end the decoder:
+nothing more is submitted to it. The fix applies to every codec AMF decodes
+(an H.264 / HEVC / AV1 buffer holding more than one frame too).
 
 **What this host decodes is asked, not assumed.**
 [`probe_decode_caps`](../crates/codec/src/decode/amf_dec.rs#L110) opens one
@@ -539,7 +584,12 @@ conformance suites), and AV1 to rav1d, on clips the test makes with rivet's
 own encoders (the test now compares AV1 with rivet's own `av1` decoder and
 makes its clip with rivet's own AV1 encoder; not yet re-run on the AMD box)
 ([`tests/amf_decode_pixels.rs`](../crates/codec/tests/amf_decode_pixels.rs)).
-VP9 has no on-hardware test.
+VP9 is **opt-in** (`RIVET_AMF_VP9=1`; see [the guard](#the-vp9-guard--decodevp9_hw_guardrs)
+for why). With it (2026-10-03, same iGPU, [`tests/hw_vpx_decode.rs`](../crates/codec/tests/hw_vpx_decode.rs)):
+rivet's own profile 0 and profile 2 clips and the WebM project's 4:2:0
+8 / 10-bit vectors, bit-exact against rivet's own decoder through the VP9
+guard (see [The VP9 guard](#the-vp9-guard--decodevp9_hw_guardrs)); the
+pictures come out at the surface's plane size, cropped to the header's.
 
 **Notes / gotchas.**
 - `gpu_index` selects the AMD adapter on Windows (via the D3D11 routing
@@ -548,6 +598,68 @@ VP9 has no on-hardware test.
   naming the adapter ("… this GPU is not one the AMF runtime drives"); the
   dispatch logs it and tries the next tier, and `--decode fastest` skips that
   GPU instead of taking the process down.
+
+### The VP9 guard — `decode/vp9_hw_guard.rs`
+
+**What.** Every hardware VP9 decoder (NVDEC, AMF, QSV) is built behind a
+[`Vp9HardwareGuard`](../crates/codec/src/decode/vp9_hw_guard.rs). It reads
+each packet's uncompressed headers ([`vp9_header`](../crates/codec/src/vp9_header.rs),
+written from the VP9 spec §6.2 as far as `segmentation_enabled`, following
+`frame_size_with_refs` through the reference slots) *before* the decoder sees
+the packet, and keeps the packets since the last key frame. A packet the
+vendor's decoder is not trusted with goes to rivet's own decoder instead: the
+hardware is drained of every picture it owes, the kept packets are replayed
+into `vp9_sw`, the pictures the hardware already returned are dropped, and the
+stream carries on in software. VP9's reconstruction is exact, so the pictures
+either side of the switch are the ones a single decoder would have made; the
+guard renumbers output timestamps 0, 1, 2, … across it. A hardware failure
+mid-stream switches the same way instead of ending the job.
+
+**Never handed to the hardware**, whatever the vendor: anything but profile 0
+/ 2 4:2:0; a depth other than the one the decoder was set up for; a first key
+frame whose size is not the container's (AMF is initialised at the
+container's size, and a WebM / IVF header can understate the stream); a size
+outside the vendor's documented range — AMF 16x16 to 8192x8192 (AMD's AMF
+wiki: "VP9 8,10b: 8K" on every VCN), QSV up to 16384x16384 (Intel
+media-driver `media_features.md`), NVDEC 128x128 to 8192x8192 (NVDEC
+Programming Guide). Hardware output is cropped to the header's frame size: a
+surface rounds an odd size up (AMF returns 352x288 for 351x287).
+
+**Trusted per vendor** ([`Vp9HwPolicy`](../crates/codec/src/decode/vp9_hw_guard.rs)),
+on evidence from [`tests/hw_vpx_decode.rs`](../crates/codec/tests/hw_vpx_decode.rs)
+only: `show_existing_frame`, frame-size changes (an inter frame predicting
+from scaled references), `error_resilient_mode`, segmentation, `intra_only`
+frames. A key frame at a new size is not a switch: the guard drains the
+hardware decoder and builds a fresh one at the new size (AMF's
+`AMF_RESOLUTION_CHANGED` asks for exactly that: "Drain/Terminate/Init").
+
+What each vendor's decoder is trusted with, and why (bare decoder, one
+stream per process; on the local GPUs the Application and System event logs
+were checked after every run):
+
+| | AMF (opt-in, see below) | QSV (Arc A750, CI) | NVDEC (RTX 3090) |
+|---|---|---|---|
+| `error_resilient_mode` | refused: exact in the vector runs, never tested alone | trusted: exact | trusted: exact, tested alone |
+| segmentation | **refused**: wrong from the first segmented frame | trusted: exact | trusted: exact, tested alone (6 vectors) |
+| `show_existing_frame` | **refused**: no picture comes back | trusted: exact | **refused**: no picture comes back |
+| `intra_only` | **refused**: `AMF_RESOLUTION_CHANGED` | trusted: exact (one vector) | refused: its one vector also uses `show_existing_frame` |
+| superframe of more than 2 frames | **refused**: video-engine timeout | trusted up to 8: exact | refused (untested; split one frame per packet regardless) |
+| inter-frame size change | **refused**: decoded at the first size | **refused**: pictures stop or go wrong | refused: never given to the bare decoder (created once, at the first size) |
+| odd width / height | cropped from the surface: exact | exact (after the NV12 chroma fix) | **refused**: resampled to the even size |
+| key-frame size change | restart | restart | restart |
+
+Through the guard, as dispatched: QSV and NVDEC decode every one of the
+WebM project's profile 0 / 2 4:2:0 vectors (343 and 341 read) bit-exact
+against rivet's own decoder; AMF did on the 251 run before the stop below.
+
+**AMF is opt-in for VP9 (`RIVET_AMF_VP9=1`).** On the Ryzen 9 9950X iGPU the
+vector runs drove the video engine into timeouts (LiveKernelEvent 141 /
+a2000002): through the `SubmitInput` protocol bug and frames larger than
+the decoder was set up for (both fixed), then on an eight-frame superframe
+(now refused), and then once on a run in which the decoder had been handed a
+single ordinary key frame — nothing the guard reads explains that one. So
+the dispatcher does not offer AMF a VP9 stream unless asked; H.264 / HEVC /
+AV1 are unaffected.
 
 ### Native H.264 / HEVC — `decode/h26x_sw.rs`
 
