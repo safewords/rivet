@@ -637,6 +637,11 @@ fn extract_mkv_audio_track(data: &[u8]) -> Option<(u64, AudioTrack)> {
         /// Lossless: decodable, and carried into MP4 as `fLaC` / `alac`.
         Flac,
         Alac,
+        /// Linear PCM (`A_PCM/*`, or `A_MS/ACM` with a PCM WAVEFORMATEX):
+        /// normalised to the little-endian form the PCM decoder takes.
+        Pcm(qt::PcmLayout),
+        /// A codec rivet has no path for: surfaced by name, no packets.
+        Unsupported(String),
     }
 
     let (track_number, kind, codec_private_or_empty, sample_rate, channels, default_duration) = {
@@ -649,7 +654,7 @@ fn extract_mkv_audio_track(data: &[u8]) -> Option<(u64, AudioTrack)> {
         let kind = match codec_id {
             "A_AAC" => MkvAudioKind::Aac,
             "A_OPUS" => MkvAudioKind::Opus,
-            "A_AC3" => MkvAudioKind::Ac3,
+            "A_AC3" | "A_AC3/BSID9" | "A_AC3/BSID10" => MkvAudioKind::Ac3,
             "A_EAC3" => MkvAudioKind::Eac3,
             // Vorbis and MP3 have no MP4 passthrough form, but `codec::audio`
             // decodes both — so surface them and let the job layer re-encode to
@@ -660,15 +665,60 @@ fn extract_mkv_audio_track(data: &[u8]) -> Option<(u64, AudioTrack)> {
             "A_MPEG/L3" | "A_MPEG/L2" | "A_MPEG/L1" => MkvAudioKind::Mp3,
             "A_FLAC" => MkvAudioKind::Flac,
             "A_ALAC" => MkvAudioKind::Alac,
-            other => {
-                tracing::warn!(
-                    codec = other,
-                    "audio track dropped: no passthrough form (AAC / Opus / AC-3 / E-AC-3 / \
-                     DTS) and no decoder (Vorbis / MP3) for this codec"
-                );
-                return None;
+            // Matroska codec mappings: BitDepth gives the size; integers are
+            // signed except at 8 bits, which are unsigned; floats are
+            // little-endian IEEE 754.
+            "A_PCM/INT/LIT" | "A_PCM/INT/BIG" | "A_PCM/FLOAT/IEEE" => {
+                let bits = track.audio().and_then(|a| a.bit_depth()).map_or(0, |b| b.get() as usize);
+                let float = codec_id == "A_PCM/FLOAT/IEEE";
+                let layout = qt::PcmLayout {
+                    bytes: bits.div_ceil(8),
+                    float,
+                    big_endian: codec_id == "A_PCM/INT/BIG",
+                    signed: float || bits > 8,
+                };
+                match layout.codec() {
+                    Some(_) => MkvAudioKind::Pcm(layout),
+                    None => MkvAudioKind::Unsupported(format!("pcm_{}{bits}", if float { "f" } else { "s" })),
+                }
             }
+            // A WAVEFORMATEX in CodecPrivate: PCM and IEEE float are read.
+            // MPEG audio, AC-3 and DTS under their WAVE tags go the way of
+            // their own codec IDs.
+            "A_MS/ACM" => match track.codec_private().and_then(wave_format_pcm) {
+                Some(Ok(layout)) => MkvAudioKind::Pcm(layout),
+                Some(Err(_)) => {
+                    let tag = track.codec_private().map_or(0, |f| u16::from_le_bytes([f[0], f[1]]));
+                    match crate::avi::wave_format_codec(tag) {
+                        Some("mp3") => MkvAudioKind::Mp3,
+                        Some("ac3") => MkvAudioKind::Ac3,
+                        Some("dts") => MkvAudioKind::Dts,
+                        _ => MkvAudioKind::Unsupported(crate::avi::wave_format_name(tag)),
+                    }
+                }
+                None => MkvAudioKind::Unsupported("acm".into()),
+            },
+            other => MkvAudioKind::Unsupported(mkv_codec_name(other)),
         };
+        if let MkvAudioKind::Unsupported(name) = &kind {
+            tracing::warn!(codec_id, codec = %name, "Matroska audio track has no path in rivet; surfaced by name with no packets");
+            let (sr, ch) = track
+                .audio()
+                .map_or((0, 0), |a| (a.sampling_frequency() as u32, a.channels().get() as u16));
+            return Some((
+                track.track_number().get(),
+                AudioTrack {
+                    codec: name.clone(),
+                    samples: Vec::new(),
+                    sample_rate: sr,
+                    channels: ch,
+                    asc: Vec::new(),
+                    codec_private: Vec::new(),
+                    timescale: sr.max(1),
+                    durations: Vec::new(),
+                },
+            ));
+        }
         // CodecPrivate is mandatory for AAC / Opus (carries ASC / OpusHead).
         // It's typically EMPTY for AC-3 / E-AC-3 in MKV — frames are
         // self-describing and the dac3 / dec3 body is derived from the
@@ -701,6 +751,7 @@ fn extract_mkv_audio_track(data: &[u8]) -> Option<(u64, AudioTrack)> {
                 }
                 cp
             }
+            MkvAudioKind::Pcm(_) | MkvAudioKind::Unsupported(_) => Vec::new(),
             MkvAudioKind::Ac3 | MkvAudioKind::Eac3 | MkvAudioKind::Mp3 | MkvAudioKind::Dts => track
                 .codec_private()
                 .map(|p| p.to_vec())
@@ -761,7 +812,7 @@ fn extract_mkv_audio_track(data: &[u8]) -> Option<(u64, AudioTrack)> {
         // re-encoded to Opus first — so the timescale only has to make the
         // per-packet duration fallback below come out sensibly.
         MkvAudioKind::Vorbis | MkvAudioKind::Mp3 => sample_rate,
-        MkvAudioKind::Flac | MkvAudioKind::Alac => sample_rate,
+        MkvAudioKind::Flac | MkvAudioKind::Alac | MkvAudioKind::Pcm(_) | MkvAudioKind::Unsupported(_) => sample_rate,
     };
     let default_frame_samples_at_ts = match kind {
         MkvAudioKind::Aac => 1024u64,
@@ -775,6 +826,8 @@ fn extract_mkv_audio_track(data: &[u8]) -> Option<(u64, AudioTrack)> {
         MkvAudioKind::Vorbis => 1024u64,
         // Replaced below by each frame's own count.
         MkvAudioKind::Flac | MkvAudioKind::Alac => 4096u64,
+        // Replaced below by each block's own frame count.
+        MkvAudioKind::Pcm(_) | MkvAudioKind::Unsupported(_) => 1024u64,
     };
     // For the fallback duration math we need the rate matching the chosen
     // timescale (NOT the source's nominal sample_rate when kind=Opus).
@@ -811,6 +864,28 @@ fn extract_mkv_audio_track(data: &[u8]) -> Option<(u64, AudioTrack)> {
     }
 
     Some((track_number, match kind {
+        MkvAudioKind::Unsupported(_) => return None,
+        // A block's duration is its frames, exactly.
+        MkvAudioKind::Pcm(layout) => {
+            let codec = layout.codec()?;
+            let frame_bytes = layout.bytes * usize::from(channels.max(1));
+            let mut samples = samples;
+            for s in samples.iter_mut() {
+                s.truncate(s.len() / layout.bytes * layout.bytes);
+                layout.normalise(s);
+            }
+            let durations = samples.iter().map(|s| ((s.len() / frame_bytes) as u32).max(1)).collect();
+            AudioTrack {
+                codec: codec.into(),
+                samples,
+                sample_rate,
+                channels,
+                asc: Vec::new(),
+                codec_private: Vec::new(),
+                timescale: sample_rate,
+                durations,
+            }
+        }
         MkvAudioKind::Aac => {
             // Squad-25: MKV `Audio.Channels` is an integer hint and the ASC
             // (CodecPrivate) is canonical for HE-AAC v2 PS upmix + multichannel
@@ -983,6 +1058,51 @@ fn extract_mkv_audio_track(data: &[u8]) -> Option<(u64, AudioTrack)> {
             }
         }
     }))
+}
+
+/// A WAVEFORMATEX (`A_MS/ACM` CodecPrivate, a WAV `fmt ` chunk) as linear
+/// PCM: `WAVE_FORMAT_PCM` (1), `WAVE_FORMAT_IEEE_FLOAT` (3), or
+/// `WAVE_FORMAT_EXTENSIBLE` naming either; `Err` with a name for any other
+/// format. `None` when too short.
+pub(crate) fn wave_format_pcm(fmt: &[u8]) -> Option<Result<qt::PcmLayout, String>> {
+    if fmt.len() < 16 {
+        return None;
+    }
+    let mut tag = u16::from_le_bytes([fmt[0], fmt[1]]);
+    let bits = usize::from(u16::from_le_bytes([fmt[14], fmt[15]]));
+    // WAVE_FORMAT_EXTENSIBLE: the sub-format GUID's first two bytes, after
+    // cbSize (2), wValidBitsPerSample (2) and dwChannelMask (4).
+    if tag == 0xFFFE {
+        tag = u16::from_le_bytes([*fmt.get(24)?, *fmt.get(25)?]);
+    }
+    Some(match tag {
+        1 | 3 => {
+            let layout =
+                qt::PcmLayout { bytes: bits.div_ceil(8), float: tag == 3, big_endian: false, signed: tag == 3 || bits > 8 };
+            layout.codec().map(|_| layout).ok_or_else(|| format!("pcm_{}{bits}", if tag == 3 { "f" } else { "s" }))
+        }
+        other => Err(crate::avi::wave_format_codec(other).map_or_else(|| crate::avi::wave_format_name(other), str::to_string)),
+    })
+}
+
+/// The name rivet reports for a Matroska audio codec ID it has no path for.
+fn mkv_codec_name(codec_id: &str) -> String {
+    match codec_id {
+        "A_TRUEHD" => "truehd".into(),
+        "A_MLP" => "mlp".into(),
+        "A_WAVPACK4" => "wavpack".into(),
+        "A_TTA1" => "tta".into(),
+        "A_DTS/EXPRESS" => "dts_express".into(),
+        "A_DTS/LOSSLESS" => "dts_hd_ma".into(),
+        "A_REAL/COOK" => "cook".into(),
+        "A_QUICKTIME/QDM2" => "qdm2".into(),
+        other => {
+            let id = other.strip_prefix("A_").unwrap_or(other);
+            let name: String =
+                id.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect();
+            if name.is_empty() { "unknown_audio".into() } else { name }
+        }
+    }
 }
 
 /// Whether an audio track's `stsd` holds QuickTime's `.mp3` sample entry.

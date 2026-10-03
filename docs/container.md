@@ -483,7 +483,7 @@ another implementation rather than the reference and were dropped
 | `0x2000` AC-3 / E-AC-3, one syncframe a chunk | `ac3` / `eac3`, `dac3` / `dec3` from the first frame | passthrough |
 | `0x2001` DTS, one core frame a chunk | `dts`, `ddts` from the first frame | passthrough |
 | `0x00FF` (and `0x706D`, `0x4143`, `0xA106`) AAC with the ASC in the WAVEFORMATEX extra bytes | `aac` | passthrough |
-| anything else — ADPCM, A-law / µ-law, WMA, ADTS-framed AAC, AC-3 / DTS not stored a frame to a chunk | named (`wmav2`, `adpcm_ms`, `aac_adts`, `avi_audio_0x….`) with no packets | dropped, by name |
+| anything else — ADPCM, A-law / µ-law, WMA, ADTS-framed AAC, AC-3 / DTS not stored a frame to a chunk | named (`wmav2`, `adpcm_ms`, `aac_adts`, `wave_format_0x….`) with no packets | dropped, by name |
 
 ---
 

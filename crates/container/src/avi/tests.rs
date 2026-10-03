@@ -997,7 +997,7 @@ fn a_late_start_is_a_delay() {
 /// AudioSpecificConfig and AC-3 that is not stored a syncframe a chunk.
 #[test]
 fn an_unusable_format_is_named_not_guessed() {
-    for (tag, name) in [(0x0161u16, "wmav2"), (0x0002, "adpcm_ms"), (0x0007, "pcm_mulaw"), (0x1234, "avi_audio_0x1234")] {
+    for (tag, name) in [(0x0161u16, "wmav2"), (0x0002, "adpcm_ms"), (0x0007, "pcm_mulaw"), (0x1234, "wave_format_0x1234")] {
         let strl = audio_strl(tag, 1, 48_000, 682, 16, &[], (341, 8000, 0, 682));
         let (track, edit) = both_audio(&audio_avi(strl, &[&[7u8; 682]]));
         assert_eq!(track.codec, name);

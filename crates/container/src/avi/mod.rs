@@ -39,6 +39,7 @@ mod streaming;
 mod tests;
 
 pub use streaming::AviStreamingDemuxer;
+pub(crate) use audio::{wave_format_codec, wave_format_name};
 pub(crate) use streaming::demux_avi_streaming_init;
 
 use anyhow::{Context, Result, bail};

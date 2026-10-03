@@ -157,25 +157,43 @@ fn codec_for(stream: &AudioStream) -> Result<&'static str, String> {
         (0x0003, 32) => "pcm_f32le",
         (0x0003, 64) => "pcm_f64le",
         (0x0003, bits) => return Err(format!("pcm_float_{bits}bit")),
+        (tag, _) => match wave_format_codec(tag) {
+            Some(codec) => codec,
+            None => return Err(wave_format_name(tag)),
+        },
+    })
+}
+
+/// The codec rivet reads under a compressed `wFormatTag`: MPEG audio,
+/// AC-3, DTS and raw AAC.
+pub(crate) fn wave_format_codec(tag: u16) -> Option<&'static str> {
+    Some(match tag {
         // MPEG-1/2 Layer III, and Layers I/II: one decoder (crates/mp3) reads all
         // three, which is why Matroska's A_MPEG/L2 is surfaced as `mp3` too.
-        (0x0055 | 0x0050, _) => "mp3",
-        (0x2000, _) => "ac3",
-        (0x2001, _) => "dts",
+        0x0055 | 0x0050 => "mp3",
+        0x2000 => "ac3",
+        0x2001 => "dts",
         // ffmpeg writes AAC as 0x00FF with the ASC in the extra bytes; the
         // other tags seen for raw AAC in the wild carry it the same way.
-        (0x00FF | 0x706D | 0x4143 | 0xA106, _) => "aac",
-        (0x0002, _) => return Err("adpcm_ms".into()),
-        (0x0006, _) => return Err("pcm_alaw".into()),
-        (0x0007, _) => return Err("pcm_mulaw".into()),
-        (0x0011, _) => return Err("adpcm_ima_wav".into()),
-        (0x0160, _) => return Err("wmav1".into()),
-        (0x0161, _) => return Err("wmav2".into()),
-        (0x0162, _) => return Err("wmapro".into()),
-        (0x0163, _) => return Err("wmalossless".into()),
-        (0x1600 | 0x1610, _) => return Err("aac_adts".into()),
-        (tag, _) => return Err(format!("avi_audio_0x{tag:04x}")),
+        0x00FF | 0x706D | 0x4143 | 0xA106 => "aac",
+        _ => return None,
     })
+}
+
+/// The name rivet reports for a `wFormatTag` it has no path for.
+pub(crate) fn wave_format_name(tag: u16) -> String {
+    match tag {
+        0x0002 => "adpcm_ms".into(),
+        0x0006 => "pcm_alaw".into(),
+        0x0007 => "pcm_mulaw".into(),
+        0x0011 => "adpcm_ima_wav".into(),
+        0x0160 => "wmav1".into(),
+        0x0161 => "wmav2".into(),
+        0x0162 => "wmapro".into(),
+        0x0163 => "wmalossless".into(),
+        0x1600 | 0x1610 => "aac_adts".into(),
+        tag => format!("wave_format_0x{tag:04x}"),
+    }
 }
 
 /// A track the pipeline cannot use, named: no packets, and the audio stage
