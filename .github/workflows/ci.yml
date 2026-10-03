@@ -64,7 +64,7 @@ jobs:
           # The GPU backends' pure unit tests (parameter layouts, property
           # sequences): dlopen FFI, so they build and run with no card.
           cargo test -p rivet-codec      --lib --features serde,qsv,nvidia,amd --locked
-          cargo test -p rivet-container  --lib --locked
+          cargo test -p rivet-container  --locked
           # Still images included: every format through rivet's own codecs,
           # AVIF through rivet's own AV1 encoder and decoder (always in the
           # chain), stills from a clip made by rivet's own H.264 encoder.
