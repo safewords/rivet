@@ -12,6 +12,7 @@ pub(crate) mod aac;
 mod opus;
 mod ac3;
 pub(crate) mod lossless;
+pub(crate) mod qt;
 #[cfg(test)]
 mod tests;
 
@@ -101,9 +102,51 @@ pub(crate) use ac3::{ac3_sample_rate_channels_from_dac3, eac3_sample_rate_channe
 ///   and asserts `extract_mp4_audio` returns `Some(AudioTrack)` with
 ///   non-empty samples.
 pub(crate) fn extract_mp4_audio(data: &[u8]) -> Option<AudioTrack> {
+    if let Some(track) = extract_mp4_audio_track(data) {
+        return Some(track);
+    }
+    // An audio track rivet has no path for (AMR in a 3GP, μ-law, an entry it
+    // has never heard of) or could not read: surfaced by name with no
+    // packets, so the job refuses it by name instead of writing the video
+    // alone as though the source had no sound.
+    let entry = qt::first_sound_entry(data)?;
+    let known = matches!(
+        &entry.fourcc,
+        b"mp4a" | b"Opus" | b"ac-3" | b"ec-3" | b"dtsc" | b"dtsh" | b"dtsl" | b".mp3" | b"fLaC" | b"alac"
+    ) || qt::pcm_layout(&entry).is_some();
+    let name = if known {
+        format!("unreadable_{}", qt::unsupported_codec_name(&entry.fourcc).trim_start_matches("mp4_audio_"))
+    } else {
+        qt::unsupported_codec_name(&entry.fourcc)
+    };
+    tracing::warn!(
+        fourcc = %String::from_utf8_lossy(&entry.fourcc),
+        codec = %name,
+        "MP4 audio track has no path in rivet; surfaced by name with no packets"
+    );
+    let rate = entry.sample_rate as u32;
+    Some(AudioTrack {
+        codec: name,
+        samples: Vec::new(),
+        sample_rate: rate,
+        channels: entry.channels,
+        asc: Vec::new(),
+        codec_private: Vec::new(),
+        timescale: rate.max(1),
+        durations: Vec::new(),
+    })
+}
+
+/// [`extract_mp4_audio`]'s readers, by codec; `None` when none of them
+/// reads the first audio track.
+fn extract_mp4_audio_track(data: &[u8]) -> Option<AudioTrack> {
     // FLAC (`fLaC` + `dfLa`) and ALAC (`alac` + its cookie): lossless tracks
     // the mp4 crate does not classify.
     if let Some(track) = lossless::extract_mp4_lossless(data) {
+        return Some(track);
+    }
+    // Linear PCM (`sowt`, `twos`, `in24`, `lpcm`, `ipcm`, …), read by chunk.
+    if let Some(track) = qt::extract_mp4_pcm(data) {
         return Some(track);
     }
     let size = data.len() as u64;

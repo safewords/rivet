@@ -26,43 +26,9 @@ pub(super) fn extract_mp4_audio_config_body(
     entry_fourcc: &[u8; 4],
     cfg_fourcc: &[u8; 4],
 ) -> Option<Vec<u8>> {
-    let moov = super::super::find_direct_child(data, b"moov")?;
-    super::super::direct_children(moov, b"trak")
-        .find_map(|trak_body| extract_audio_cfg_from_trak(trak_body, entry_fourcc, cfg_fourcc))
-}
-
-fn extract_audio_cfg_from_trak(
-    trak: &[u8],
-    entry_fourcc: &[u8; 4],
-    cfg_fourcc: &[u8; 4],
-) -> Option<Vec<u8>> {
-    let stsd = super::super::find_box_body(trak, &[b"mdia", b"minf", b"stbl", b"stsd"])?;
-    if stsd.len() < 16 {
-        return None;
-    }
-    let mut pos = 8; // skip version/flags/entry_count
-    while pos + 8 <= stsd.len() {
-        let entry_size =
-            u32::from_be_bytes([stsd[pos], stsd[pos + 1], stsd[pos + 2], stsd[pos + 3]]) as usize;
-        let entry_type: [u8; 4] = stsd[pos + 4..pos + 8].try_into().ok()?;
-        if entry_size < 8 || pos.saturating_add(entry_size) > stsd.len() {
-            break;
-        }
-        if &entry_type == entry_fourcc {
-            let end = pos + entry_size;
-            // AudioSampleEntry layout per ISO/IEC 14496-12 §8.5.2.2: after
-            // the 8-byte box header there's a 28-byte fixed preamble
-            // followed by nested codec-specific boxes.
-            let child_start = pos + 8 + 28;
-            if child_start >= end {
-                return None;
-            }
-            return super::super::find_direct_child(&stsd[child_start..end], cfg_fourcc)
-                .map(|b| b.to_vec());
-        }
-        pos += entry_size;
-    }
-    None
+    // The entry is read as the sound description it is (version 0, 1 or 2,
+    // the config at its level or inside `wave`): see `qt`.
+    super::qt::audio_entry_config(data, entry_fourcc, cfg_fourcc)
 }
 
 /// Decode (sample_rate, channel_count) from a 3-byte `dac3` body per
