@@ -95,8 +95,41 @@ fn an_odd_source_is_even_aligned_down() {
     assert_eq!(out(&contain(sq(853, 480), (1280, 720))), (852, 480));
     assert_eq!(out(&contain(sq(853, 480), (640, 360))), (640, 360));
     assert_eq!(out(&contain(sq(1921, 1081), (1920, 1080))), (1920, 1080));
+    // Evened by a crop: the odd column (and row) cut off, nothing resampled.
     let p = contain(sq(853, 480), (1280, 720));
-    assert_eq!(p.crop, (0, 0, 853, 480), "the whole picture is taken, odd column included");
+    assert_eq!((p.crop, p.scaled), ((0, 0, 852, 480), (852, 480)));
+    let p = contain(sq(351, 241), (352, 242));
+    assert_eq!((p.crop, p.scaled), ((0, 0, 350, 240), (350, 240)));
+    let p = contain(sq(1921, 1081), (1920, 1080));
+    assert_eq!(p.crop, (0, 0, 1920, 1080));
+    // A real resize still takes the whole picture.
+    let p = contain(sq(853, 480), (640, 360));
+    assert_eq!(p.crop, (0, 0, 853, 480));
+    // Non-square samples are resized as shown, never cropped.
+    let p = contain(SourceShape { width: 721, height: 576, sample_aspect: (16, 15) }, (1920, 1080));
+    assert_eq!(p.crop, (0, 0, 721, 576));
+}
+
+/// On a one-sample grid (a codec that codes odd sizes) an odd source keeps
+/// its size, from a box evened up around it as from a larger one; the box
+/// evened up does not enlarge it even with `upscale`; offsets stay even.
+#[test]
+fn an_odd_source_keeps_its_size_on_a_one_sample_grid() {
+    let one = |src, bx, upscale| place_aligned(src, bx, Fit::Contain, Orientation::Auto, upscale, 1);
+    for bx in [(352, 242), (1920, 1080)] {
+        let p = one(sq(351, 241), bx, false);
+        assert_eq!((p.canvas, p.crop), ((351, 241), (0, 0, 351, 241)), "{bx:?}");
+    }
+    assert_eq!(one(sq(351, 241), (352, 242), true).canvas, (351, 241), "upscale: the box's slack is not a reason");
+    assert_eq!(one(sq(351, 241), (1920, 1080), true).canvas.1, 1080, "upscale to a real box still upscales");
+    assert_eq!(out(&one(sq(853, 480), (640, 360), false)), (640, 360));
+    let rungs = [Rung::new(1280, 720)];
+    let (kept, _) = fit_rungs_aligned(&rungs, sq(351, 241), Fit::Pad, Orientation::Auto, false, 1);
+    let p = kept[0].placement.unwrap();
+    assert_eq!((p.canvas, p.scaled), ((1280, 720), (351, 241)));
+    assert_eq!((p.offset.0 % 2, p.offset.1 % 2), (0, 0), "{:?}", p.offset);
+    let (kept, _) = fit_rungs(&rungs, sq(351, 241), Fit::Contain, Orientation::Auto, false);
+    assert_eq!((kept[0].width, kept[0].height), (350, 240));
 }
 
 #[test]

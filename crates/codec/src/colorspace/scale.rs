@@ -680,8 +680,13 @@ unsafe fn bilinear_scale_plane_avx2(
 /// Unlike [`scale_frame`], an odd-sized source is read with the chroma planes
 /// the decoders write for it — `ceil(w / 2) x ceil(h / 2)` — so a 853x480
 /// picture keeps its colour where it belongs. `crop` is snapped to even
-/// offsets and sizes so its chroma window is whole; `scaled`, `offset` and
-/// `canvas` must be even (4:2:0), and the scaled picture must fit the canvas.
+/// offsets and sizes so its chroma window is whole; `offset` must be even
+/// (4:2:0), and the scaled picture must fit the canvas. `scaled` and
+/// `canvas` may be odd: the output is laid out the same way, its chroma
+/// planes `ceil(w / 2) x ceil(h / 2)` (for an encoder that codes odd sizes).
+///
+/// A window that is already the scaled size is copied, not resampled: a crop
+/// (an odd picture evened by dropping its last column and row) is exact.
 ///
 /// The padding is limited-range black (luma 16 / 64, chroma 128 / 512).
 pub fn scale_region(
@@ -706,10 +711,8 @@ pub fn scale_region(
         bail!("crop {}x{}+{}+{} is empty or outside the {fw}x{fh} frame", crop.2, crop.3, crop.0, crop.1);
     }
     let (cw, ch) = (snap(cx, crop.2.min(fw - cx), fw), snap(cy, crop.3.min(fh - cy), fh));
-    for (name, v) in [("scaled", scaled), ("canvas", canvas), ("offset", offset)] {
-        if v.0 % 2 != 0 || v.1 % 2 != 0 {
-            bail!("{name} {}x{} is not even", v.0, v.1);
-        }
+    if !offset.0.is_multiple_of(2) || !offset.1.is_multiple_of(2) {
+        bail!("offset {}x{} is not even", offset.0, offset.1);
     }
     if scaled.0 == 0 || scaled.1 == 0 || offset.0 + scaled.0 > canvas.0 || offset.1 + scaled.1 > canvas.1 {
         bail!(
@@ -718,7 +721,8 @@ pub fn scale_region(
         );
     }
     let whole = (cx, cy, cw, ch) == (0, 0, fw, fh);
-    if whole && scaled == canvas && fw % 2 == 0 && fh % 2 == 0 {
+    let is_even = |v: (u32, u32)| v.0.is_multiple_of(2) && v.1.is_multiple_of(2);
+    if whole && scaled == canvas && is_even((fw, fh)) && is_even(scaled) {
         return scale_frame(frame, scaled.0, scaled.1);
     }
 
@@ -746,11 +750,21 @@ pub fn scale_region(
     ];
     let (luma_black, chroma_black): (u16, u16) = if bps == 1 { (16, 128) } else { (64, 512) };
 
-    let mut out = BytesMut::with_capacity((canvas.0 * canvas.1) as usize * 3 / 2 * bps);
+    if whole && scaled == canvas && scaled == (fw, fh) && (pcw, pch) == ceil_c {
+        // Nothing to cut, scale or pad.
+        return Ok(frame.clone());
+    }
+
+    // An odd output's chroma planes round up, as the input's do.
+    let half = |v: u32| v.div_ceil(2) as usize;
+    let mut out = BytesMut::with_capacity(
+        (canvas.0 * canvas.1) as usize * bps + 2 * half(canvas.0) * half(canvas.1) * bps,
+    );
     for (i, (plane, stride, (x, y, pw, ph))) in planes.into_iter().enumerate() {
+        let size = |v: (u32, u32)| if i == 0 { (v.0 as usize, v.1 as usize) } else { (half(v.0), half(v.1)) };
+        let (sw, sh) = size(scaled);
+        let (dw, dh) = size(canvas);
         let div = if i == 0 { 1 } else { 2 };
-        let (sw, sh) = ((scaled.0 / div) as usize, (scaled.1 / div) as usize);
-        let (dw, dh) = ((canvas.0 / div) as usize, (canvas.1 / div) as usize);
         let (ox, oy) = ((offset.0 / div) as usize, (offset.1 / div) as usize);
         let (x, y, pw, ph) = (x as usize, y as usize, pw as usize, ph as usize);
         let fill = if i == 0 { luma_black } else { chroma_black };
@@ -759,7 +773,7 @@ pub fn scale_region(
             for row in y..y + ph {
                 window.extend_from_slice(&plane[row * stride + x..row * stride + x + pw]);
             }
-            let resized = bilinear_scale_plane(&window, pw, ph, sw, sh);
+            let resized = if (pw, ph) == (sw, sh) { window } else { bilinear_scale_plane(&window, pw, ph, sw, sh) };
             let mut canvas_plane = vec![fill as u8; dw * dh];
             for row in 0..sh {
                 let at = (oy + row) * dw + ox;
@@ -772,7 +786,8 @@ pub fn scale_region(
             for row in y..y + ph {
                 window.extend_from_slice(&samples[row * stride + x..row * stride + x + pw]);
             }
-            let resized = bilinear_scale_plane_u16(&window, pw, ph, sw, sh);
+            let resized =
+                if (pw, ph) == (sw, sh) { window } else { bilinear_scale_plane_u16(&window, pw, ph, sw, sh) };
             let mut canvas_plane = vec![fill; dw * dh];
             for row in 0..sh {
                 let at = (oy + row) * dw + ox;

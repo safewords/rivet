@@ -305,6 +305,26 @@ pub fn hardware_encodes(backend: EncoderBackend, codec: VideoCodec) -> bool {
     }
 }
 
+/// Whether an output of `codec` can be coded at an odd width or height —
+/// a 351x241 picture as 351x241 — rather than evened to 350x240 (by
+/// cropping the last column and row: see `rivet::fit`).
+///
+/// The bitstreams of AV1, VP8, VP9, MPEG-2, MPEG-4 Part 2 and ProRes carry
+/// any size, and rivet's own encoders for them code one from a 4:2:0 frame
+/// with the rounded-up `ceil(w / 2) x ceil(h / 2)` chroma planes. H.264 and
+/// H.265 cannot at 4:2:0: their cropping (`frame_cropping`, the conformance
+/// window) counts in chroma samples, two luma samples at a time. A codec a
+/// hardware backend compiled into this build may encode answers `false`
+/// too — a GPU's surfaces are even-sized — so the size does not depend on
+/// which encoder the chain ends up with.
+pub fn codes_odd_sizes(codec: VideoCodec) -> bool {
+    let carries = matches!(
+        codec,
+        VideoCodec::Av1 | VideoCodec::Vp8 | VideoCodec::Vp9 | VideoCodec::Mpeg2 | VideoCodec::Mpeg4 | VideoCodec::ProRes(_)
+    );
+    carries && !compiled_hardware_encodes(codec)
+}
+
 /// Whether any hardware backend compiled into this build encodes `codec`.
 fn compiled_hardware_encodes(codec: VideoCodec) -> bool {
     (cfg!(feature = "nvidia") && hardware_encodes(EncoderBackend::Nvenc, codec))

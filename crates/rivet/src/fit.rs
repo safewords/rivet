@@ -26,6 +26,22 @@
 //! (even-aligned). Rungs that collapse onto the same output that way are
 //! merged by [`fit_rungs`], which reports the ones it dropped.
 //!
+//! # Odd sizes
+//!
+//! 4:2:0 video is laid out in 2x2 blocks, so an output is even-sized unless
+//! its codec carries odd sizes ([`codec::encode::codes_odd_sizes`]: AV1, VP8,
+//! VP9, MPEG-2, MPEG-4 Part 2 and ProRes from rivet's own encoders), whose
+//! rungs are planned on a one-sample grid ([`fit_rungs_aligned`]): a 351x241
+//! source comes out 351x241. H.264 and H.265 cannot code an odd 4:2:0 size
+//! (their cropping counts in chroma samples), and neither can a hardware
+//! encoder's surfaces. For those, a picture whose fitted size is its own
+//! evened down (one column or row short, no more) is **cropped** to it:
+//! the last column and row are dropped and every other sample is kept as it
+//! was, rather than the whole picture being resampled 0.3 % smaller (which
+//! blurs every sample a little and shifts the picture by up to half a
+//! sample). The crop takes the right and bottom edges, as the codecs' own
+//! cropping does.
+//!
 //! The output always has square samples: an anamorphic 720x576 at 64:45 is
 //! resized as the 1024x576 picture it is shown as.
 
@@ -173,6 +189,9 @@ pub struct Placement {
     /// The output frame size.
     pub canvas: (u32, u32),
     pub upscale: bool,
+    /// The grid sizes and offsets were planned on: 2 for 4:2:0 output, 1
+    /// for an output that may be odd-sized (see the module notes).
+    pub align: u32,
 }
 
 impl Placement {
@@ -188,6 +207,7 @@ impl Placement {
             offset: (0, 0),
             canvas,
             upscale: true,
+            align: 2,
         }
     }
 
@@ -220,9 +240,16 @@ impl Placement {
                 Fit::Contain | Fit::Pad => Fit::Pad,
                 other => other,
             };
-            let p = place(shape, self.canvas, fit, Orientation::Fixed, self.upscale || fit == Fit::Cover);
+            let p = place_aligned(
+                shape,
+                self.canvas,
+                fit,
+                Orientation::Fixed,
+                self.upscale || fit == Fit::Cover,
+                self.align,
+            );
             debug_assert_eq!(p.canvas, self.canvas);
-            p
+            even_offset(p)
         };
         codec::colorspace::scale_region(frame, p.crop, p.scaled, p.canvas, p.offset)
     }
@@ -292,23 +319,36 @@ pub fn place_aligned(
         offset,
         canvas,
         upscale,
+        align,
     };
 
     match fit {
         Fit::Contain | Fit::Pad => {
             let mut s = (bwf / dw).min(bhf / dh);
-            if !upscale {
+            // A box that is the source's size evened up (one rung at the
+            // source's size, for an odd source) is the source's size, not a
+            // reason to enlarge it by a sample.
+            let slack = bwf >= dw && bhf >= dh && bwf - dw < 2.0 && bhf - dh < 2.0;
+            if !upscale || slack {
                 s = s.min(1.0);
             }
             let (mut w, mut h) = (round(dw * s).min(bw), round(dh * s).min(bh));
-            if !upscale {
+            if !upscale || slack {
                 (w, h) = (w.min(floor(dw)), h.min(floor(dh)));
             }
+            // The source's own size evened down: cut the odd column and row
+            // off rather than resample the picture (see the module notes).
+            let (sw, sh) = (source.width, source.height);
+            let crop = if source.sar() == 1.0 && w <= sw && h <= sh && sw - w < 2 && sh - h < 2 {
+                (0, 0, w, h)
+            } else {
+                whole
+            };
             if fit == Fit::Contain {
-                placement(whole, (w, h), (0, 0), (w, h))
+                placement(crop, (w, h), (0, 0), (w, h))
             } else {
                 let offset = (down((bw - w) / 2), down((bh - h) / 2));
-                placement(whole, (w, h), offset, (bw, bh))
+                placement(crop, (w, h), offset, (bw, bh))
             }
         }
         Fit::Cover => {
@@ -336,6 +376,14 @@ pub fn place_aligned(
         }
         Fit::Stretch => unreachable!("returned above"),
     }
+}
+
+/// `p` with its offset on even samples, so a padded picture's chroma starts
+/// on a whole chroma sample (an odd offset only arises on a one-sample grid,
+/// and moving the picture back a sample keeps it inside the canvas).
+fn even_offset(mut p: Placement) -> Placement {
+    p.offset = (p.offset.0 & !1, p.offset.1 & !1);
+    p
 }
 
 /// What fitting did to one requested rung.
@@ -369,6 +417,21 @@ pub fn fit_rungs(
     orientation: Orientation,
     upscale: bool,
 ) -> (Vec<Rung>, Vec<FittedRung>) {
+    fit_rungs_aligned(rungs, source, fit, orientation, upscale, 2)
+}
+
+/// [`fit_rungs`] on a grid of `align` samples: 2 for 4:2:0 output, 1 for a
+/// codec that codes odd sizes ([`codec::encode::codes_odd_sizes`]), whose
+/// outputs keep an odd source's size. Offsets stay even either way (the
+/// chroma of a padded picture starts on a whole chroma sample).
+pub fn fit_rungs_aligned(
+    rungs: &[Rung],
+    source: SourceShape,
+    fit: Fit,
+    orientation: Orientation,
+    upscale: bool,
+    align: u32,
+) -> (Vec<Rung>, Vec<FittedRung>) {
     let mut kept: Vec<Rung> = Vec::with_capacity(rungs.len());
     // Request index of each kept rung, and the (output, placement) it got.
     let mut kept_from: Vec<usize> = Vec::with_capacity(rungs.len());
@@ -376,13 +439,14 @@ pub fn fit_rungs(
     for (index, rung) in rungs.iter().enumerate() {
         let requested = (rung.width, rung.height);
         let placement = rung.placement.unwrap_or_else(|| {
-            place(
+            even_offset(place_aligned(
                 source,
                 requested,
                 rung.fit.unwrap_or(fit),
                 rung.orientation.unwrap_or(orientation),
                 rung.upscale.unwrap_or(upscale),
-            )
+                align,
+            ))
         });
         let auto_label = rung.label == format!("{}p", rung.short_side());
         let mut fitted = rung.clone();

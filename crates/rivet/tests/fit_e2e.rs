@@ -217,6 +217,50 @@ fn an_odd_sized_source_is_evened_down_with_its_colour_in_place() {
     assert_round("853", &rungs[0].3, (852, 480));
 }
 
+/// PSNR of `got` (`w` wide) against the top-left `w x h` of `want` (`ww`
+/// wide): what an output that cropped the source scores, where one that
+/// resampled it is a fraction of a sample off everywhere.
+fn crop_psnr(want: &[u8], ww: u32, got: &[u8], (w, h): (u32, u32)) -> f64 {
+    let mut se = 0f64;
+    for y in 0..h {
+        for x in 0..w {
+            let d = f64::from(want[(y * ww + x) as usize]) - f64::from(got[(y * w + x) as usize]);
+            se += d * d;
+        }
+    }
+    10.0 * (255.0f64.powi(2) / (se / f64::from(w * h)).max(1e-9)).log10()
+}
+
+/// A 351x241 source at its own size (no rung given): a codec that codes odd
+/// sizes keeps 351x241; H.264 and H.265, which cannot at 4:2:0, give
+/// 350x240 by cutting the last column and row off — every other sample
+/// where it was, so the output matches the source's top-left 350x240 at the
+/// codec's own quality rather than a resampled picture's.
+#[test]
+fn an_odd_source_keeps_its_size_or_is_cropped_to_even() {
+    let input = make_source((351, 241), (1, 1), ChromaFormat::Yuv444, Wrap::Mp4);
+    let (_, _, _, source) = read_back("source", &input);
+    for codec in ["h264", "h265", "av1", "vp9", "vp8", "mpeg2", "mpeg4", "prores-422"] {
+        // A codec a hardware encoder in the build may take is evened too.
+        let odd = codec::encode::codes_odd_sizes(rivet::settings::parse_video_codec(codec).unwrap().codec());
+        assert!(!(odd && codec.starts_with('h')), "{codec} cannot code an odd 4:2:0 size");
+        let want = if odd { (351, 241) } else { (350, 240) };
+        let (rungs, _) = run(&input, &format!("codec={codec}"));
+        let (_, w, h, bytes) = &rungs[0];
+        assert_eq!((*w, *h), want, "{codec}");
+        if codec.starts_with("prores") {
+            // Decoded 4:2:2 10-bit; its size is what is checked.
+            let probed = rivet::probe_bytes(bytes).unwrap();
+            assert_eq!((probed.stored_width, probed.stored_height), want, "{codec}");
+            continue;
+        }
+        let (_, _, _, luma) = read_back(codec, bytes);
+        let db = crop_psnr(&source, 351, &luma, want);
+        eprintln!("{codec}: {}x{}, {db:.1} dB against the source's top-left", want.0, want.1);
+        assert!(db > 33.0, "{codec}: {db:.1} dB: resampled rather than cropped?");
+    }
+}
+
 #[test]
 fn rungs_a_small_source_collapses_are_merged_and_reported() {
     let input = mp4((640, 480), (1, 1));
