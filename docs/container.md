@@ -31,7 +31,8 @@ container-crate companion — what each file does and *why*.
 | File | Purpose |
 |------|---------|
 | [`lib.rs`](../crates/container/src/lib.rs) | Crate root + the shared `AudioInfo` mux-input type and `MkvColorInfo` / `MkvMasteringMetadata` extended-metadata carriers. |
-| [`sniff.rs`](../crates/container/src/sniff.rs) | `sniff_container` → `ContainerKind` (ISOBMFF, Matroska, AVI, MPEG-TS, MPEG-PS, native FLAC, bare MP3, Ogg, and the raw video elementary streams: Annex-B H.264 / HEVC, IVF, AV1 OBU, MPEG-1/2 video): the one magic-byte detector every dispatch reads. |
+| [`sniff.rs`](../crates/container/src/sniff.rs) | `sniff_container` → `ContainerKind` (ISOBMFF, Matroska, AVI, WAVE, MPEG-TS, Ogg, MPEG-PS, bare ADTS / AC-3 / DTS, native FLAC, bare MP3, and the raw video elementary streams: Annex-B H.264 / HEVC, IVF, AV1 OBU, MPEG-1/2 video): the one magic-byte detector every dispatch reads; `is_audio_only` names the families `demux_audio` alone reads. |
+| [`raw_audio.rs`](../crates/container/src/raw_audio.rs) | Audio inputs with no container of their own: RIFF / RF64 / BW64 WAVE, and bare ADTS AAC, AC-3 / E-AC-3 and DTS streams, read for their audio alone. |
 | [`es/`](../crates/container/src/es/mod.rs) | Raw video elementary streams as inputs: Annex-B H.264 / HEVC (`annexb.rs`), IVF with VP8 / VP9 / AV1 (`ivf.rs`), AV1 OBU streams in the §5 and Annex B formats (`obu.rs`), MPEG-1/2 video (`mpegv.rs`) — indexed whole, one sample per picture, the frame rate the stream states or 25 fps. See [Raw elementary streams](#raw-elementary-streams). |
 | [`ps.rs`](../crates/container/src/ps.rs) | MPEG program stream demux (`.mpg` / `.vob`): MPEG-1 system and MPEG-2 program streams, the first video (MPEG-1 / MPEG-2) and the first MPEG audio or DVD AC-3 sub-stream. |
 | [`webm.rs`](../crates/container/src/webm.rs) | The WebM muxer: VP8 / VP9 with Opus or Vorbis audio, one Matroska file built in memory (SeekHead, Info, Tracks, a Cluster per key frame, Cues). |
@@ -127,6 +128,31 @@ demuxer — same box tree — and `detect_container` returns `"mp4"` for `ftyp m
   is a fallback used when the `mp4` crate reports `"unknown"`
   ([`demux/mp4/mod.rs:93`](../crates/container/src/demux/mp4/mod.rs#L93)) — it recognises ProRes
   regardless of the strict crate's quirks.
+- **Sound descriptions, all three versions.** An audio `stsd` entry is a
+  QuickTime sound description (QuickTime File Format, "Sound Sample
+  Descriptions"; ISO/IEC 14496-12 `AudioSampleEntry` is its version 0): 28
+  bytes of fixed fields, 44 for version 1 (samples per packet, bytes per
+  packet / frame / sample), 64 for version 2 (a float rate, the LPCM format
+  flags, bytes and frames per packet), then the codec's boxes — often inside a
+  `wave` atom. [`demux/audio/qt.rs`](../crates/container/src/demux/audio/qt.rs)
+  reads the entry by its version and looks for a configuration at its level or
+  in `wave`; every codec's config walk goes through it. Reading every entry as
+  version 0 had put the walk 16 or 36 bytes short of its boxes: ALAC in a
+  `.mov` (its cookie in `wave`) came out as "no audio track".
+- **Linear PCM.** `raw ` (8-bit offset binary), `twos` (signed big-endian),
+  `sowt` (signed little-endian), `in24` / `in32`, `fl32` / `fl64` (big-endian
+  unless `wave` holds an `enda` of 1), `lpcm` (version 2: its flags), ISO/IEC
+  23003-5 `ipcm` / `fpcm` (`pcmC`) — normalised to the little-endian forms the
+  PCM decoder takes (`pcm_s16le`, `pcm_s24le`, `pcm_f32le`, …; a byte swap or a
+  sign flip, nothing lost) and read **by chunk**: a QuickTime PCM track's
+  samples are single frames, often with a placeholder `stsz` size of 1, so each
+  `stsc` / `stco` chunk is one packet of `frames × bytes per frame`, lasting
+  its frames' `stts` deltas.
+- **Unreadable audio is named.** The first audio track rivet has no reader for
+  (AMR `samr` / `sawb` in a 3GP — 3GPP TS 26.244 — μ-law, `ima4`, AC-4, …) or
+  could not read (`unreadable_…`) is surfaced by name with no packets instead
+  of as "no audio", so a job refuses it by name
+  ([decision 42](decisions.md#42-a-source-with-audio-never-silently-becomes-a-video-only-output)).
 - **Verbatim AAC ASC.** Audio extraction pulls the `AudioSpecificConfig` bytes
   straight out of the `esds` descriptor, *not* the `mp4` crate's rebuilt form, so
   HE-AAC / xHE-AAC signaling bits survive the copy
@@ -222,9 +248,17 @@ core H.273-equivalent fields; `MkvColorInfo` /
 HDR signalling and future SEI passthrough have the data without an API churn
 across crates. The first audio track is read when its codec is `A_AAC`,
 `A_OPUS` (`CodecPrivate` *is* the RFC 7845 OpusHead body, handed to the muxer
-verbatim), `A_AC3`, `A_EAC3`, `A_DTS`, `A_VORBIS`, `A_MPEG/L1`–`L3`, `A_FLAC`
-or `A_ALAC`; any other is dropped with a warning
-([`demux/audio/mod.rs`](../crates/container/src/demux/audio/mod.rs)).
+verbatim), `A_AC3` (and `/BSID9`, `/BSID10`), `A_EAC3`, `A_DTS`, `A_VORBIS`,
+`A_MPEG/L1`–`L3`, `A_FLAC`, `A_ALAC`, linear PCM — `A_PCM/INT/LIT`,
+`A_PCM/INT/BIG`, `A_PCM/FLOAT/IEEE` (the codec mappings: `BitDepth` gives the
+size; 8-bit is unsigned, wider integers signed; floats little-endian),
+normalised to the little-endian forms the PCM decoder takes, each block lasting
+its frames — or `A_MS/ACM` whose WAVEFORMATEX is PCM, float, MPEG audio, AC-3
+or DTS. Any other codec is **surfaced by name with no packets** (`truehd`,
+`wavpack`, `wmav2`, …), as is a track whose `CodecPrivate` will not read
+([`demux/audio/mod.rs`](../crates/container/src/demux/audio/mod.rs)): the job
+refuses it by name rather than writing the video alone
+([decision 42](decisions.md#42-a-source-with-audio-never-silently-becomes-a-video-only-output)).
 
 ### Sample aspect ratio
 
@@ -341,6 +375,27 @@ sample's span (zero-copy; only Annex-B AV1 and MPEG-2 field pairs are
 rewritten), and the colour and sample aspect come from the bitstream exactly
 as for a transport stream (`demux::hdr::resolve_source_colour`).
 
+## Bare audio inputs: WAVE, ADTS, AC-3, DTS
+
+**What.** [`raw_audio.rs`](../crates/container/src/raw_audio.rs) reads audio
+files that have no container of their own; `sniff_container` labels them
+`wav`, `aac`, `ac3` and `dts` (`ContainerKind::is_audio_only`), and
+`streaming::demux_audio` reads them for the audio-only output (a single-file
+job turns into one, as for a bare MP3):
+
+| Input | Read as |
+|---|---|
+| WAVE (`RIFF` / `RF64` / `BW64` … `WAVE`) | the `fmt ` WAVEFORMATEX: `WAVE_FORMAT_PCM` (8–32 bits), `WAVE_FORMAT_IEEE_FLOAT` (32 / 64), `WAVE_FORMAT_EXTENSIBLE` naming either — cut into packets of 4096 frames; MPEG audio and AC-3 / DTS under their WAVE tags as those streams; any other format (ADPCM, A-law, WMA, …) named with no packets. RF64's `ds64` gives the 64-bit `data` size (EBU Tech 3306); a `data` size of zero or one past the end (a recorder that never came back to write it) reads to the end of the file. The channels are taken in WAVE order for their count; `dwChannelMask` is not read. |
+| ADTS (`.aac`) | ADTS frames (ISO/IEC 13818-7 §6.2), behind any ID3v2 tag: headers stripped, the AudioSpecificConfig synthesised from the first (or its in-band PCE) — the transport-stream reader's `aac_from_adts_es` |
+| AC-3 / E-AC-3 (`.ac3`, `.eac3`) | syncframes by the size their BSI states, the first frame's `bsid` choosing which (`ac3_from_es`, `eac3_from_es`) |
+| DTS (`.dts`) | core frames with any DTS-HD extension substream after them (`dts_from_es`; the core is decoded, the extension carried) |
+
+**Why frames that chain.** A sync word is 12 to 32 bits of pattern, and the
+bytes of an unrecognised file will contain one somewhere. An elementary stream
+is only taken when its first header's length lands on a second header and that
+one's on a third (or, for a file of two frames, the two fill it exactly). None
+of these states an encoder delay, so the track has no edit.
+
 ## MPEG-PS (`.mpg` / `.vob`)
 
 **What.** [`ps.rs`](../crates/container/src/ps.rs) reads a program stream
@@ -432,10 +487,34 @@ demuxer has to do work the other demuxers get for free:
   ([`ts/streaming.rs:386`](../crates/container/src/ts/streaming.rs#L386)).
 - Audio stream types: `0x0F` AAC-ADTS, `0x03` / `0x04` MPEG-1 / MPEG-2 audio
   (labelled `mp3` or `mp2` by the frame headers' layer), `0x81` AC-3 (ATSC
-  A/53), `0x87` E-AC-3 (ATSC), and `0x06` PES-private *when* the ES descriptor
-  loop carries a `registration_descriptor` tagged `"AC-3"` / `"EAC3"` (DVB /
-  ETSI TS 101 154) ([`ts/pat_pmt.rs`](../crates/container/src/ts/pat_pmt.rs)).
-  Random PES-private streams (DVB subtitles, teletext) are dropped silently.
+  A/53), `0x87` / `0x84` E-AC-3 (ATSC / Blu-ray), `0x82` / `0x85` / `0x86` DTS
+  (Blu-ray: DTS, DTS-HD High Resolution, Master Audio — the core decoded, the
+  extension carried), and `0x06` PES-private *when* the ES descriptors name the
+  codec: a `registration_descriptor` tagged `"AC-3"` / `"EAC3"` (DVB / ETSI TS
+  101 154), `"DTS1"`–`"DTS3"`, or `"Opus"`; or a DVB descriptor (ETSI EN 300
+  468: AC-3 `0x6A`, enhanced AC-3 `0x7A`, DTS `0x7B`)
+  ([`ts/pat_pmt.rs`](../crates/container/src/ts/pat_pmt.rs)). PES-private
+  streams that name no audio codec (DVB subtitles, teletext, data) are not
+  audio and are skipped. Audio a program names but rivet has no reader for —
+  `0x80` Blu-ray LPCM, `0x83` TrueHD, `0x11` LATM AAC, `0x1C`, AC-4 — is
+  surfaced by name with no packets, as is a stream whose packets will not read
+  (`unreadable_aac`, …); the stream rivet reads wins when a program has both.
+- **Opus** (the Opus-in-TS mapping, ETSI's draft TS "Opus Interactive Audio
+  Codec Transport Multiplexing" v0.1.3: the `"Opus"` registration, DVB's
+  extension descriptor `0x7F` with tag extension `0x80` carrying
+  `channel_config_code`): each access unit's `opus_control_header` (prefix
+  `0x3FF`, the trim flags, the 0xFF-continued payload size) is stripped, leaving
+  the Opus packet — for several streams the self-delimited packets and the last,
+  the form an MP4 or Ogg sample takes. The first AU's `start_trim` is the
+  OpusHead pre-skip; `channel_config_code` 0x00 (dual mono), 0x01–0x08 (the
+  Vorbis order, RFC 7845's stream counts) and 0x80–0x86 (uncoupled streams) give
+  the OpusHead (Table 4-3). The explicit form (whose code the draft gives both
+  as 0x81 and in the table as a channel count) is refused by name, and the last
+  AU's `end_trim` is not applied.
+- **Audio-only transport streams** (no program names a video stream rivet
+  reads) are read by `demux_audio`: the first program with audio, its stream
+  read as beside video and placed by its own timestamps across time-base
+  breaks ([`ts::read_audio_only`](../crates/container/src/ts/mod.rs)).
 
 **Encrypted-stream guard.** A scrambled packet (`transport_scrambling_control
 != 0`) on the active video PID trips a one-time typed warn and switches the
@@ -528,6 +607,12 @@ another implementation rather than the reference and were dropped
 | anything else — ADPCM, A-law / µ-law, WMA, ADTS-framed AAC, AC-3 / DTS not stored a frame to a chunk | named (`wmav2`, `adpcm_ms`, `aac_adts`, `wave_format_0x….`) with no packets | dropped, by name |
 
 ---
+
+**Audio-only AVIs.** A file with no `vids` stream (an `-vn` capture, PCM in an
+AVI) is not refused: `streaming::demux_audio` reads its first audio stream
+exactly as beside video (`avi::read_audio_only`), and a job writes it as
+audio-only output. A file that declares a video stream rivet cannot read keeps
+the video demuxer's error.
 
 ## Annex-B conversion
 
@@ -1026,8 +1111,10 @@ samples from the start of the decoded stream with the pre-skip in, the last
 page's ending the stream at the presented length. Writing Vorbis: the
 identification header alone on the first page, the comment and setup headers
 ending the second, then the packets, granules the decoded samples. Reading
-takes the first Opus or Vorbis logical stream (others skipped; Theora video
-refused by name), times each packet by its own duration (an Opus packet's from
+takes the first Opus, Vorbis or FLAC logical stream (others skipped; Theora video
+refused by name; FLAC per Xiph's "FLAC to Ogg mapping": the `0x7F "FLAC"`
+packet's STREAMINFO, metadata-block header packets, then a frame per packet,
+each timed by its own sample count), times each packet by its own duration (an Opus packet's from
 its TOC, a Vorbis packet's from its block sizes), and turns the granule
 positions into the track's presentation edit: the Opus pre-skip and end, or a
 Vorbis stream's leading trim and end — the same edit an MP4 edit list states,

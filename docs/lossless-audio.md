@@ -143,8 +143,13 @@ encoder reorder:
 | 7 | C L R Ls Rs Cs LFE | 6.1: FL FR FC LFE BC SL SR |
 | 8 | C Lc Rc L R Ls Rs LFE | 7.1(wide): FL FR FC LFE BL BR FLC FRC |
 
-The ALAC decoder reports four channels as 4.0, so a downmix of one weighs
-the right speakers. The pipeline has no label for eight channels' front
+These are the default layouts of Apple's ALAC magic-cookie description (its
+`kALACChannelLayoutTag_*` table), and the ALAC decoder reports the layout for
+every count it has labels for — 4.0 for four channels, so a downmix of one
+weighs the right speakers, and 6.1 for seven, whose `Ls` / `Rs` flank the
+centre surround at the sides (rivet's named `6.1`, the WAVE order; an
+implementation that reads them as the back pair calls the same samples
+6.1(back), FL FR FC LFE BL BR BC — [decision 42](decisions.md#42-a-source-with-audio-never-silently-becomes-a-video-only-output)). The pipeline has no label for eight channels' front
 left- and right-of-centre pair, so an eight-channel ALAC source is taken as
 7.1, that pair in the SL / SR slots. On the way out, a lossless encode keeps
 the samples in the slots they arrived in: a quad or 7.1 source written as

@@ -399,8 +399,11 @@ then interleaved into the output container. Under the default
   a single-file MP4 (at 16 kHz and up; CMAF has no MP3).
 - **Transcode to Opus**: what can be decoded but not carried — MP3 for HLS,
   MP2, Vorbis, linear PCM, FLAC, ALAC, … — mono through 7.1.
-- **Drop** (video-only, with a warn): a track that can be neither carried nor
-  decoded.
+- **Refused**: a track that can be neither carried nor decoded — a codec
+  rivet has no reader or decoder for (the demuxer names it, with no packets),
+  packets that will not read, a track the muxer refuses — fails the job by
+  name. The output is never video-only unless `Drop` asked for that
+  ([decision 42](decisions.md#42-a-source-with-audio-never-silently-becomes-a-video-only-output)).
 
 The other policies force a codec, every encoder the workspace's own:
 `ForceOpus`, `ForceMp3`, `ForceAac`, `ForceHeAac`, `ForceHeAacV2`,

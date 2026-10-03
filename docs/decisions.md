@@ -43,11 +43,13 @@ issues); SVT-AV1 is a noted future encoder candidate. Not actionable now.
 [`transcode.rs`](../crates/rivet/src/transcode.rs) for the one-call path,
 and [`codec/audio/`](../crates/codec/src/audio/).
 
-### 2. Audio: passthrough what's clean, transcode the rest to Opus, drop the unplayable
+### 2. Audio: passthrough what's clean, transcode the rest to Opus, refuse the unplayable
 **Decision.** AAC / Opus / AC-3 / E-AC-3 / DTS pass through verbatim, and so does
 MP3 into a single-file MP4 (and Opus and Vorbis into a WebM); Vorbis, MP2, PCM,
-FLAC and ALAC (and MP3 for HLS) are transcoded to Opus; anything else is
-dropped (video-only) with a warning. Every other codec rivet reads is an
+FLAC and ALAC (and MP3 for HLS) are transcoded to Opus; anything else refuses
+the job by name — it was dropped (video-only) with a warning until 2026-10-03,
+and `audio=drop` is now the only way to a video-only output from a source with
+sound (§42). Every other codec rivet reads is an
 output too, asked for by name — MP3 (`audio=mp3`, §21), AAC-LC, HE-AAC and
 HE-AAC v2 (`audio=aac|he-aac|he-aacv2`, §26), Vorbis, AC-3, E-AC-3 and DTS
 (§37), FLAC / ALAC (§27) — and the output channel layout is a knob of its own
@@ -1512,3 +1514,83 @@ conversion (`width / 2` where the pipeline takes `ceil`).
 [`decode/amf_dec.rs`](../crates/codec/src/decode/amf_dec.rs),
 [`decode/nvdec/`](../crates/codec/src/decode/nvdec/mod.rs),
 [codec-decode.md](codec-decode.md), [codec-encode.md](codec-encode.md).
+
+## Inputs
+
+### 42. A source with audio never silently becomes a video-only output
+**Decision.** On 2026-10-03 a cross-validation run against an oracle found
+sources whose sound rivet dropped without a word: ALAC in a `.mov`, PCM in a
+QuickTime or Matroska master, Opus and DTS in a transport stream — each read
+as "no audio track", and the transcode wrote the picture alone. Those formats
+are now read (container.md), and the rule behind the drops is reversed:
+
+- **A demuxer names what it cannot read.** An audio track whose codec has no
+  reader in rivet (AMR in a 3GP, TrueHD, WMA, Blu-ray LPCM, …) or whose
+  configuration or packets will not parse is surfaced as a track named for it
+  (`amr_nb`, `truehd`, `wmav2`, `unreadable_aac`, …) with no packets — never as
+  no track. MP4 / MOV, Matroska, MPEG-TS, AVI and WAVE all do this; only a
+  stream that is not audio (a PES-private subtitle stream, a data track) is
+  skipped.
+- **A job refuses a track it cannot use**, naming the codec and why: no
+  packets, no passthrough form and no decoder, a stream the decoder refuses,
+  or audio the output's muxer refuses. The message says how to get the video
+  alone: `--audio drop` (`audio=drop`), the existing policy, now the only way
+  to a video-only output from a source with sound. An audio-only output is
+  told why and nothing more. The one-call `transcode_bytes` path, which has
+  no settings, refuses the same way (and now also decodes MP2, FLAC and ALAC
+  instead of dropping them).
+- `audio-decode-deny` keeps its refusals (§2).
+
+**Why.** A video without its sound is a wrong output that looks like a right
+one: nothing in the file says sound was ever there, the job reports success,
+and the loss is found by a person, later. A warning in a log is not seen. An
+error costs one re-run with an explicit flag when dropping the audio is what
+was wanted, and nothing when it was not; the default should be the safe one.
+
+**Also decided with it.**
+- **Inputs with no container are read** (R08): WAVE (RIFF / RF64 / BW64), bare
+  ADTS / AC-3 / E-AC-3 / DTS streams (audio only), and Annex-B H.264 / HEVC,
+  AV1 OBU streams, MPEG-1/2 video and IVF (video only). Each is sniffed only
+  when several of its frames chain, so a stray sync word in an unknown file is
+  not taken for a stream. Raw video has no clock: its rate is the bitstream's
+  own statement (VUI timing, `timing_info()`, `frame_rate_code`), else 25 fps —
+  the PAL rate, MPEG-2's first whole-number `frame_rate_code`, accepted by
+  every encoder and player — logged as an assumption; `input-fps` sets it for
+  the four raw video formats and is refused for anything else (IVF included):
+  a container times its own frames, and retiming one silently is the bug the
+  setting must not introduce.
+- **H.263 decodes only in software**: a 3GP `s263` track is the H.263
+  baseline syntax, which the MPEG-4 Part 2 decoder reads as short-header VOPs;
+  no hardware tier is known to take it, so none is handed it.
+- **Opus in MPEG-TS** follows the only published mapping, ETSI's draft TS
+  "Opus Interactive Audio Codec Transport Multiplexing" v0.1.3: the
+  `opus_control_header`'s start trim becomes the OpusHead pre-skip (so a
+  decoded track loses the encoder's lookahead, as RFC 7845 asks of Ogg and MP4
+  — an oracle that ignores the trim decodes the same samples 312 later); the
+  draft's explicit channel configuration, whose code it gives two ways, is
+  refused by name.
+- **ALAC reports its layout for every channel count**, from the default
+  layouts in Apple's ALAC magic-cookie description: seven channels
+  (`kALACChannelLayoutTag_AAC_6_1`, `C L R Ls Rs Cs LFE`) are 6.1 — FL FR FC
+  LFE BC SL SR in the pipeline's order, the centre surround at the back and
+  its pair at the sides, as rivet's named `6.1` (WAVE order) lays them out.
+  The decoder used to report `None` for seven channels, which by the
+  `AudioDecoder::layout` contract means the same default but read as "unknown"
+  to anyone checking. An oracle that calls the same stream 6.1(back) — the
+  surround pair behind — orders the channels FL FR FC LFE BL BR BC; the
+  samples are the same, the reading of `Ls` / `Rs` differs, and rivet keeps its
+  own `6.1` so a 6.1 source of any codec lands on one layout.
+
+**Where.** [`demux/audio/qt.rs`](../crates/container/src/demux/audio/qt.rs),
+[`demux/audio/mod.rs`](../crates/container/src/demux/audio/mod.rs),
+[`ts/pat_pmt.rs`](../crates/container/src/ts/pat_pmt.rs),
+[`ts/audio.rs`](../crates/container/src/ts/audio.rs),
+[`raw_audio.rs`](../crates/container/src/raw_audio.rs),
+[`es/`](../crates/container/src/es/mod.rs),
+[`ogg.rs`](../crates/container/src/ogg.rs),
+[`streaming.rs`](../crates/container/src/streaming.rs) (`demux_audio`),
+[`job/audio.rs`](../crates/rivet/src/job/audio.rs) (`prepare_audio`,
+`fit_single_file`, `audio_unusable`),
+[`transcode.rs`](../crates/rivet/src/transcode.rs),
+[`decode/alac.rs`](../crates/codec/src/audio/decode/alac.rs);
+[container.md](container.md), [cli.md](cli.md).

@@ -1841,7 +1841,7 @@ per source codec:
 | Any decodable source with `--audio vorbis` | **Decode → remix → encode Vorbis** | WebM `A_VORBIS`, or an Ogg file |
 | Any decodable source with `--audio mp3` or `--mode audio` | **Decode → remix (≤ 2 ch) → encode MP3** | MP3 frames |
 | Any decodable source with `--audio flac` / `alac` ([lossless audio](lossless-audio.md)); a source already in that codec is copied | **Decode → (remix only if asked) → encode losslessly** | FLAC + `dfLa` / ALAC + cookie |
-| everything else | **Drop** (video-only, warn) | — |
+| everything else (a codec with no reader or decoder, packets that do not read, a track the muxer refuses) | **Refused** by name — the job fails, saying how to ask for the video alone ([decision 42](decisions.md#42-a-source-with-audio-never-silently-becomes-a-video-only-output)) | — (`--audio drop`: video only) |
 
 "Decodable" is the job's list (`mp3`, `mp2`, `vorbis`, `opus`, `ac3`, `eac3`,
 `dts`, `flac`, `alac`, linear PCM, and AAC whose first access unit the AAC

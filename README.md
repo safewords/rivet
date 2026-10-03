@@ -662,6 +662,7 @@ FFmpeg](#no-ffmpeg).
 | MPEG-2         | ✅             | —          | —          | ✅ `mpeg2`           |
 | MPEG-1         | —              | —          | —          | ✅ `mpeg2`           |
 | MPEG-4 Part 2  | ✅             | —          | —          | ✅ `mpeg4`           |
+| H.263 (3GP `s263`) | —          | —          | —          | ✅ `mpeg4` (short header) |
 | ProRes         | —              | —          | —          | ✅ `prores`          |
 - ‡ **VP9 behind a guard** (`decode/vp9_hw_guard.rs`): each packet's headers
   are read before a hardware decoder sees it, and what that vendor's decoder
@@ -831,15 +832,25 @@ supports AV1 plays.
 
 | Container             | Demux (in) | Mux (out) |
 |-----------------------|:----------:|:---------:|
-| MP4 / MOV             | ✅         | ✅ (single-file + CMAF) |
-| MKV / WebM            | ✅         | ✅ (WebM: VP8 / VP9 + Opus or Vorbis) |
-| MPEG-TS               | ✅         | — |
-| AVI (+OpenDML >1 GiB) | ✅         | — |
+| MP4 / MOV / 3GP       | ✅ (QuickTime sound descriptions v0–v2: ALAC, linear PCM `sowt` / `twos` / `raw ` / `in24` / `in32` / `fl32` / `fl64` / `lpcm`, ISO `ipcm` / `fpcm`; H.263 `s263`) | ✅ (single-file + CMAF) |
+| MKV / WebM            | ✅ (PCM `A_PCM/INT/LIT`, `/INT/BIG`, `/FLOAT/IEEE`, `A_MS/ACM`) | ✅ (WebM: VP8 / VP9 + Opus or Vorbis) |
+| MPEG-TS / M2TS        | ✅ (audio: AAC, MP2 / MP3, AC-3, E-AC-3, Opus, DTS; audio-only streams too) | — |
+| MPEG-PS (`.mpg` / `.vob`) | ✅ | — |
+| AVI (+OpenDML >1 GiB) | ✅ (VP8 `VP80`; audio-only files too) | — |
 | CMAF / HLS            | —          | ✅ (segments + master/media playlists) |
 | MP3 (`.mp3` / `.mp2`) | ✅ (audio only) | ✅ (`.mp3`, audio-only output) |
 | FLAC (`.flac`)        | ✅ (audio only) | ✅ (audio-only output) |
 | M4A                   | ✅ (as MP4) | ✅ (audio-only output) |
-| Ogg (`.ogg` / `.opus`) | ✅ (Opus, Vorbis; audio only) | ✅ (Opus, Vorbis; audio-only output) |
+| Ogg (`.ogg` / `.opus` / `.oga`) | ✅ (Opus, Vorbis, FLAC; audio only) | ✅ (Opus, Vorbis; audio-only output) |
+| WAV (RIFF, RF64 / BW64) | ✅ (PCM, float, `WAVE_FORMAT_EXTENSIBLE`; audio only) | — |
+| Bare audio streams: ADTS `.aac`, `.ac3` / `.eac3`, `.dts` | ✅ (audio only) | — |
+| Bare video streams: Annex-B `.h264` / `.264`, `.hevc` / `.h265`, AV1 `.obu` (§5 and Annex B), MPEG-1 / 2 `.m2v` / `.mpv` / `.m1v` | ✅ (video only; the stream's own frame rate, else 25 fps — `--input-fps` sets it) | — |
+| IVF (`.ivf`: VP8, VP9, AV1) | ✅ (video only; timed by its timestamps) | — |
+
+An audio track in a format rivet cannot read is reported by name (`probe`
+shows it), and a job refuses it rather than dropping it — see
+[Audio](#audio). The details of each reader are in
+[container.md](docs/container.md).
 
 Still images (JPEG, PNG, WebP, AVIF, GIF, TIFF, BMP, HEIC in; AVIF, WebP,
 JPEG, PNG out) are the `image` feature's, every codec the workspace's own — see
@@ -866,8 +877,11 @@ no LAME, no minimp3, no lewton, no FFmpeg.
 | ALAC   | ✅ (`--audio alac`) | ✅ (`crates/lossless`) | ✅ `alac` |
 
 `AudioCodecPolicy::Auto` passes through AAC/Opus/AC-3/E-AC-3/DTS, and MP3 into a
-single-file MP4 (Opus and Vorbis into a WebM); transcodes the rest to Opus, and
-drops what cannot be decoded. Every passthrough codec is also decoded when a
+single-file MP4 (Opus and Vorbis into a WebM) and transcodes the rest to Opus.
+A source track it can neither carry nor decode — a codec with no reader or
+decoder (AMR, TrueHD, WMA, …), packets that will not read — fails the job by
+name: rivet never writes a video-only output from a source with sound unless
+`--audio drop` asks for one ([decision 42](docs/decisions.md#42-a-source-with-audio-never-silently-becomes-a-video-only-output)). Every passthrough codec is also decoded when a
 job needs its PCM — a downmix, an audio filter, another codec. The codecs live
 in their own repositories: [rivet-opus](https://github.com/safewords/rivet-opus),
 [rivet-mp3](https://github.com/safewords/rivet-mp3),

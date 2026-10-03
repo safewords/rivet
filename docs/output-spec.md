@@ -276,7 +276,7 @@ every rung one `Quality`.
 
 | `AudioCodecPolicy` | Behavior |
 |---------------|----------|
-| `Auto` *(default)* | Passthrough AAC / Opus / AC-3 / E-AC-3 / DTS verbatim, and MP3 into a single-file MP4 (Opus and Vorbis into a WebM); transcode the rest (Vorbis, MP2, PCM, FLAC, ALAC; MP3 for HLS) → Opus; drop what cannot be decoded. For `audio_only()` it means **MP3**: an MP3 source passes through, the rest is encoded. |
+| `Auto` *(default)* | Passthrough AAC / Opus / AC-3 / E-AC-3 / DTS verbatim, and MP3 into a single-file MP4 (Opus and Vorbis into a WebM); transcode the rest (Vorbis, MP2, PCM, FLAC, ALAC; MP3 for HLS) → Opus; a track that can be neither carried nor decoded refuses the job, by name (`Drop` writes the video alone). For `audio_only()` it means **MP3**: an MP3 source passes through, the rest is encoded. |
 | `ForceOpus` (`opus`) | Always produce Opus (passthrough Opus, transcode everything else; 1–8 channels). Single-file MP4 / MOV / WebM, HLS, an audio-only Ogg Opus file (the default file for it) or `.m4a`. |
 | `ForceMp3` (`mp3`) | Always produce **MP3** (passthrough MP3, encode everything else — CBR, stereo at most). Single-file MP4 and audio-only; refused for HLS. |
 | `ForceAac` (`aac`) | Always produce **AAC-LC** (passthrough AAC, encode everything else — mono to 7.1, constant rate). The audio every browser and device plays, older iOS and Safari included (Opus in MP4 needs iOS / Safari 17). Single-file MP4 / MOV, HLS and an audio-only `.m4a`. |
