@@ -483,6 +483,39 @@ fn an_avif_we_wrote_comes_back_with_its_transparency() {
     assert!(near(px(&back, 3, 3), RED, 40), "{:?}", px(&back, 3, 3));
 }
 
+/// Grey, colour and colour-with-alpha pictures through rivet's AVIF and
+/// back through rivet's reader: each above a PSNR floor, the grey one grey
+/// at its own levels (full range end to end: a level is not stretched), the
+/// alpha close to the source's.
+#[test]
+fn grey_rgb_and_rgba_avif_round_trip_at_their_own_levels() {
+    let (w, h) = (96u32, 64u32);
+    let grey = RgbaImage::from_fn(w, h, |x, y| {
+        let v = (x * 255 / (w - 1)) as u8 / 2 + ((y * 3) % 64) as u8;
+        [v, v, v, 255]
+    });
+    let colour = picture(w, h);
+    let mut rgba = picture(w, h);
+    for (x, y, p) in rgba.enumerate_pixels_mut() {
+        p[3] = ((x + y) * 255 / (w + h - 2)) as u8;
+    }
+    for (name, img, alpha) in [("grey", &grey, false), ("rgb", &colour, false), ("rgba", &rgba, true)] {
+        let avif = crate::avif::encode_rgba(img.as_raw(), w, h, alpha, 90).unwrap();
+        let back = read_back(&avif);
+        let db = psnr(&back, img);
+        println!("{name}: {db:.2} dB");
+        assert!(db > 36.0, "{name}: {db:.2} dB");
+        if name == "grey" {
+            // The darkest and lightest levels stay where they were.
+            let (lo, hi) = img.pixels().fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
+            let (blo, bhi) = back.pixels().fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
+            assert!(blo.abs_diff(lo) <= 3 && bhi.abs_diff(hi) <= 3, "{lo}..{hi} came back {blo}..{bhi}");
+        }
+        let worst_alpha = img.pixels().zip(back.pixels()).map(|(a, b)| a[3].abs_diff(b[3])).max().unwrap();
+        assert!(worst_alpha <= if alpha { 8 } else { 0 }, "{name}: alpha off by {worst_alpha}");
+    }
+}
+
 /// A short H.264 clip to take stills from: four seconds of the synthetic
 /// test pattern at 320x240 and 25 fps, made by this workspace's own encoder
 /// and muxer (`crate::synth`).
