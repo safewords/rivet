@@ -38,6 +38,7 @@ pub(crate) struct TranscodeArgs {
     pub audio_filter: Option<String>,
     pub subtitles: String,
     pub max_fps: Option<String>,
+    pub input_fps: Option<String>,
     pub gpu: Option<u32>,
     pub single_gpu: bool,
     pub gpu_family: Option<GpuFamilyArg>,
@@ -126,6 +127,9 @@ pub(crate) fn run(args: TranscodeArgs) -> Result<()> {
     }
     if let Some(v) = &args.max_fps {
         settings.apply_kv("max-fps", v).context("parsing --max-fps")?;
+    }
+    if let Some(v) = &args.input_fps {
+        settings.apply_kv("input-fps", v).context("parsing --input-fps")?;
     }
     args.fitting.apply(&mut settings)?;
     args.file.apply(&mut settings)?;

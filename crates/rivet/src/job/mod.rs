@@ -32,6 +32,7 @@ use crate::validate::needs_chroma_downsample;
 
 mod audio;
 mod audio_only;
+pub(crate) use audio::audio_unusable;
 mod file_mux;
 mod pump;
 mod run;
@@ -238,6 +239,29 @@ pub fn single_file_extension(data: &[u8]) -> &'static str {
     }
 }
 
+/// `header` with the spec's `input-fps` in place of its frame rate, for a raw
+/// video elementary stream: no container times one, so the rate its
+/// bitstream states, or the default assumed when it states none, gives way
+/// to the one asked for — the duration with it. Any other input is timed by
+/// its container, and the setting is refused rather than ignored.
+pub(crate) fn with_input_frame_rate(mut header: DemuxHeader, input: &[u8], spec: &OutputSpec) -> Result<DemuxHeader> {
+    let Some(fps) = spec.input_frame_rate else { return Ok(header) };
+    let kind = container::sniff_container(input);
+    if !kind.is_video_elementary_stream() {
+        bail!(
+            "input-fps sets the frame rate of a raw video elementary stream (.h264, .hevc, .obu, .m2v); \
+             this {} input times its own frames",
+            kind.label()
+        );
+    }
+    tracing::info!(stream_fps = header.info.frame_rate, fps, "input-fps: the elementary stream's frame rate set");
+    header.info.frame_rate = fps;
+    if header.info.total_frames > 0 {
+        header.info.duration = header.info.total_frames as f64 / fps;
+    }
+    Ok(header)
+}
+
 async fn run_job_inner(
     input: Bytes,
     spec: &OutputSpec,
@@ -268,7 +292,7 @@ async fn run_job_inner(
             },
         };
         (
-            demuxer.header().clone(),
+            with_input_frame_rate(demuxer.header().clone(), &input, spec)?,
             demuxer.audio().cloned(),
             demuxer.audio_edit(),
             demuxer.audio_gaps().to_vec(),
@@ -388,17 +412,14 @@ async fn run_job_inner(
         None
     };
 
-    // An audio filter that reaches no audio is a mistake worth stopping for.
-    // The demuxer drops a track it can neither pass through nor decode (DTS,
-    // TrueHD, …) and hands us `None`, which would otherwise make `--audio-filter`
-    // and `--audio-bitrate` evaporate into a warning buried in the log while the
-    // output silently ships with no audio at all.
+    // An audio filter that reaches no audio is a mistake worth stopping for:
+    // the input has no audio track at all. (A track the demuxer could not
+    // read comes back named, with no packets, and `prepare_audio` refuses
+    // it by name.)
     if audio_track.is_none() && !spec.audio_filters.is_empty() {
         bail!(
-            "audio filters were requested ({}) but this input has no usable audio track — \
-             either it has none, or its codec can be neither passed through (AAC / Opus / \
-             AC-3 / E-AC-3) nor decoded (Vorbis / MP3). Check the demux warning above for \
-             the codec, and drop `--audio-filter` to continue without it.",
+            "audio filters were requested ({}) but this input has no audio track; drop `--audio-filter` to \
+             continue without it.",
             codec::audio::filter::chain_to_string(&spec.audio_filters)
         );
     }
@@ -406,7 +427,7 @@ async fn run_job_inner(
     let prepared_audio = prepare_audio(audio_track.as_ref(), audio_edit, &audio_gaps, AudioRequest::of(spec))
         .context("preparing audio")?;
     let prepared_audio = match spec.mode {
-        OutputMode::SingleFile => fit_single_file(prepared_audio, spec.container),
+        OutputMode::SingleFile => fit_single_file(prepared_audio, spec.container)?,
         OutputMode::Hls { .. } | OutputMode::AudioOnly => prepared_audio,
     };
     let stereo_fallback = stereo_fallback(spec, prepared_audio.as_ref(), || {
@@ -679,7 +700,8 @@ async fn run_splice_job_inner(
     for (i, clip) in clips.iter().enumerate() {
         let demuxer = streaming::demux_streaming_shared(clip.input.clone())
             .with_context(|| format!("demuxing splice clip {i}"))?;
-        let header = demuxer.header().clone();
+        let header = with_input_frame_rate(demuxer.header().clone(), &clip.input, spec)
+            .with_context(|| format!("splice clip {i}"))?;
         spec.hooks.emit_probe(
             i,
             crate::hooks::MediaSummary::of_header(
@@ -944,7 +966,7 @@ async fn run_splice_job_inner(
     }
     let effective_total = total_known.then_some(effective_total);
     let combined_audio = match spec.mode {
-        OutputMode::SingleFile => fit_single_file(combined_audio, spec.container),
+        OutputMode::SingleFile => fit_single_file(combined_audio, spec.container)?,
         OutputMode::Hls { .. } | OutputMode::AudioOnly => combined_audio,
     };
     let audio_handling = describe_audio(combined_audio.as_ref(), combined_stereo.as_ref());

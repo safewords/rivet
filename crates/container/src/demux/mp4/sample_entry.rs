@@ -153,6 +153,14 @@ pub(crate) fn has_vp08_sample_entry(data: &[u8]) -> bool {
     first_video_sample_entry(data).is_some_and(|(fourcc, _)| &fourcc == b"vp08")
 }
 
+/// Whether the video track is H.263 (3GPP TS 26.244's `s263` sample entry,
+/// with its `d263` box; `h263` as some QuickTime writers name it). The
+/// samples are H.263 pictures, which the MPEG-4 Part 2 decoder reads as
+/// short-header VOPs (ISO/IEC 14496-2 §6.2.5.2).
+pub(crate) fn has_h263_sample_entry(data: &[u8]) -> bool {
+    first_video_sample_entry(data).is_some_and(|(fourcc, _)| matches!(&fourcc, b"s263" | b"h263"))
+}
+
 /// What an `mp4v` sample entry carries (ISO/IEC 14496-14 §5.6): the codec its
 /// `esds` object type names — `mpeg4` (0x20, MPEG-4 Part 2 Visual), `mpeg2`
 /// (0x60..=0x65, the MPEG-2 Video profiles), `mpeg1` (0x6A) — and its

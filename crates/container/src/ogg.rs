@@ -15,6 +15,11 @@
 //! - **Vorbis**: the identification header alone on the first page, the
 //!   comment and setup headers ending the second, then the packets. Granule
 //!   positions count samples of the decoded stream; the last one ends it.
+//! - **FLAC** (read only; Xiph's "FLAC to Ogg mapping"): a first packet of
+//!   `0x7F "FLAC"`, the mapping version, the count of header packets that
+//!   follow, the `fLaC` marker and STREAMINFO; then one metadata block per
+//!   header packet; then one FLAC frame per packet. Each frame states its own
+//!   sample count, so the track needs no edit.
 //!
 //! [`write_audio`] takes what the job layer's audio pipeline produces (the
 //! packets with their durations, and the presentation edit); [`read_audio`]
@@ -121,10 +126,12 @@ pub fn read_audio(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
                 kind = Some(Kind::Opus);
             } else if p.data.starts_with(b"\x01vorbis") {
                 kind = Some(Kind::Vorbis);
+            } else if p.data.starts_with(b"\x7FFLAC") {
+                kind = Some(Kind::Flac);
             } else if p.data.starts_with(b"\x80theora") {
                 bail!("an Ogg file with Theora video: rivet reads Ogg audio only");
             } else {
-                continue; // another codec's stream (skeleton, FLAC, ...)
+                continue; // another codec's stream (skeleton, Speex, ...)
             }
             serial = Some(p.serial);
         }
@@ -136,9 +143,12 @@ pub fn read_audio(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
         }
         let need = match kind {
             Some(Kind::Opus) => 2,
+            Some(Kind::Flac) => 1,
             _ => 3,
         };
-        if headers.len() < need {
+        // FLAC's header packets after the first are metadata blocks (their
+        // first byte a block type, never a frame's 0xFF sync).
+        if headers.len() < need || (kind == Some(Kind::Flac) && packets.is_empty() && p.data.first() != Some(&0xFF)) {
             headers.push(p.data);
             continue;
         }
@@ -158,12 +168,39 @@ pub fn read_audio(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
             break;
         }
     }
-    let kind = kind.context("Ogg: no Opus or Vorbis stream")?;
+    let kind = kind.context("Ogg: no Opus, Vorbis or FLAC stream")?;
     if packets.is_empty() {
         bail!("Ogg: the {} stream has no audio packets", kind.name());
     }
     let last_granule = granules.last().map(|&(_, g)| g);
     match kind {
+        Kind::Flac => {
+            // 0x7F "FLAC" (5), major and minor version (2), header packet
+            // count (2), then "fLaC" and the STREAMINFO block.
+            let first = &headers[0];
+            if first.get(5) != Some(&1) {
+                bail!("Ogg FLAC: mapping version {}.{} (rivet reads 1.x)", first.get(5).unwrap_or(&0), first.get(6).unwrap_or(&0));
+            }
+            let blocks = first
+                .get(9..)
+                .and_then(crate::demux::audio::lossless::normalize_flac_blocks)
+                .context("Ogg FLAC: the first packet holds no STREAMINFO")?;
+            let (rate, channels, _, _) =
+                crate::demux::audio::lossless::flac_stream_params(&blocks).context("Ogg FLAC: STREAMINFO")?;
+            let durations = crate::demux::audio::lossless::frame_durations("flac", &blocks, &packets)
+                .context("Ogg FLAC: a packet that is not a FLAC frame")?;
+            let track = AudioTrack {
+                codec: "flac".into(),
+                samples: packets,
+                sample_rate: rate,
+                channels,
+                asc: Vec::new(),
+                codec_private: blocks,
+                timescale: rate,
+                durations,
+            };
+            Ok((track, None))
+        }
         Kind::Opus => {
             let body = headers[0][8..].to_vec();
             if body.len() < 11 {
@@ -225,6 +262,7 @@ pub fn read_audio(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
 enum Kind {
     Opus,
     Vorbis,
+    Flac,
 }
 
 impl Kind {
@@ -232,6 +270,7 @@ impl Kind {
         match self {
             Kind::Opus => "Opus",
             Kind::Vorbis => "Vorbis",
+            Kind::Flac => "FLAC",
         }
     }
 }

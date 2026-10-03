@@ -331,7 +331,7 @@ pub struct DecodeSupport {
 /// Which compiled backends decode each common codec, for `rivet capabilities`.
 pub fn decode_capabilities() -> Vec<DecodeSupport> {
     const CODECS: &[&str] = &[
-        "h264", "hevc", "vp8", "vp9", "av1", "mpeg2", "mpeg4", "prores",
+        "h264", "hevc", "vp8", "vp9", "av1", "mpeg2", "mpeg4", "h263", "prores",
     ];
     CODECS
         .iter()

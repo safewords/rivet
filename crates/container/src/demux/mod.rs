@@ -114,6 +114,9 @@ pub fn demux(data: &[u8]) -> Result<DemuxResult> {
         "avi" => demux_avi(data),
         "ts" => demux_ts(data),
         "ps" => demux_whole(crate::ps::demux_ps_streaming_init(bytes::Bytes::copy_from_slice(data))?),
+        "h264" | "hevc" | "ivf" | "obu" | "m2v" => {
+            demux_whole(crate::es::demux_es_streaming_init(bytes::Bytes::copy_from_slice(data))?)
+        }
         other => bail!("unsupported container: {other}"),
     }
 }

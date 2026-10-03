@@ -224,9 +224,14 @@ pub fn demux_streaming_shared(data: bytes::Bytes) -> Result<Box<dyn StreamingDem
         "avi" => Ok(Box::new(demux_avi_streaming_init(data)?)),
         "ts" => Ok(Box::new(demux_ts_streaming_init(data)?)),
         "ps" => Ok(Box::new(crate::ps::demux_ps_streaming_init(data)?)),
-        "mp3" => bail!("an MP3 file has no video (audio-only output reads it: `demux_audio`)"),
-        "flac" => bail!("a native FLAC stream has no video; read it with the audio-only output mode"),
-        "ogg" => bail!("rivet reads an Ogg file for its audio alone; read it with the audio-only output mode"),
+        "h264" | "hevc" | "ivf" | "obu" | "m2v" => Ok(Box::new(crate::es::demux_es_streaming_init(data)?)),
+        // Audio-only inputs: `demux_audio` reads them, and a job or a probe
+        // that finds no video turns to it.
+        "mp3" => bail!("an MP3 file has no video track"),
+        "flac" => bail!("a native FLAC stream has no video track"),
+        "ogg" => bail!("rivet reads no video from an Ogg file (its audio is read alone)"),
+        "wav" => bail!("a WAVE file has no video track"),
+        "aac" | "ac3" | "dts" => bail!("a bare {} audio stream has no video track", detect_container(&data)),
         other => bail!("unsupported container: {other}"),
     }
 }
@@ -251,7 +256,7 @@ pub struct AudioSource {
 pub fn demux_audio(data: bytes::Bytes) -> Result<Option<AudioSource>> {
     let kind = crate::sniff::sniff_container(&data);
     let video_error = match kind {
-        crate::sniff::ContainerKind::Mp3 | crate::sniff::ContainerKind::Flac | crate::sniff::ContainerKind::Ogg => None,
+        k if k.is_audio_only() => None,
         _ => match demux_streaming_shared(data.clone()) {
             Ok(d) => {
                 return Ok(d.audio().cloned().map(|track| AudioSource {
@@ -269,6 +274,8 @@ pub fn demux_audio(data: bytes::Bytes) -> Result<Option<AudioSource>> {
     let has_video = match kind {
         crate::sniff::ContainerKind::IsoBmff => crate::demux::mp4::has_video_track(&data)?,
         crate::sniff::ContainerKind::Matroska => crate::demux::mkv::has_video_track(&data)?,
+        crate::sniff::ContainerKind::MpegTs => crate::ts::has_video(&data)?,
+        crate::sniff::ContainerKind::Avi => crate::avi::has_video(&data)?,
         _ => false,
     };
     if has_video && let Some(e) = video_error {
@@ -287,6 +294,10 @@ pub fn demux_audio(data: bytes::Bytes) -> Result<Option<AudioSource>> {
             let (track, edit) = crate::ogg::read_audio(&data)?;
             Ok(audio_only(track, edit))
         }
+        crate::sniff::ContainerKind::Wav => Ok(audio_only(crate::raw_audio::read_wav(&data)?, None)),
+        crate::sniff::ContainerKind::Adts => Ok(audio_only(crate::raw_audio::read_adts(&data)?, None)),
+        crate::sniff::ContainerKind::Ac3Es => Ok(audio_only(crate::raw_audio::read_ac3(&data)?, None)),
+        crate::sniff::ContainerKind::DtsEs => Ok(audio_only(crate::raw_audio::read_dts(&data)?, None)),
         crate::sniff::ContainerKind::IsoBmff => {
             let Some(track) = crate::demux::audio::extract_mp4_audio(&data) else {
                 return Ok(None);
@@ -298,7 +309,11 @@ pub fn demux_audio(data: bytes::Bytes) -> Result<Option<AudioSource>> {
         crate::sniff::ContainerKind::Matroska => {
             Ok(crate::demux::audio::extract_mkv_audio_and_edit(&data).and_then(|(t, edit)| audio_only(t, edit)))
         }
-        // A transport stream or AVI with no video: the demuxer's own error.
+        // A transport stream or an AVI with no video: its first audio stream.
+        crate::sniff::ContainerKind::MpegTs => Ok(crate::ts::read_audio_only(&data)?.and_then(|t| audio_only(t, None))),
+        crate::sniff::ContainerKind::Avi => {
+            Ok(crate::avi::read_audio_only(&data)?.and_then(|(t, edit)| audio_only(t, edit)))
+        }
         _ => demux_streaming_shared(data).map(|_| None),
     }
 }

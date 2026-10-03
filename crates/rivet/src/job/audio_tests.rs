@@ -970,3 +970,38 @@ fn aac_passes_aac_through_and_is_refused_where_it_cannot_go() {
     let err = low.validate().unwrap_err();
     assert!(format!("{err:#}").contains("outside AAC's range"), "{err:#}");
 }
+
+/// A source audio track the output cannot have is never dropped silently:
+/// a track the demuxer could only name (no packets: AMR in a 3GP, TrueHD in
+/// a transport stream) and one with packets but no decoder or passthrough
+/// form both refuse the job, naming the codec and how to write the video
+/// alone; `audio=drop` does that. An audio-only output, with no video to
+/// fall back to, is told why and nothing more.
+#[test]
+fn an_unusable_audio_track_refuses_the_job_unless_audio_is_dropped() {
+    let named = AudioTrack {
+        codec: "amr_nb".into(),
+        samples: Vec::new(),
+        sample_rate: 8000,
+        channels: 1,
+        asc: Vec::new(),
+        codec_private: Vec::new(),
+        timescale: 8000,
+        durations: Vec::new(),
+    };
+    let wma = AudioTrack { codec: "wmav2".into(), samples: vec![vec![0; 64]], durations: vec![1024], ..named.clone() };
+    for t in [&named, &wma] {
+        for output in [AudioOutput::Mp4, AudioOutput::Cmaf, AudioOutput::WebM] {
+            let run = prepare_audio(Some(t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Source, output));
+            let err = format!("{:#}", run.err().expect("refused, not written video-only"));
+            assert!(err.contains(&t.codec) && err.contains("--audio drop"), "{output:?}: {err}");
+        }
+        let dropped = prepare_audio(Some(t), None, &[], request(AudioCodecPolicy::Drop, AudioChannels::Source, AudioOutput::Mp4));
+        assert!(dropped.unwrap().is_none(), "audio=drop writes the video alone");
+        for output in [AudioOutput::Mp3File, AudioOutput::OggFile] {
+            let run = prepare_audio(Some(t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Source, output));
+            let err = format!("{:#}", run.err().expect("refused"));
+            assert!(err.contains(&t.codec) && !err.contains("--audio drop"), "{output:?}: {err}");
+        }
+    }
+}

@@ -220,6 +220,9 @@ pub(crate) fn fourcc_to_codec(fcc: &[u8; 4]) -> Option<String> {
         b"H264" | b"X264" | b"AVC1" | b"DAVC" => Some("h264".into()),
         // MPEG-2 in AVI is unusual but not impossible.
         b"MPG2" | b"MPEG" => Some("mpeg2".into()),
+        // VP8 (`VP80`): each video chunk one VP8 frame as RFC 6386 §9.1 frames
+        // it, the same bytes a WebM block or an IVF frame holds.
+        b"VP80" => Some("vp8".into()),
         _ => None,
     }
 }

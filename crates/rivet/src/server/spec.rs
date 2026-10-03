@@ -113,6 +113,8 @@ pub(super) struct TranscodeParams {
     pub(super) seam: Option<String>,
     /// Cap the output frame rate: a rate, or `source` (default: no cap).
     pub(super) max_fps: Option<SettingValue>,
+    /// The frame rate of a raw video elementary stream input.
+    pub(super) input_fps: Option<SettingValue>,
     pub(super) gpu: Option<u32>,
     /// The encode plan: `all` (default), `per-rung`, `single`, `gpu:N`,
     /// `family:nvidia|amd|intel`. Wins over `gpu`.
@@ -234,6 +236,9 @@ impl TranscodeParams {
         }
         if let Some(v) = &self.max_fps {
             s.apply_kv("max-fps", v.as_str())?;
+        }
+        if let Some(v) = &self.input_fps {
+            s.apply_kv("input-fps", v.as_str())?;
         }
         s.gpu = self.gpu;
         if let Some(e) = &self.encode {
@@ -367,6 +372,8 @@ pub(super) struct SpecBody {
     seam: Option<String>,
     /// A frame rate cap, or `"source"`.
     max_fps: Option<SettingValue>,
+    /// The frame rate of a raw video elementary stream input.
+    input_fps: Option<SettingValue>,
     gpu: Option<u32>,
     encode: Option<String>,
     decode: Option<String>,
@@ -416,6 +423,7 @@ impl SpecBody {
             chroma_downsample: None,
             seam: self.seam,
             max_fps: self.max_fps,
+            input_fps: self.input_fps,
             gpu: self.gpu,
             encode: self.encode,
             decode: self.decode,

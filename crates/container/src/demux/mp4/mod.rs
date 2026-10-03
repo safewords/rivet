@@ -42,7 +42,7 @@ pub(crate) use streaming::demux_mp4_streaming_init;
 // Internal re-exports: `demux` siblings (`audio.rs`, `tests.rs`) reach these
 // helpers via `super::mp4::<item>` without the items appearing in the
 // crate's public API.
-pub(crate) use sample_entry::{has_av01_sample_entry, has_vp08_sample_entry, mp4v_config, prores_sample_entry_fourcc};
+pub(crate) use sample_entry::{has_av01_sample_entry, has_h263_sample_entry, has_vp08_sample_entry, mp4v_config, prores_sample_entry_fourcc};
 #[allow(unused_imports)] // used only by demux/tests.rs under #[cfg(test)]
 pub(crate) use sample_entry::parse_avcc_param_sets;
 pub(crate) use streaming::build_fragmented_sample_table;
@@ -102,6 +102,8 @@ pub fn demux_mp4(data: &[u8]) -> Result<DemuxResult> {
         "prores".to_string()
     } else if codec_from_mp4 == "unknown" && has_vp08_sample_entry(data) {
         "vp8".to_string()
+    } else if codec_from_mp4 == "unknown" && has_h263_sample_entry(data) {
+        "h263".to_string()
     } else if let Some((codec, _)) = mp4v_config(data).filter(|_| codec_from_mp4 == "unknown") {
         codec.to_string()
     } else {

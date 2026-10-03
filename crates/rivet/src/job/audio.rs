@@ -332,6 +332,21 @@ impl AacProfile {
 /// Codecs a single-file MP4 or an HLS package carries verbatim.
 const PASSTHROUGH: [&str; 5] = ["aac", "opus", "ac3", "eac3", "dts"];
 
+/// The error for a source audio track the output cannot have: rivet does not
+/// write an output without the source's sound unless it was asked to
+/// (`audio=drop`). An audio-only output has no video to fall back to, so it
+/// is only told why.
+pub(crate) fn audio_unusable(codec: &str, why: &str, audio_only: bool) -> anyhow::Error {
+    if audio_only {
+        anyhow::anyhow!("the source's {codec} audio track {why}")
+    } else {
+        anyhow::anyhow!(
+            "the source's {codec} audio track {why}. rivet does not write an output without the source's \
+             audio unless asked: `--audio drop` (`audio=drop`) writes the video alone"
+        )
+    }
+}
+
 pub(super) fn prepare_audio(
     track: Option<&AudioTrack>,
     // The source's audio edit list (`StreamingDemuxer::audio_edit`), in the
@@ -349,6 +364,18 @@ pub(super) fn prepare_audio(
         return Ok(None);
     }
     let codec = track.codec.to_ascii_lowercase();
+    let audio_only = matches!(req.output, AudioOutput::Mp3File | AudioOutput::FlacFile | AudioOutput::OggFile);
+    // A track the demuxer could name but not read (a codec rivet has no
+    // reader for, or packets that would not parse) has no packets: refused
+    // by name, never written as though the source were silent.
+    if track.samples.is_empty() {
+        return Err(audio_unusable(
+            &codec,
+            "cannot be read: rivet has no reader or decoder for it, or its packets would not parse (the demux \
+             warning above says which)",
+            audio_only,
+        ));
+    }
     let filters = req.filters;
     // A filter has to see PCM, so it forces the decode/encode path. Rather than
     // let a passthrough silently discard the user's `channelmap`, treat the
@@ -560,8 +587,11 @@ pub(super) fn prepare_audio(
                  {undecodable}"
             );
         }
-        tracing::warn!(codec, "cannot transcode to {target_name}; dropping audio");
-        return Ok(Some(dropped(codec)));
+        return Err(audio_unusable(
+            &codec,
+            &format!("can be neither passed into this output nor decoded to {target_name}: {undecodable}"),
+            audio_only,
+        ));
     }
 
     // AAC's configuration is the AudioSpecificConfig the demuxer keeps apart
@@ -612,8 +642,11 @@ pub(super) fn prepare_audio(
                         codec::audio::filter::chain_to_string(filters)
                     );
                 }
-                tracing::warn!(codec, %reason, "cannot transcode to {target_name}; dropping audio");
-                return Ok(Some(dropped(codec)));
+                return Err(audio_unusable(
+                    &codec,
+                    &format!("cannot be decoded to {target_name} by this build: {reason}"),
+                    audio_only,
+                ));
             }
             Err(e) => return Err(e).context("audio decode"),
         };
@@ -927,25 +960,29 @@ impl<'a> EncodeState<'a> {
 /// ([`Av1Mp4Muxer::check_audio`](container::mux::Av1Mp4Muxer::check_audio)
 /// for an MP4 or a QuickTime movie,
 /// [`WebmMuxer::check_audio`](container::webm::WebmMuxer::check_audio) for a
-/// WebM file). A track it refuses leaves every file video-only, so the job
-/// reports the audio dropped, with the reason, rather than passed through.
-/// HLS writes its audio through the CMAF init segment, which takes any of
-/// these tracks.
-pub(super) fn fit_single_file(audio: Option<PreparedAudio>, container: Container) -> Option<PreparedAudio> {
-    let a = audio?;
+/// WebM file). A track it refuses would leave every file video-only, so the
+/// job is refused, naming the muxer's reason, unless the spec dropped the
+/// audio. HLS writes its audio through the CMAF init segment, which takes
+/// any of these tracks.
+pub(super) fn fit_single_file(audio: Option<PreparedAudio>, container: Container) -> Result<Option<PreparedAudio>> {
+    let Some(a) = audio else {
+        return Ok(None);
+    };
     if !a.has_samples() {
-        return Some(a);
+        return Ok(Some(a));
     }
     let checked = match container {
         Container::WebM => container::webm::WebmMuxer::check_audio(&a.info),
         _ => container::mux::Av1Mp4Muxer::check_audio(&a.info),
     };
     match checked {
-        Ok(()) => Some(a),
-        Err(e) => {
-            tracing::warn!(handling = %a.handling, "the {} muxer refuses this audio ({e:#}); video-only", container.as_str());
-            Some(dropped(a.info.codec.to_ascii_lowercase()))
-        }
+        Ok(()) => Ok(Some(a)),
+        Err(e) => Err(anyhow::anyhow!(
+            "the {} muxer refuses the source's audio as prepared ({}): {e:#}. Ask for a codec the file carries \
+             (`--audio opus`), or for none: `--audio drop` (`audio=drop`) writes the video alone",
+            container.as_str(),
+            a.handling
+        )),
     }
 }
 

@@ -161,6 +161,7 @@ qp("audio_quality", "string", "Vorbis quality, -1 (smallest) to 10 (best); defau
                         qp("pixel_format", "string", "auto (default) | 8bit | 10bit"),
                         qp("seam", "string", "parallel (default) | constqp | serial"),
                         qp("max_fps", "string", "Cap the output frame rate (e.g. 30), or source (the default: no cap)."),
+                        qp("input_fps", "string", "The frame rate of a raw video elementary stream input (.h264, .hevc, .obu, .m2v), which states none or one to replace."),
                         qp("gpu", "integer", "Pin encode/decode to this GPU index."),
                         qp("filter", "string", "Video filter chain, e.g. crop=1280:720,hflip."),
                         qp("sync", "boolean", "Block until done. One single-file rung: the file itself; several rungs, output.path or HLS: the job status JSON (each rung's artifacts[].url)."),
@@ -316,6 +317,7 @@ qp("audio_quality", "string", "Vorbis quality, -1 (smallest) to 10 (best); defau
                         "bit_depth": { "type": "string", "enum": ["auto", "8bit", "10bit"] },
                         "seam": { "type": "string", "enum": ["parallel", "constqp", "serial"] },
                         "max_fps": { "oneOf": [ { "type": "number" }, { "type": "string", "enum": ["source"] } ] },
+                        "input_fps": { "type": "number" },
                         "gpu": { "type": "integer" },
                         "filter": { "type": "string", "example": "crop=1280:720,hflip" }
                     }

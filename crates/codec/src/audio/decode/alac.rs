@@ -78,17 +78,43 @@ impl AudioDecoder for AlacDecoder {
         Ok(Vec::new())
     }
 
-    /// The codec's layout when it is not the pipeline's default for the
-    /// count: in practice four channels, which ALAC lays out as 4.0
-    /// (C L R Cs), not the quad the pipeline assumes. Eight channels'
-    /// front left- and right-of-centre pair has no label here, so an
-    /// eight-channel stream is left to the default 7.1, that pair riding in
-    /// the SL / SR slots.
+    /// The speakers, always: ALAC names them for every channel count (the
+    /// default layouts of Apple's ALAC magic cookie description, the
+    /// `kALACChannelLayoutTag_*` table), in the pipeline's order — mono,
+    /// stereo, 3.0 (`C L R`), 4.0 (`C L R Cs`: FL FR FC BC, not quad), 5.0
+    /// and 5.1 (`C L R Ls Rs [LFE]`), 6.1 (`AAC_6_1`: `C L R Ls Rs Cs LFE`,
+    /// FL FR FC LFE BC SL SR — the centre surround at the back, its pair at
+    /// the sides). Eight channels' front left- and right-of-centre pair
+    /// (`MPEG_7_1_B`'s `Lc` / `Rc`) has no label here, so an eight-channel
+    /// stream is left to the default 7.1, that pair riding in the SL / SR
+    /// slots.
     fn layout(&self) -> Option<ChannelLayout> {
         let channels = self.inner.config().num_channels;
         let labels: Vec<ChannelLabel> =
             lossless::alac::layout(channels)?.iter().map(|&s| label(s)).collect::<Option<_>>()?;
-        let layout = ChannelLayout::new(labels).ok()?;
-        (ChannelLayout::default_for(channels).ok().as_ref() != Some(&layout)).then_some(layout)
+        ChannelLayout::new(labels).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::{AudioCodec, AudioEncoderConfig, create_encoder};
+
+    /// Every count reports its layout — the 6.1 of a seven-channel stream
+    /// included, which is the pipeline's default for seven and so used to
+    /// come back as `None`.
+    #[test]
+    fn the_layout_is_named_for_every_count_alac_names() {
+        for (channels, name) in [(1u8, "mono"), (2, "stereo"), (3, "3.0"), (4, "4.0"), (5, "5.0"), (6, "5.1"), (7, "6.1")] {
+            let mut enc =
+                create_encoder(AudioEncoderConfig::new(AudioCodec::Alac { bits_per_sample: 16 }, 48_000, channels, 0)).unwrap();
+            let pcm: Vec<f32> = (0..4096 * usize::from(channels)).map(|i| ((i % 97) as f32 - 48.0) / 128.0).collect();
+            let mut packets = enc.encode(&AudioFrame { samples: pcm, sample_rate: 48_000, channels, pts: 0 }).unwrap();
+            packets.extend(enc.flush().unwrap());
+            let mut dec = AlacDecoder::new(Some(&enc.extra_data())).unwrap();
+            dec.decode(&packets[0].data, 0).unwrap();
+            assert_eq!(dec.layout(), Some(ChannelLayout::named(name)), "{channels} channels");
+        }
     }
 }

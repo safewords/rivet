@@ -2025,6 +2025,7 @@ dependencies = [
  "rivet-codec",
  "rivet-frame",
  "rivet-h26x",
+ "rivet-mpeg4",
  "rivet-vorbis",
  "tempfile",
  "thiserror 2.0.18",

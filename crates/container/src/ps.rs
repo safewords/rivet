@@ -141,7 +141,7 @@ fn pes_header(pes: &[u8]) -> Option<(usize, Option<u64>)> {
 
 /// The frame rate a sequence header's `frame_rate_code` names (H.262 Table
 /// 6-4; the MPEG-1 table agrees for 1-8).
-fn sequence_frame_rate(es: &[u8]) -> Option<f64> {
+pub(crate) fn sequence_frame_rate(es: &[u8]) -> Option<f64> {
     let (o, _) = start_codes(es).into_iter().find(|(_, c)| *c == MPEG2_SEQUENCE_HEADER)?;
     let code = es.get(o + 7)? & 0x0F;
     Some(match code {
@@ -170,7 +170,7 @@ fn picture_structure(unit: &[u8]) -> u8 {
 
 /// One sample per coded frame: [`crate::mpeg_es::split_mpeg2_pictures`]'s
 /// pictures, the second field of a field pair joined to the first.
-fn coded_frames(es: &[u8]) -> Vec<Vec<u8>> {
+pub(crate) fn coded_frames(es: &[u8]) -> Vec<Vec<u8>> {
     let mut out: Vec<Vec<u8>> = Vec::new();
     let mut open_field = false;
     for unit in crate::mpeg_es::split_mpeg2_pictures(es) {

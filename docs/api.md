@@ -192,6 +192,7 @@ job=$(curl -s --data-binary @input.mkv \
 | `encode` | `all` *(default)*, `per-rung`, `single`, `gpu:N`, `family:nvidia\|amd\|intel` | the encode plan — which cards, and how the work is laid across them; wins over `gpu`. Same words and meaning as the CLI's `--encode`: every surface interprets through [`rivet::settings`](../crates/rivet/src/settings.rs) |
 | `decode` | `auto` *(default)*, `whole`, `fastest`, `gpu:N`, `ranges:N` | the decode plan — which card(s), and whether the decode is one pump or split into ranges |
 | `max_fps` | number or string | cap output frame rate; `"source"` states the default, no cap |
+| `input_fps` | number | the frame rate of a raw video elementary stream input (`.h264`, `.hevc`, `.obu`, `.m2v`); refused for any other input |
 | `gpu` | integer | pin encode/decode to a GPU index |
 | `filter` | string | video filter chain, e.g. `crop=1280:720,hflip` (the JSON `spec` body also accepts a structured list — see [Video filters](filters/README.md)) |
 | `sync` | `true`/`false` | block and return the artifact directly |

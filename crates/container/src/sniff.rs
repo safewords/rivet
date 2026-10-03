@@ -39,16 +39,40 @@ pub enum ContainerKind {
     /// A native FLAC stream: the `fLaC` marker, possibly after an ID3v2 tag.
     /// Audio only, so it is a source for the audio-only output mode.
     Flac,
-    /// An Ogg file (`OggS` pages): Opus or Vorbis audio. Read for its audio
-    /// alone ([`crate::ogg`]).
+    /// An Ogg file (`OggS` pages): Opus, Vorbis or FLAC audio. Read for its
+    /// audio alone ([`crate::ogg`]).
     Ogg,
+    /// A RIFF / RF64 / BW64 WAVE file. Audio only ([`crate::raw_audio`]).
+    Wav,
+    /// A bare ADTS AAC stream (`.aac`). Audio only.
+    Adts,
+    /// A bare AC-3 / E-AC-3 stream (`.ac3`, `.eac3`). Audio only.
+    Ac3Es,
+    /// A bare DTS stream (`.dts`). Audio only.
+    DtsEs,
+    // Raw video elementary streams ([`crate::es`]): no container, the
+    // codec's own syntax from the first byte. Video only.
+    /// An H.264 Annex-B byte stream (ITU-T H.264 Annex B: `.h264` / `.264`).
+    H264Es,
+    /// An HEVC Annex-B byte stream (ITU-T H.265 Annex B: `.hevc` / `.h265`).
+    HevcEs,
+    /// An IVF file (`DKIF`): VP8, VP9 or AV1 frames with a timestamp each.
+    Ivf,
+    /// An AV1 OBU stream (`.obu`): the low-overhead format of AV1 §5, or the
+    /// length-delimited format of its Annex B.
+    Av1Obu,
+    /// An MPEG-1 / MPEG-2 video elementary stream (`.m2v` / `.mpv` / `.m1v`):
+    /// a sequence header first.
+    MpegVideoEs,
     /// Nothing this crate demuxes.
     Unknown,
 }
 
 impl ContainerKind {
     /// The short label the demux dispatch and `probe` report: `"mp4"`,
-    /// `"mkv"`, `"avi"`, `"ts"`, `"ps"`, `"mp3"`, `"flac"`, `"ogg"`, `"unknown"`.
+    /// `"mkv"`, `"avi"`, `"ts"`, `"ps"`, `"mp3"`, `"flac"`, `"ogg"`, `"wav"`, the
+    /// audio elementary streams' `"aac"`, `"ac3"`, `"dts"`, the video ones'
+    /// `"h264"`, `"hevc"`, `"ivf"`, `"obu"`, `"m2v"`, `"unknown"`.
     pub fn label(self) -> &'static str {
         match self {
             ContainerKind::IsoBmff => "mp4",
@@ -59,13 +83,45 @@ impl ContainerKind {
             ContainerKind::Mp3 => "mp3",
             ContainerKind::Flac => "flac",
             ContainerKind::Ogg => "ogg",
+            ContainerKind::Wav => "wav",
+            ContainerKind::Adts => "aac",
+            ContainerKind::Ac3Es => "ac3",
+            ContainerKind::DtsEs => "dts",
+            ContainerKind::H264Es => "h264",
+            ContainerKind::HevcEs => "hevc",
+            ContainerKind::Ivf => "ivf",
+            ContainerKind::Av1Obu => "obu",
+            ContainerKind::MpegVideoEs => "m2v",
             ContainerKind::Unknown => "unknown",
         }
+    }
+
+    /// A raw video elementary stream — no container, so no timing but what
+    /// the bitstream itself states: the inputs `input-fps` sets the frame
+    /// rate of. (IVF stamps every frame, so it is not one.)
+    pub fn is_video_elementary_stream(self) -> bool {
+        matches!(self, ContainerKind::H264Es | ContainerKind::HevcEs | ContainerKind::Av1Obu | ContainerKind::MpegVideoEs)
     }
 
     /// Whether this crate has a demuxer for it.
     pub fn is_known(self) -> bool {
         self != ContainerKind::Unknown
+    }
+
+    /// Whether the family holds audio alone (no video track is possible):
+    /// what [`crate::streaming::demux_audio`] reads and the video demuxer
+    /// refuses.
+    pub fn is_audio_only(self) -> bool {
+        matches!(
+            self,
+            ContainerKind::Mp3
+                | ContainerKind::Flac
+                | ContainerKind::Ogg
+                | ContainerKind::Wav
+                | ContainerKind::Adts
+                | ContainerKind::Ac3Es
+                | ContainerKind::DtsEs
+        )
     }
 }
 
@@ -90,6 +146,10 @@ pub fn sniff_container(data: &[u8]) -> ContainerKind {
     if &data[..4] == b"RIFF" && &data[8..12] == b"AVI " {
         return ContainerKind::Avi;
     }
+    // RIFF WAVE, and its 64-bit forms.
+    if crate::raw_audio::sniff_wav(data) {
+        return ContainerKind::Wav;
+    }
     // MPEG-TS: 0x47 sync byte at offset 0 AND at offset 188 (and 376 if we
     // have the bytes). A single 0x47 appears routinely in random payloads, so
     // require two confirming hits before committing.
@@ -108,6 +168,16 @@ pub fn sniff_container(data: &[u8]) -> ContainerKind {
     if crate::ps::is_program_stream(data) {
         return ContainerKind::MpegPs;
     }
+    // Bare audio elementary streams: frames that chain (see `raw_audio`).
+    if crate::raw_audio::sniff_adts(data) {
+        return ContainerKind::Adts;
+    }
+    if crate::raw_audio::sniff_ac3(data) {
+        return ContainerKind::Ac3Es;
+    }
+    if crate::raw_audio::sniff_dts(data) {
+        return ContainerKind::DtsEs;
+    }
     // A FLAC stream may open with an ID3v2 tag too: its `fLaC` marker is
     // looked for before the MP3 sniff takes the tag as MPEG audio.
     if crate::demux::audio::lossless::native_flac_offset(data).is_some() {
@@ -117,6 +187,11 @@ pub fn sniff_container(data: &[u8]) -> ContainerKind {
     // taken only when a second header sits where the first says it ends.
     if crate::mp3::sniff(data) {
         return ContainerKind::Mp3;
+    }
+    // Raw video elementary streams, each recognised only by a chain of its
+    // own headers that parse and agree (see `crate::es`).
+    if let Some(kind) = crate::es::sniff(data) {
+        return kind;
     }
     ContainerKind::Unknown
 }

@@ -23,7 +23,7 @@ use super::super::AudioTrack;
 use super::super::subtitle::SubtitleTrack;
 use super::edit_list::{self, EditTimeline};
 use super::sample_entry::{
-    extract_avc_config, extract_hevc_config, has_av01_sample_entry, has_vp08_sample_entry,
+    extract_avc_config, extract_hevc_config, has_av01_sample_entry, has_h263_sample_entry, has_vp08_sample_entry,
     has_avc_sample_entry, hevc_sample_entry_fourcc, mp4v_config, prores_sample_entry_fourcc,
 };
 
@@ -153,6 +153,8 @@ fn init(data: bytes::Bytes, edits: Edits) -> Result<Mp4StreamingDemuxer> {
         "prores".to_string()
     } else if codec_from_mp4 == "unknown" && has_vp08_sample_entry(&owned) {
         "vp8".to_string()
+    } else if codec_from_mp4 == "unknown" && has_h263_sample_entry(&owned) {
+        "h263".to_string()
     } else if let Some((codec, _)) = mp4v_config(&owned).filter(|_| codec_from_mp4 == "unknown") {
         codec.to_string()
     } else {

@@ -15,10 +15,11 @@
 //! ```
 //!
 //! Audio is handled per source codec: AAC / Opus / AC-3 / E-AC-3 / DTS, and
-//! MP3 at 16 kHz and up, pass through verbatim; the rest of MP3, Vorbis and
-//! linear PCM are transcoded to Opus (mono through 7.1 — surround goes out over
-//! Opus's channel-mapping family 1); anything else is dropped (video-only
-//! output) with a warning.
+//! MP3 at 16 kHz and up, pass through verbatim; the rest of MP3, MP2, Vorbis,
+//! FLAC, ALAC and linear PCM are transcoded to Opus (mono through 7.1 —
+//! surround goes out over Opus's channel-mapping family 1); anything else is
+//! refused by name — this path never writes a video-only output from a source
+//! with audio (the job engine's `audio=drop` does, when asked).
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -68,10 +69,10 @@ pub enum AudioHandling {
     None,
     /// Codec carried through verbatim (AAC / Opus / AC-3 / E-AC-3).
     Passthrough(String),
-    /// Source decoded and re-encoded to Opus (Vorbis, PCM, MP3 below 16 kHz).
+    /// Source decoded and re-encoded to Opus (MP2, Vorbis, FLAC, ALAC, PCM,
+    /// MP3 below 16 kHz). A source this path can do neither with is an error,
+    /// not a video-only output.
     TranscodedToOpus(String),
-    /// Source audio dropped — codec unsupported or too many channels.
-    Dropped(String),
 }
 
 impl AudioHandling {
@@ -81,7 +82,6 @@ impl AudioHandling {
             Self::None => "no audio track".into(),
             Self::Passthrough(c) => format!("{c} passthrough"),
             Self::TranscodedToOpus(c) => format!("{c} → opus transcode"),
-            Self::Dropped(c) => format!("{c} dropped (unsupported)"),
         }
     }
 }
@@ -350,8 +350,7 @@ fn wire_audio(
         c if matches!(c, "aac" | "opus" | "ac3" | "eac3" | "dts") || mp3_in_mp4 => {
             let info = build_passthrough_info(&codec_lower, track);
             if let Err(e) = muxer.with_audio(info) {
-                tracing::warn!("with_audio rejected ({e}); emitting video-only");
-                return Ok(AudioHandling::Dropped(codec_lower));
+                return Err(crate::job::audio_unusable(&codec_lower, &format!("is refused by the MP4 muxer: {e:#}"), false));
             }
             // As the job engine does: whole packets outside the edit dropped
             // (beyond the decoder's preroll), the rest hidden by the output's
@@ -372,7 +371,10 @@ fn wire_audio(
             }
             Ok(AudioHandling::Passthrough(codec_lower))
         }
-        c if c == "mp3" || c == "vorbis" || codec::audio::decode::PcmFormat::from_codec(c).is_some() => {
+        // Decodable: re-encoded to Opus.
+        c if matches!(c, "mp3" | "mp2" | "vorbis" | "flac" | "alac")
+            || codec::audio::decode::PcmFormat::from_codec(c).is_some() =>
+        {
             let extra: Option<&[u8]> = if track.codec_private.is_empty() {
                 None
             } else {
@@ -413,7 +415,7 @@ fn wire_audio(
                 frame
             };
             for packet in &track.samples {
-                for frame in dec.decode(packet, pts).context("mp3/vorbis decode")? {
+                for frame in dec.decode(packet, pts).with_context(|| format!("{codec_lower} decode"))? {
                     let frame = take(frame);
                     if frame.samples.is_empty() {
                         continue;
@@ -426,7 +428,7 @@ fn wire_audio(
                     }
                 }
             }
-            for frame in dec.flush().context("mp3/vorbis flush")? {
+            for frame in dec.flush().with_context(|| format!("{codec_lower} flush"))? {
                 let frame = take(frame);
                 if frame.samples.is_empty() {
                     continue;
@@ -448,8 +450,7 @@ fn wire_audio(
                 codec_private: enc.extra_data(),
             };
             if let Err(e) = muxer.with_audio(info) {
-                tracing::warn!("with_audio rejected ({e}); emitting video-only");
-                return Ok(AudioHandling::Dropped(codec_lower));
+                return Err(crate::job::audio_unusable(&codec_lower, &format!("is refused by the MP4 muxer: {e:#}"), false));
             }
             // The encoder's lookahead (`dOps` PreSkip) is hidden by the track's
             // edit list, as ffmpeg writes an Opus MP4; without it every player
@@ -468,7 +469,9 @@ fn wire_audio(
             }
             Ok(AudioHandling::TranscodedToOpus(codec_lower))
         }
-        other => Ok(AudioHandling::Dropped(other.into())),
+        // Nothing this path can write: refused by name, never dropped
+        // silently (the job engine, with `audio=drop`, writes the video alone).
+        other => Err(crate::job::audio_unusable(other, "has no passthrough form or decoder in this build", false)),
     }
 }
 
