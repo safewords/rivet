@@ -224,9 +224,11 @@ pub fn demux_streaming_shared(data: bytes::Bytes) -> Result<Box<dyn StreamingDem
         "avi" => Ok(Box::new(demux_avi_streaming_init(data)?)),
         "ts" => Ok(Box::new(demux_ts_streaming_init(data)?)),
         "ps" => Ok(Box::new(crate::ps::demux_ps_streaming_init(data)?)),
-        "mp3" => bail!("an MP3 file has no video (audio-only output reads it: `demux_audio`)"),
-        "flac" => bail!("a native FLAC stream has no video; read it with the audio-only output mode"),
-        "ogg" => bail!("rivet reads an Ogg file for its audio alone; read it with the audio-only output mode"),
+        // Audio-only inputs: `demux_audio` reads them, and a job or a probe
+        // that finds no video turns to it.
+        "mp3" => bail!("an MP3 file has no video track"),
+        "flac" => bail!("a native FLAC stream has no video track"),
+        "ogg" => bail!("rivet reads no video from an Ogg file (its audio is read alone)"),
         other => bail!("unsupported container: {other}"),
     }
 }

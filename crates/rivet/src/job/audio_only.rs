@@ -32,14 +32,16 @@ pub const AUDIO_ONLY_LABEL: &str = "audio";
 /// When `input` has no video and `spec` is a single-file job: the spec's
 /// audio-only form, in the file its codec goes in (an `.ogg` for Opus, an
 /// `.m4a` for AAC, …), validated. `None` when the input has video, or no
-/// audio this crate reads, or the spec is not single-file — the caller's own
-/// error stands then.
+/// audio track, or the spec is not single-file — the caller's own error
+/// stands then; the audio reader's error when it cannot read the input.
 pub(super) fn as_audio_only(input: &Bytes, spec: &OutputSpec) -> Option<Result<OutputSpec>> {
     if spec.mode != OutputMode::SingleFile {
         return None;
     }
     match streaming::demux_audio(input.clone()) {
         Ok(Some(src)) if !src.has_video => {}
+        // An audio-only file the audio reader cannot read: its error says why.
+        Err(e) if container::sniff_container(input).is_audio_only() => return Some(Err(e)),
         _ => return None,
     }
     let audio = OutputSpec {

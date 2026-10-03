@@ -67,6 +67,13 @@ impl ContainerKind {
     pub fn is_known(self) -> bool {
         self != ContainerKind::Unknown
     }
+
+    /// Whether the family holds audio alone (no video track is possible):
+    /// what [`crate::streaming::demux_audio`] reads and the video demuxer
+    /// refuses.
+    pub fn is_audio_only(self) -> bool {
+        matches!(self, ContainerKind::Mp3 | ContainerKind::Flac | ContainerKind::Ogg)
+    }
 }
 
 /// Which container the bytes open with. Needs at least 12 bytes to say

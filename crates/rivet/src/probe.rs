@@ -116,12 +116,17 @@ pub fn probe_bytes_shared(input: bytes::Bytes) -> Result<MediaInfo> {
     if let Some(info) = crate::image::probe(&input)? {
         return Ok(info);
     }
-    let container = container::sniff_container(&input).label().to_string();
+    let kind = container::sniff_container(&input);
+    let container = kind.label().to_string();
     let demuxer = match streaming::demux_streaming_shared(input.clone()) {
         Ok(d) => d,
-        // An input with no video: its audio, and `none` for the video.
-        Err(e) => match streaming::demux_audio(input) {
+        // An input with no video: its audio, and `none` for the video. When
+        // the audio reader fails too, its error is the one that says why.
+        Err(e) => match streaming::demux_audio(input.clone()) {
             Ok(Some(src)) if !src.has_video => return Ok(audio_only_info(container, &src)),
+            Err(audio) if kind.is_audio_only() => {
+                return Err(audio).context("demux");
+            }
             _ => return Err(e).context("demux"),
         },
     };
