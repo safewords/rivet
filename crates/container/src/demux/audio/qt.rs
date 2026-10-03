@@ -247,7 +247,7 @@ pub(crate) fn pcm_layout(entry: &SoundEntry<'_>) -> Option<PcmLayout> {
             let float = flags & 1 != 0;
             let frame = entry.bytes_per_frame as usize;
             let channels = usize::from(entry.channels.max(1));
-            let bytes = if frame > 0 && frame % channels == 0 { frame / channels } else { bits(entry.sample_size) };
+            let bytes = if frame > 0 && frame.is_multiple_of(channels) { frame / channels } else { bits(entry.sample_size) };
             PcmLayout { bytes, float, big_endian: flags & 2 != 0, signed: float || flags & 4 != 0 }
         }
         b"ipcm" | b"fpcm" => {

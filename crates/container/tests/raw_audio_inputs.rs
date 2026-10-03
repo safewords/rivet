@@ -111,7 +111,8 @@ fn wave_files_read_and_decode_exactly() {
         w[at + 4..at + 8].copy_from_slice(&0u32.to_le_bytes());
         w
     };
-    let cases: Vec<(&str, Vec<u8>, &str, u16, &Vec<f32>)> = vec![
+    type Case<'a> = (&'a str, Vec<u8>, &'a str, u16, &'a Vec<f32>);
+    let cases: Vec<Case> = vec![
         ("pcm 16", wav(&fmt(1, 2, 48_000, 16, false), &s16), "pcm_s16le", 2, &s16_want),
         ("extensible 24-bit 5.1", wav(&fmt(1, 6, 48_000, 24, true), &s24), "pcm_s24le", 6, &s24_want),
         ("float 32", wav(&fmt(3, 2, 48_000, 32, false), &f32b), "pcm_f32le", 2, &f32_want),

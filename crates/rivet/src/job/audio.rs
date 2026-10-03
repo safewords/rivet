@@ -369,7 +369,12 @@ pub(super) fn prepare_audio(
     // reader for, or packets that would not parse) has no packets: refused
     // by name, never written as though the source were silent.
     if track.samples.is_empty() {
-        return Err(audio_unusable(&codec, "has no packets rivet can read (the demux warning above says why)", audio_only));
+        return Err(audio_unusable(
+            &codec,
+            "cannot be read: rivet has no reader or decoder for it, or its packets would not parse (the demux \
+             warning above says which)",
+            audio_only,
+        ));
     }
     let filters = req.filters;
     // A filter has to see PCM, so it forces the decode/encode path. Rather than

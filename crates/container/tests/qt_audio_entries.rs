@@ -202,7 +202,8 @@ fn every_quicktime_pcm_encoding_reads_and_decodes_exactly() {
     let frames_per_chunk = [1024u32, 1024, 952];
     let wave_enda = |fourcc: &[u8; 4]| boxed(b"wave", &[boxed(b"frma", fourcc), boxed(b"enda", &[0, 1])].concat());
     // (fourcc, version, bits, little-endian, float, children, expected codec)
-    let cases: Vec<(&[u8; 4], u16, u16, bool, bool, Vec<u8>, &str)> = vec![
+    type Case<'a> = (&'a [u8; 4], u16, u16, bool, bool, Vec<u8>, &'a str);
+    let cases: Vec<Case> = vec![
         (b"twos", 0, 16, false, false, Vec::new(), "pcm_s16le"),
         (b"sowt", 0, 16, true, false, Vec::new(), "pcm_s16le"),
         (b"twos", 0, 8, false, false, Vec::new(), "pcm_u8"),

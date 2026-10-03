@@ -209,8 +209,11 @@ pub(crate) fn demux_avi(data: &[u8]) -> Result<DemuxResult> {
     })
 }
 
+/// A byte range of the file: `(start, end)`.
+type Span = (usize, usize);
+
 /// The `hdrl` and `movi` lists of an AVI, as the readers take them.
-fn hdrl_and_movi(data: &[u8]) -> Result<((usize, usize), Vec<(usize, usize)>)> {
+fn hdrl_and_movi(data: &[u8]) -> Result<(Span, Vec<Span>)> {
     let mut hdrl = None;
     let mut movi_lists = Vec::new();
     scan_top_level_records(data, &mut hdrl, &mut movi_lists);
