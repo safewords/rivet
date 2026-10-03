@@ -439,7 +439,9 @@ fn raw_pass(
         Ok(frames) => compare(stream, frames, want),
         Err(e) => Some(format!("declined or failed: {e:#}")),
     };
-    let claimed = features.iter().all(|f| match *f {
+    // Claimed only when there is something to claim: a stream the guard
+    // keeps away for its depth or size (a 12-bit vector) claims nothing.
+    let claimed = !features.is_empty() && features.iter().all(|f| match *f {
         "show_existing_frame" => policy.show_existing,
         "error_resilient_mode" => policy.error_resilient,
         "segmentation" => policy.segmentation,
