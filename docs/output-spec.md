@@ -106,7 +106,7 @@ engine runs it for a source shape, with what became of each requested rung.
   portrait source is 1080x1920. `Fixed` uses the box as written — a 9:16
   social rung that crops a landscape source is `1080x1920:cover:fixed`.
 - **No upscaling** (`OutputSpec::upscale`, `with_upscale`, `--upscale`, default off): a source
-  smaller than the box comes out at its own size, even-aligned. `cover`
+  smaller than the box comes out at its own size (see odd sizes below). `cover`
   without upscale comes out in the box's shape at the largest size the source
   fills. Rungs that collapse onto the same output are merged — the first is
   kept and the others are reported with `duplicate_of`. Rungs asked for with
@@ -115,8 +115,18 @@ engine runs it for a source shape, with what became of each requested rung.
   Matroska display size, else the H.264/HEVC VUI or MPEG-2 sequence header)
   gives its display shape, and the output has square pixels: an anamorphic
   720x576 at 64:45 is fitted as the 1024x576 picture it is shown as.
-- Sizes are always even (4:2:0). Labels are `<short side>p` of the output,
-  made unique (`720p-2`) when two rungs land on the same short side.
+- **Odd sizes.** AV1, VP8, VP9, MPEG-2, MPEG-4 Part 2 and ProRes keep an
+  odd source's size: a 351x241 source with no rung given (or through any
+  box that holds it) comes out 351x241, coded at that size
+  (`codec::encode::codes_odd_sizes`; in a build with a hardware encoder for
+  the codec, AV1 or VP9 with `qsv`, they are evened as below, since a GPU's
+  surfaces are even). H.264 and H.265 cannot code an odd 4:2:0 size, so
+  their sizes are even — and a picture evened that way (its own size, one
+  column or row short) is **cropped**: the last column and row are dropped,
+  every other sample kept as it was, not the whole picture resampled.
+  Otherwise sizes are even (4:2:0). Labels are `<short side>p` of the
+  output, made unique (`720p-2`) when two rungs land on the same short side.
+  See [decisions.md §43](decisions.md#43-odd-sizes-kept-where-the-codec-carries-them-cropped-to-even-where-it-cannot).
 
 On string surfaces a rung carries its own fitting after `:` —
 `1080x1920:cover:fixed`, `1280x720@3M:pad`, `640x360:upscale`.
@@ -382,9 +392,15 @@ AAC output is an `mp4a` sample entry whose `esds` carries the
 AudioSpecificConfig (object type 2, the channel configuration of ISO/IEC
 13818-7 Table 42: 1 mono, 2 stereo, 3 3.0, 4 4.0, 5 5.0, 6 5.1, 7 7.1), with
 `codecs` `mp4a.40.2` in the job output and the HLS master, and each HLS audio
-rendition's `CHANNELS` its channel count. It is coded at 22.05 / 24 / 32 /
-44.1 / 48 kHz: another source rate is resampled to the nearest in its family
-(the 11.025 kHz family to 22.05 / 44.1, the rest to 24 / 32 / 48). The
+rendition's `CHANNELS` its channel count. It is coded at the source's own
+rate whenever AAC-LC codes that natively — 8 / 11.025 / 12 / 16 / 22.05 / 24
+/ 32 / 44.1 / 48 kHz, so 8–16 kHz speech stays at 8–16 kHz (a 24 kHz or lower
+stream's AudioSpecificConfig says `sbrPresentFlag = 0`, so no decoder takes it
+for implicit HE-AAC) — and another source rate is resampled to the lowest of
+those at or above it (11.025 kHz multiples above 22.05 to 44.1; above 48 kHz
+to 48, or 44.1 for 88.2 / 176.4). An explicit bit rate more than the decoder
+buffer allows at that rate (6144 bits a channel a frame: 48 kb/s a channel at
+8 kHz) moves it up to the lowest rate that takes it. The
 encoder's one frame (1024 samples) of priming is hidden by the MP4 edit list,
 so the track presents exactly the source's samples. The encoder and decoder
 are rivet's own, written from the standards ([decisions.md §26](decisions.md#26-aac-lc-is-encoded-and-decoded-here-from-the-standards));
@@ -454,7 +470,15 @@ and byte counts, a seek table) and the frames. For an encode it is the
 encoder's own tag frame, whose LAME-style extension (encoder `rivetmp3`)
 carries the encoder delay and end padding; for an MP3 passthrough whose
 source's tag stated them, the same fields under the source's encoder name —
-so a gapless player decodes exactly the source's samples. Another codec is
+so a gapless player decodes exactly the source's samples. Some players and
+tools only trust those fields under a LAME version string (ffmpeg is one: it
+ignores them under `rivetmp3` and plays the 1057 samples of encoder and
+decoder delay as ~22–24 ms of lead-in at the start, the padding at the end).
+rivet does not sign its encodes as LAME's — the name says who wrote the file
+— so where gapless playback matters, write MP3 into an `.m4a`
+(`audio-container=mp4`): the MP4 edit list states the delay and the length,
+and every MP4 reader that honours edit lists starts on the first source
+sample (ffmpeg does). Another codec is
 refused for an `.mp3` (`audio-container` picks another file), as are a trim
 and a splice. `audio=opus` and `audio=vorbis` write an Ogg file instead, whose
 granule positions do the same for the pre-skip and the end; the AAC profiles,
@@ -872,7 +896,7 @@ knob on a video job is refused.
 
 | Output | Encoder | Notes |
 |---|---|---|
-| `avif` (default) | rivet's own AV1 encoder (`crates/av1`) in rivet's own HEIF writer (`avif.rs`) | 8-bit 4:2:0; alpha, when the picture has it, as an auxiliary item at 3/4 of the colour quantiser; `colr` nclx (BT.709 primaries, sRGB transfer, BT.601 matrix, full range); always sRGB (no ICC). Over 2048x2048 pixels, or wider than 4096, a `grid` of equal tiles of at most 2048 a side, encoded in parallel |
+| `avif` (default) | rivet's own AV1 encoder (`crates/av1`) in rivet's own HEIF writer (`avif.rs`) | 8-bit 4:2:0; alpha, when the picture has it, as a monochrome, full-range auxiliary item (AV1 Image File Format §4) at 3/4 of the colour quantiser; `colr` nclx (BT.709 primaries, sRGB transfer, BT.601 matrix, full range), which the AV1 sequence header repeats (colour description and `color_range` 1, since 2026-10-03: it said studio range before, and a reader going by the bitstream stretched the levels); always sRGB (no ICC). Over 2048x2048 pixels, or wider than 4096, a `grid` of equal tiles of at most 2048 a side, encoded in parallel |
 | `webp` | rivet's own `crates/webp` | lossy (VP8, through rivet-vp8) at the job's quality, default 80, or lossless (VP8L) with `image-lossless`; alpha kept; ICC kept with `image-keep-icc`; effort from `image-speed` |
 | `jpeg` | rivet's own `crates/jpeg` | progressive, 4:2:0, optimised Huffman; transparency flattened onto white; ICC kept with `image-keep-icc` |
 | `png` | rivet's own `crates/png` | RGB, or RGBA when the picture has transparency; DEFLATE level from `image-speed` |

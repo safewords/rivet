@@ -170,9 +170,7 @@ tools use.
 Reds that are already known, so a run that shows them isn't mistaken for a
 new regression. Remove an entry when its fix lands.
 
-| Test | Since | What happens |
-|---|---|---|
-| `fit_e2e::an_odd_sized_source_is_evened_down_with_its_colour_in_place` (`-p rivet-transcoder`, any feature set with an H.264 encoder) | seen on develop at a2ef743 (2026-10-02); first bad commit not bisected | The job fails: `shared decode pump colorspace convert (HDR-aware): BT.601→BT.709 requires even dimensions for 4:2:0 subsampling; got 853x480`. The 853×480 source reaches the BT.601→BT.709 conversion before it's evened down. Reproduced on a clean checkout of develop at a2ef743. |
+None at the moment. Add rows as `| Test | Since | What happens |`.
 
 ## Traps
 

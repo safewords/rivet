@@ -1020,8 +1020,9 @@ players require to honour full HE-AAC output.
 nothing about SBR is the implicit shape, and a decoder may then look for SBR
 in the access units — some play such a stream at twice its rate. The muxer
 used to refuse every such ASC, which refused plain AAC-LC at 8 to 24 kHz
-along with it (rivet's own encoder codes 8–16 kHz input at 22.05 / 24 kHz,
-so every low-rate source failed). Until 2026-10-03; now the muxer takes AAC-LC
+along with it (rivet's own encoder then coded 8–16 kHz input at 22.05 /
+24 kHz, so every low-rate source failed; it now codes 8–16 kHz at the
+source's rate). Until 2026-10-03; now the muxer takes AAC-LC
 at every rate the ASC names, 7.35 to 96 kHz, writing the ASC verbatim (a
 passthrough plays as its source did), and rivet's encoder ends its AAC-LC
 ASC at 24 kHz or less with the backward-compatible sync extension saying

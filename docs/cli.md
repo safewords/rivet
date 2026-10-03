@@ -292,7 +292,10 @@ MP4 it is an `mp4a` entry (object type 0x6B) whose `codecs` value is `mp3`;
 HLS refuses it, since CMAF has no MP3 profile. `--mode audio` writes the audio
 alone as a bare `.mp3` behind the encoder's own `Info` frame, whose LAME-style
 extension (encoder string `rivetmp3`) carries the encoder delay and padding,
-so a gapless player presents exactly the source's samples:
+so a gapless player presents exactly the source's samples — though a player
+that trusts those fields only from LAME (ffmpeg among them) plays the delay as
+a short lead-in; `--audio-container mp4` puts the MP3 in an `.m4a` whose edit
+list every MP4 reader applies:
 
 ```sh
 rivet transcode talk.mkv --mode audio                 # -> talk.mp3, 128k stereo
