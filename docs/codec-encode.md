@@ -344,9 +344,16 @@ rate-distortion search is what costs:
 GOLDEN is on at every tier: it is nearly free and worth 7-12 % at the same
 quality.
 
+**VP9 on an Intel card.** With `qsv` compiled in, VP9 also has a hardware
+tier — [QSV](#qsv-qsv) — tried first on a card that has Intel's VP9 encoder;
+rivet's own VP9 encoder is the encoder everywhere else, and for an
+average-bitrate rung. See [the dispatch](#the-encode-dispatch--capability-query).
+
 **Refused, by name, before a frame is decoded** (`OutputSpec::validate`) and
 again by the adapters: a bitrate for VP8 / ProRes; a constant rate
-(`rate=cbr`) or a coded picture buffer for VP9 / MPEG-2 / MPEG-4; B frames for VP8 /
+(`rate=cbr`) or a coded picture buffer for MPEG-2 / MPEG-4, and for VP9 in a
+build without QSV (with it, the encode pool decides: QSV codes VP9 at a
+constant rate, rivet's own VP9 encoder refuses it by name); B frames for VP8 /
 VP9 / ProRes; more than 7 (MPEG-2) or 8 (MPEG-4) B pictures; a crf for ProRes;
 HDR for VP9 and 10 bits or HDR for VP8 / MPEG-2 / MPEG-4
 (`backend_output_caps_for`: VP9 10-bit SDR, the others 8-bit SDR; ProRes is
@@ -426,9 +433,16 @@ hints — `gpu_index`, `gpu_vendor`, and `constant_qp`.
 [`select_encoder`](../crates/codec/src/encode/mod.rs#L607) is the factory. It
 detects GPUs at runtime and tries backends **in tier order**:
 
-0. **rivet's own encoders** — for VP9, VP8, MPEG-2, MPEG-4 Part 2 and
-   ProRes, the workspace's encoder, directly, before any GPU is looked at
+0. **rivet's own encoders** — for VP8, MPEG-2, MPEG-4 Part 2 and ProRes,
+   and for VP9 in a build without `qsv`, the workspace's encoder, directly,
+   before any GPU is looked at
    ([above](#the-other-output-codecs-vp9-vp8-mpeg-2-mpeg-4-part-2-prores)).
+   Which hardware backend encodes what is one function,
+   [`hardware_encodes`](../crates/codec/src/encode/mod.rs): the web set on
+   NVENC / AMF / QSV, and VP9 on QSV. With `qsv` compiled in, VP9 goes down
+   the chain below — QSV only, NVENC and AMF are skipped for it — and, when
+   no Intel card takes it, ends in its own encoder (always, not behind a
+   fallback feature: it is the codec's encoder).
 1. **Vendor-pin shortcut** — if `config.gpu_vendor` is set (the CMAF
    orchestrator does this via the `GpuPool` lease), dispatch *directly* to that
    vendor's backend, skipping the preference chain
@@ -644,7 +658,8 @@ eventual `AMF_OK` does the encoder take its own ref and we release ours.
 
 ### QSV (`qsv/`)
 
-> Intel Arc (DG2/BMG) + Meteor/Lunar Lake iGPUs. oneVPL `libvpl`.
+> Intel Arc (DG2/BMG) + Meteor/Lunar Lake iGPUs. oneVPL `libvpl`. AV1,
+> H.264, H.265, and VP9 (DG2 / Meteor Lake only).
 
 Struct-driven (everything lives in `mfxVideoParam` fields, no property bag). The
 flow runs a `Query` pass first so the runtime can adjust params, then `Init`,
@@ -688,6 +703,28 @@ Three QSV decisions are worth calling out:
   bars**. The fix: pre-fill each pool surface with *neutral black* — `Y=16,
   Cb/Cr=128` for 8-bit BT.709 limited (and `<<6` for P010 10-bit) — so the
   untouched padding decodes as black ([qsv/mod.rs:759-780](../crates/codec/src/encode/qsv/mod.rs#L759)).
+
+**VP9 (`MFX_CODEC_VP9`).** Intel's VP9 encoder is VDEnc only (the
+media-driver feature tables mark it "E", never "Es", on every platform that
+has it), on Arc A-series (DG2) and Meteor Lake; Battlemage and Lunar Lake
+decode VP9 but have no encoder, and `Init` refuses there. Profile 0 (NV12) or
+profile 2 (P010, 10-bit). One ext buffer, `mfxExtVP9Param` (256 bytes, as
+Intel's `mfxstructures.h`), attached for one field: `WriteIVFHeaders = OFF`,
+because rivet muxes the raw frames itself; neither the video-signal nor the
+coding-option-3 buffer is attached (VP9's header has no transfer to write,
+and its depth is the profile's). Constant QP at the `base_q_idx` rivet's own
+VP9 encoder takes for the target (Intel documents no ICQ for VP9; QP 1..255);
+a CRF is libvpx's cq-level, four to an index step; `rate=cbr` is CBR. No B
+frames, at most three references. Every packet's sync flag is read from its
+header (`vp9_header::packet_is_keyframe`), and a frame that shows nothing
+would go out in one superframe with the next that does (Intel does not say
+whether its encoder emits hidden frames). **Validated on an Arc A750**
+(`tests/qsv_vp9_encode.rs`, the Intel CI runner): profile 0 and profile 2,
+60 frames each, one packet per frame, key frames where the GOP puts them,
+every packet decoding in rivet's own VP9 decoder at 47.7 / 48.3 dB luma PSNR
+against the source, WebM and MP4 round trips unchanged, and QSV's own
+decoder bit-exact with rivet's on the stream; a CBR rung at 1.5 Mbit/s
+averaged 1.517 Mbit/s.
 
 ---
 
@@ -1542,6 +1579,8 @@ Who codes it (`backend_codes_constant_rate`):
 - **The software H.264 / H.265 tier**: a bitrate rung with h26x's `cbr` set,
   so the NAL HRD declares `cbr_flag` 1 and filler data (H.264 NAL type 12,
   H.265 `FD_NUT`) keeps the coded picture buffer exact.
+- **QSV VP9**: `MFX_RATECONTROL_CBR`, as for the other codecs (Intel
+  documents CQP, CBR and VBR for its VP9 encoder).
 - **The software AV1 and VP9 encoders** refuse it by name: they code an
   average rate, not a constant one.
 
@@ -1995,10 +2034,12 @@ Encoders:
   the build opted into `av1-sw-fallback` (AV1) / `h26x-fallback` (H.264 /
   H.265), which sit *below* the vendor chain so they are a floor, never a
   preference.
-- **VP9, VP8, MPEG-2, MPEG-4 Part 2 and ProRes are software, always.** rivet's
-  own clean-room encoders are the only encoders of those codecs, so they are
-  built directly in every build — no fallback feature, because there is no
-  faster tier to fall back from.
+- **VP8, MPEG-2, MPEG-4 Part 2 and ProRes are software, always; VP9 is
+  software unless an Intel card encodes it.** rivet's own clean-room encoders
+  are the only encoders of the first four, built directly in every build. VP9
+  also has QSV (Arc A-series, Meteor Lake), tried first in a `qsv` build; its
+  own encoder stays in every build as the codec's default — no fallback
+  feature. NVENC and AMF have no VP8 / VP9 encoder (decision 41).
 - **Layered vendor encoders, stubbed when off.** Each is hand-rolled in-tree FFI
   that builds cross-platform; a stub type keeps the dispatcher `#[cfg]`-free and
   turns "feature not compiled" into a clear error instead of a link failure.

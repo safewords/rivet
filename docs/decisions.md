@@ -1422,3 +1422,93 @@ assembler (NASM) and a C compiler.
 **Where.** [`decode/mod.rs`](../crates/codec/src/decode/mod.rs),
 [`decode/h26x_sw.rs`](../crates/codec/src/decode/h26x_sw.rs),
 [codec-decode.md](codec-decode.md), the root [NOTICE](../NOTICE).
+
+### 41. VP9 on the GPUs: QSV encodes it, every hardware decoder sits behind a guard
+**Decision.** On 2026-10-03 VP9 got a hardware encoder and its hardware
+decoders got a guard, each limited to what the vendor documents and what a
+test has shown:
+
+- **Encode: QSV only.** Intel's VDEnc VP9 encoder (`MFX_CODEC_VP9`, profile 0
+  8-bit / profile 2 10-bit, `LowPower` on, raw frames via
+  `mfxExtVP9Param.WriteIVFHeaders = OFF`) is a hardware tier for
+  `codec=vp9`. With `qsv` compiled in, VP9 goes down the dispatch chain —
+  an Intel card that can encode it, then rivet's own VP9 encoder, which is
+  in every build and stays the codec's default. A policy that pins silicon
+  (`--encode family:intel`, `gpu:N`) gets the card or a refusal, as for every
+  codec. Quality targets are constant QP at the `base_q_idx` rivet's own
+  encoder takes for the target; `rate=cbr` is CBR; an average-rate VP9 rung
+  keeps the job on the software pool (only rivet's encoder codes one).
+- **Not encoded in hardware:** VP8 anywhere, VP9 on NVENC or AMF. NVIDIA's
+  NVENC application note lists H.264, HEVC and AV1 ("NVENC can perform
+  end-to-end encoding for H.264, HEVC 8-bit, HEVC 10-bit, AV1 8-bit and AV1
+  10-bit") and `nvEncodeAPI.h` has no VP8 / VP9 GUID; AMF's encoders are
+  AVC, HEVC and AV1; Intel's media-driver tables list no VP8 encode on any
+  current platform and VP9 encode only on DG2 / ATSM (Arc A-series) and
+  MTL — Battlemage and Lunar Lake decode VP9 only (their `MFXVideoENCODE_Init`
+  refuses, and the chain moves on).
+- **Decode: NVDEC (VP8, VP9), QSV (VP9), AMF (VP9, opt-in)**, each behind
+  `Vp9HardwareGuard` for VP9. AMF is not offered VP9 unless
+  `RIVET_AMF_VP9=1` (below). An odd-sized VP8 / VP9 picture is not given to
+  NVDEC, which resamples it. QSV VP8 decode is not wired: the Intel tables
+  give none on DG2 (and contradict themselves on MTL / LNL / BMG), and AMF
+  has no VP8 decoder component.
+
+**Why the guard.** Run against the WebM project's VP9 vectors, the AMF
+decoder (Ryzen 9 9950X iGPU) decodes most streams bit-exact and some
+silently wrong: a `show_existing_frame` produces no picture, a size change
+comes out at the first size, every stream with segmentation is wrong from
+its first segmented frame, and an intra-only frame is answered
+`AMF_RESOLUTION_CHANGED`. All of it is visible in the uncompressed header
+before the decoder sees the frame, so the guard reads each packet's headers
+(`vp9_header`, from the VP9 spec §6.2) and hands the hardware only what that
+vendor's `Vp9HwPolicy` trusts; anything else goes to rivet's own decoder from
+the last key frame — drained, replayed, the pictures already out dropped —
+without a seam, because VP9's reconstruction is exact. A key frame at a new
+size restarts the hardware decoder at that size instead. A policy trusts a
+feature only on evidence from `tests/hw_vpx_decode.rs`; untested hardware
+(NVDEC here) trusts none, which costs speed, never a wrong picture.
+
+**Why the guard checks the input too.** The first full vector run on the
+AMD iGPU coincided with video-engine timeouts (LiveKernelEvent 141 /
+a2000002). Two causes were found in the code against AMD's documentation:
+`AMF_REPEAT` from `SubmitInput` was answered by resubmitting the same buffer
+(the decode guide says submit NULL — a VP9 superframe was fed over and
+over), and frames larger than the size the decoder was initialised at
+reached it (a WebM / IVF header that understates the stream, a resize).
+Both are fixed, and the guard never hands a decoder a frame outside the
+size and depth it was set up for, or outside the vendor's documented range.
+
+**Why AMF is opt-in for VP9.** After both fixes, and with the guard
+refusing the eight-frame superframe that coincided with the next timeout, a
+further timeout came on a run in which the decoder had been handed one
+ordinary key frame before the guard switched away from it: nothing the
+guard reads explains it, and a decoder that can hang the GPU on input that
+cannot be screened for is not picked unasked. AMF H.264 / HEVC / AV1 are
+unchanged — but the shared `SubmitInput` fix has not been re-run on them on
+hardware (local AMD testing stopped at that timeout).
+
+**What was measured.** Bare decoder and guarded, against rivet's own
+decoders, one stream per process: QSV on the CI runner's Arc A750 (all
+343 profile 0 / 2 4:2:0 vectors read; and QSV VP9 encode: profile 0 / 2 at
+47.7 / 48.3 dB, CBR within 1.2 %); NVDEC on an RTX 3090 (341 vectors, the 18
+RFC 6386 VP8 vectors, no GPU event); AMF on a Ryzen 9 9950X iGPU (251
+vectors before the stop). Two bugs those runs found outside VP9's own code
+are fixed with it: the QSV decoder's `MFXInit` session, which on the runner
+answered every decode `Init` with `MFX_ERR_UNSUPPORTED` (now the 2.x
+dispatcher, as the encoder), and odd-sized 8-bit chroma in the shared NV12
+conversion (`width / 2` where the pipeline takes `ceil`).
+
+**Consequences.**
+- `codec::encode::hardware_encodes(backend, codec)` is the one answer to
+  "does this backend encode this codec"; `rivet capabilities`, the encode
+  pool and the spec checks read it.
+- `rivet capabilities` lists `qsv` for VP9 encode in a `qsv` build.
+- VP9 HDR stays the container's to say (no HDR claimed for QSV VP9 either).
+
+**Where.** [`encode/qsv/`](../crates/codec/src/encode/qsv/mod.rs),
+[`encode/mod.rs`](../crates/codec/src/encode/mod.rs),
+[`decode/vp9_hw_guard.rs`](../crates/codec/src/decode/vp9_hw_guard.rs),
+[`vp9_header.rs`](../crates/codec/src/vp9_header.rs),
+[`decode/amf_dec.rs`](../crates/codec/src/decode/amf_dec.rs),
+[`decode/nvdec/`](../crates/codec/src/decode/nvdec/mod.rs),
+[codec-decode.md](codec-decode.md), [codec-encode.md](codec-encode.md).

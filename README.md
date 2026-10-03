@@ -504,11 +504,13 @@ strings); AV1 stays the cross-vendor default.
 **Every codec rivet decodes, it can encode.** VP9, VP8, MPEG-2, MPEG-4 Part 2
 and ProRes are written by this workspace's own clean-room encoders, in
 software, in every build (no feature, no GPU), each into the files that carry
-it:
+it. VP9 is also encoded on an Intel card where one can (QSV, `qsv` feature —
+Arc A-series and Meteor Lake; see [Output — video encode](#output--video-encode-by-vendor)); rivet's own VP9 encoder
+stays its default everywhere else:
 
 | Codec | Single file (default first) | HLS | Encode |
 |---|---|---|---|
-| VP9 | WebM, MP4 (`vp09`) | yes (`vp09`) | profile 0, 8-bit 4:2:0, fixed quantiser |
+| VP9 | WebM, MP4 (`vp09`) | yes (`vp09`) | profile 0 / 2 (8- or 10-bit 4:2:0); quantiser or average bitrate (QSV: quantiser or `rate=cbr`) |
 | VP8 | WebM, MP4 (`vp08`) | no | 8-bit 4:2:0, fixed quantiser |
 | MPEG-2 | MP4 (`mp4v`), QuickTime | no | Main Profile, 8-bit 4:2:0, I/P/B; quantiser or average bitrate |
 | MPEG-4 Part 2 | MP4 (`mp4v`), QuickTime | no | Simple (Advanced Simple with B-VOPs), 8-bit 4:2:0; quantiser or average bitrate |
@@ -516,7 +518,7 @@ it:
 
 `--codec vp9|vp8|mpeg2|mpeg4|prores[-proxy|-lt|-422|-hq|-4444|-4444xq]`,
 `--container mp4|mov|webm`, `--prores-profile`; the same keys everywhere.
-What each can't do (10-bit VP9, ProRes in HLS, a bitrate for VP9, …) is
+What each can't do (ProRes in HLS, a bitrate for VP8, HDR VP9, …) is
 refused by name before anything is decoded. Every output is verified by
 reading it back with rivet's own demuxers and decoders (frame count,
 timestamps, PSNR against the source).
@@ -654,13 +656,26 @@ FFmpeg](#no-ffmpeg).
 |----------------|:--------------:|:----------:|:----------:|:--------------------:|
 | H.264 / AVC    | ✅             | ✅         | ✅         | ✅ `h26x`            |
 | HEVC / H.265   | ✅             | ✅         | ✅         | ✅ `h26x`            |
-| VP8            | ✅             | —          | —          | ✅ `vp8`             |
-| VP9            | ✅             | ✅         | ✅         | ✅ `vp9`             |
+| VP8            | ✅ ‡           | —          | —          | ✅ `vp8`             |
+| VP9            | ✅ ‡           | ✅ ‡       | ✅ ‡       | ✅ `vp9`             |
 | AV1            | ✅             | ✅         | ✅         | ✅ `av1`             |
 | MPEG-2         | ✅             | —          | —          | ✅ `mpeg2`           |
 | MPEG-1         | —              | —          | —          | ✅ `mpeg2`           |
 | MPEG-4 Part 2  | ✅             | —          | —          | ✅ `mpeg4`           |
 | ProRes         | —              | —          | —          | ✅ `prores`          |
+- ‡ **VP9 behind a guard** (`decode/vp9_hw_guard.rs`): each packet's headers
+  are read before a hardware decoder sees it, and what that vendor's decoder
+  is not shown to decode bit-exact — segmentation, `show_existing_frame`,
+  `intra_only`, scaled references, a superframe of more than two frames, a
+  size or depth other than the one it was set up for — goes to rivet's own
+  decoder from the last key frame, without a seam; a key frame at a new size
+  restarts the hardware decoder at it. VP8 and VP9 go to NVDEC one frame per
+  packet; an odd-sized VP8 / VP9 picture is not given to NVDEC (it resamples
+  it). AMF decodes VP9 only with `RIVET_AMF_VP9=1`: the AMD iGPU it was run
+  on timed out its video engine during the vector runs. NVENC encodes no VP8 / VP9, AMF has neither encoder nor a VP8
+  decoder, and Intel's runtime has no VP8 decode on Arc A-series. See
+  [codec-decode.md](docs/codec-decode.md#the-vp9-guard--decodevp9_hw_guardrs)
+  and [decision 41](docs/decisions.md).
 - **NVDEC `nvidia`** — a single, in-repo **hand-rolled CUVID FFI** decoder
   (`decode/nvdec.rs`, dlopen, no external crate). One path for everything NVDEC
   does: H.264/HEVC/AV1/VP8/VP9, MPEG-2, MPEG-4 Part 2, and **10-bit P016**.
@@ -669,9 +684,11 @@ FFmpeg](#no-ffmpeg).
   code, no external crate). **Hardware-verified on 3× Intel Arc** (H.264 / HEVC /
   AV1 / VP9, including 10-bit P010 via the oneVPL 2.x internal-allocation +
   `FrameInterface::Map` path). Builds on Windows + Linux.
-- **AMF `amd`** (`decode/amf_dec.rs`) — hand-rolled AMF decode FFI. † **Verified-
-  by-review only** — no AMD card on the dev box yet; tracked in
-  [TODO.md](TODO.md).
+- **AMF `amd`** (`decode/amf_dec.rs`) — hand-rolled AMF decode FFI. †
+  Verified on a Ryzen 9 9950X iGPU: H.264 and HEVC (8- and 10-bit)
+  bit-exact against rivet's own decoders; VP9 (profile 0 and 2, through the
+  guard) too, but opt-in (`RIVET_AMF_VP9=1`) after video-engine timeouts
+  during the VP9 vector runs.
 - **rivet's own** (`decode/{h26x,av1,prores,vp8,vp9,mpeg2,mpeg4}_sw.rs`,
   always compiled, no feature) — adapters onto this workspace's codec
   submodules (see [Crates](#crates)). `h26x` gives 4:2:0 / 4:2:2 / 4:4:4 up to
@@ -737,6 +754,14 @@ with a HDR `ColorPolicy` for HDR10/HLG; on its own, higher-precision SDR).
 | AV1   | ✅          | ✅ (P010) |
 | H.264 | ✅ (Arc-validated) | ❌ (no `AVC High 10` in oneVPL) |
 | H.265 | ✅ (Arc-validated) | ✅ (Main 10, Arc-validated) |
+| VP9   | ✅ (profile 0, Arc A750-validated) | ✅ (profile 2, P010, Arc A750-validated; SDR) |
+
+VP9 on QSV is Intel's VDEnc VP9 encoder: Arc A-series (DG2) and Meteor Lake;
+Battlemage and Lunar Lake decode VP9 but do not encode it, so there the job
+goes to rivet's own encoder (or, pinned to the card, is refused by name).
+Constant QP at the index rivet's own VP9 encoder takes for the target, or
+`rate=cbr`; an average-bitrate VP9 rung runs on rivet's own encoder. NVENC
+and AMF encode no VP9 or VP8.
 
 **Software (`av1-sw-fallback` for AV1, `h26x-fallback` for H.264 / H.265)**
 
@@ -757,13 +782,14 @@ with a HDR `ColorPolicy` for HDR10/HLG; on its own, higher-precision SDR).
 | ProRes | ✅ (upsampled to 4:2:2 / 4:4:4) | ✅ (HDR-tagged) | QuickTime |
 
 VP9 and software AV1 take an average-bitrate rung as well as a quality target
-(one-pass rate control; `rate=cbr` and a coded picture buffer are refused by
-name), and `--video-speed draft|standard|archive` trades their speed for
-compression.
+(one-pass rate control; `rate=cbr` is refused by name on these encoders — VP9
+at a constant rate is QSV's), and `--video-speed draft|standard|archive` trades
+their speed for compression.
 
 GPU-first — a host with no encode silicon for the chosen codec and no software
-fallback fails fast at encoder construction (the five codecs above have no
-GPU path here, so their own encoder is the encoder in every build). 4:2:2 / 4:4:4 and 12-bit are not
+fallback fails fast at encoder construction (VP8, MPEG-2, MPEG-4 Part 2 and
+ProRes have no GPU path here, so their own encoder is the encoder in every
+build; VP9 tries an Intel card first in a `qsv` build, then its own encoder). 4:2:2 / 4:4:4 and 12-bit are not
 produced. All hardware encoders are hand-rolled `dlopen` FFI in-tree (NVENC, AMF
 `P010`, QSV oneVPL) and build on Windows + Linux. H.264/H.265 emit **Annex-B**,
 which the muxer repackages to length-prefixed `avc1`/`hvc1` samples

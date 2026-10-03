@@ -36,6 +36,10 @@ pub mod vp8_sw;
 // VP9: this workspace's own decoder (`crates/vp9`), pure Rust, always
 // compiled — the software tier behind NVDEC, AMF and QSV.
 pub mod vp9_sw;
+// The guard in front of every hardware VP9 decoder: what a vendor's decoder
+// is not trusted with (`show_existing_frame`, frame-size changes) goes to
+// `vp9_sw` from the last key frame instead.
+pub mod vp9_hw_guard;
 // MPEG-2 / MPEG-1 video: this workspace's own decoder (`crates/mpeg2`), pure
 // Rust, always compiled — the software tier behind NVDEC.
 pub mod mpeg2_sw;
@@ -62,8 +66,13 @@ pub(crate) fn nv12_planes_to_yuv420p(
     width: usize,
     height: usize,
 ) -> Vec<u8> {
-    let cw = width / 2;
-    let ch = height / 2;
+    // Chroma of an odd-sized 4:2:0 picture is ceil(n / 2), as everywhere
+    // else in the pipeline (the P010 path below). This was `width / 2`: a
+    // 351-wide 8-bit picture got 175-wide chroma planes, short of what
+    // every consumer of the frame reads (QSV VP9 351x287 on an Arc A750:
+    // luma exact, chroma wrong).
+    let cw = width.div_ceil(2);
+    let ch = height.div_ceil(2);
     let mut out = Vec::with_capacity(width * height + 2 * cw * ch);
     for row in 0..height {
         let off = row * y_stride;
@@ -250,6 +259,16 @@ fn nvdec_disabled_for(codec_lower: &str) -> bool {
     env_flag_truthy(&format!("DISABLE_NVDEC_{codec_canonical}"))
 }
 
+/// Whether NVDEC is handed this stream as far as VP8 goes: not when the
+/// picture has an odd side. On an RTX 3090 the 16 even-sized RFC 6386
+/// comprehensive vectors decode bit-exact and the two odd-sized ones
+/// (175x143) come back 174x142; an odd-sized VP8 stream goes to rivet's own
+/// decoder. Other codecs pass (VP9's odd sizes are the VP9 guard's).
+#[cfg(feature = "nvidia")]
+fn nvdec_takes_vp8(codec_lower: &str, info: &StreamInfo) -> bool {
+    codec_lower != "vp8" || (info.width % 2 == 0 && info.height % 2 == 0)
+}
+
 /// Codecs the NVDEC streaming dispatch supports.
 #[cfg(feature = "nvidia")]
 fn nvdec_supports(codec_lower: &str) -> bool {
@@ -327,7 +346,7 @@ pub fn decode_capabilities() -> Vec<DecodeSupport> {
             // the build binds — a VCN without an AV1 block must not be
             // reported as decoding AV1.
             #[cfg(feature = "amd")]
-            if amf_dec::host_supports(codec) {
+            if amf_dec::host_supports(codec) && amf_takes(codec) {
                 backends.push("amf");
             }
             // QSV: ask the driver what this host's silicon can actually decode
@@ -427,6 +446,7 @@ pub fn create_decoder_on(
     if let Some(dev) = nvidia
         && nvdec_supports(&codec_lower)
         && !nvdec_disabled_for(&codec_lower)
+        && nvdec_takes_vp8(&codec_lower, &info)
     {
         tracing::info!(
             backend = "nvdec",
@@ -438,11 +458,16 @@ pub fn create_decoder_on(
         // A tier that cannot start is a tier that declines, not a job that
         // fails. See the QSV arm below, which is where this cost a real
         // upload.
-        return Ok(guarded(
-            nvdec::NvdecDecoder::new(info.clone(), dev.vendor_index),
+        let vendor_index = dev.vendor_index;
+        let decoder = vp9_guarded(
+            "NVDEC",
+            nvdec::NvdecDecoder::new(info.clone(), vendor_index),
             &codec_lower,
-            info,
-        ));
+            &info,
+            vp9_hw_guard::NVDEC_POLICY,
+            Box::new(move |i| Ok(nvdec::NvdecDecoder::new(i.clone(), vendor_index))),
+        );
+        return Ok(guarded(decoder, &codec_lower, info));
     }
 
     // AMD / AMF hardware decode — hand-rolled AMF FFI (`amd` feature).
@@ -458,6 +483,7 @@ pub fn create_decoder_on(
         };
         if let Some(dev) = amd
             && amf_dec::host_supports(&codec_lower)
+            && amf_takes(&codec_lower)
         {
             tracing::info!(
                 backend = "amf",
@@ -468,7 +494,16 @@ pub fn create_decoder_on(
             );
             match amf_dec::AmfDecoder::new(info.clone(), dev.vendor_index) {
                 Ok(decoder) => {
-                    return Ok(guarded(Box::new(decoder), &codec_lower, info));
+                    let vendor_index = dev.vendor_index;
+                    let decoder = vp9_guarded(
+                        "AMF",
+                        Box::new(decoder),
+                        &codec_lower,
+                        &info,
+                        vp9_hw_guard::AMF_POLICY,
+                        Box::new(move |i| Ok(Box::new(amf_dec::AmfDecoder::new(i.clone(), vendor_index)?) as Box<dyn Decoder>)),
+                    );
+                    return Ok(guarded(decoder, &codec_lower, info));
                 }
                 Err(e) => tracing::warn!(
                     error = %e,
@@ -512,7 +547,16 @@ pub fn create_decoder_on(
             // 640x360 clip through the same worker succeeded.
             match qsv_dec::QsvDecoder::new(info.clone(), dev.vendor_index) {
                 Ok(decoder) => {
-                    return Ok(guarded(Box::new(decoder), &codec_lower, info));
+                    let vendor_index = dev.vendor_index;
+                    let decoder = vp9_guarded(
+                        "QSV",
+                        Box::new(decoder),
+                        &codec_lower,
+                        &info,
+                        vp9_hw_guard::QSV_POLICY,
+                        Box::new(move |i| Ok(Box::new(qsv_dec::QsvDecoder::new(i.clone(), vendor_index)?) as Box<dyn Decoder>)),
+                    );
+                    return Ok(guarded(decoder, &codec_lower, info));
                 }
                 Err(e) => tracing::warn!(
                     error = %e,
@@ -615,6 +659,48 @@ fn h26x_disabled() -> bool {
         std::env::var("RIVET_DISABLE_H26X").as_deref().map(str::to_ascii_lowercase).as_deref(),
         Ok("1" | "true" | "yes" | "on" | "y" | "t")
     )
+}
+
+/// Whether the AMF tier is offered `codec_lower`: every codec it has a
+/// decoder for, except VP9 unless `RIVET_AMF_VP9=1`.
+///
+/// VP9 is off by default on AMF. On the one AMD GPU this was run on (a Ryzen
+/// 9 9950X iGPU), the WebM project's VP9 vectors drove the video engine into
+/// timeouts (LiveKernelEvent 141 / a2000002) — first through two decoder
+/// bugs since fixed (`AMF_REPEAT` answered by resubmitting the buffer, frames
+/// larger than the decoder was set up for), then on an eight-frame
+/// superframe the VP9 guard now keeps from it, and then once more on a run
+/// in which the decoder was handed a single ordinary key frame before the
+/// guard switched, so nothing the guard reads explains it. Hundreds of
+/// streams decoded bit-exact in between, but a decoder that can hang the
+/// GPU on input that cannot be screened for is not one to pick unasked.
+/// `RIVET_AMF_VP9=1` opts back in, behind the guard at its strictest
+/// ([`vp9_hw_guard::AMF_POLICY`]).
+#[cfg(feature = "amd")]
+fn amf_takes(codec_lower: &str) -> bool {
+    !vp9_sw::supports(codec_lower)
+        || matches!(
+            std::env::var("RIVET_AMF_VP9").as_deref().map(str::to_ascii_lowercase).as_deref(),
+            Ok("1" | "true" | "yes" | "on")
+        )
+}
+
+/// Put the VP9 guard in front of a hardware decoder of a VP9 stream; any
+/// other codec passes through.
+#[cfg(any(feature = "nvidia", feature = "amd", feature = "qsv"))]
+fn vp9_guarded(
+    label: &'static str,
+    decoder: Box<dyn Decoder>,
+    codec_lower: &str,
+    info: &StreamInfo,
+    policy: vp9_hw_guard::Vp9HwPolicy,
+    rebuild: vp9_hw_guard::Rebuild,
+) -> Box<dyn Decoder> {
+    if vp9_sw::supports(codec_lower) {
+        Box::new(vp9_hw_guard::Vp9HardwareGuard::new(label, decoder, info.clone(), policy).with_rebuild(rebuild))
+    } else {
+        decoder
+    }
 }
 
 /// Wrap a hardware decoder so a refusal degrades instead of failing.
@@ -805,7 +891,7 @@ fn nvidia_can_decode(_c: &str) -> bool {
 
 #[cfg(feature = "amd")]
 fn amd_can_decode(c: &str) -> bool {
-    amf_dec::host_supports(c)
+    amf_dec::host_supports(c) && amf_takes(c)
 }
 #[cfg(not(feature = "amd"))]
 fn amd_can_decode(_c: &str) -> bool {
@@ -825,6 +911,43 @@ fn intel_can_decode(_c: &str) -> bool {
 mod rotating_decoder_tests {
     use super::*;
     use crate::frame::{ColorSpace, PixelFormat};
+
+    /// NVDEC takes an even-sized VP8 stream only; everything else passes.
+    #[cfg(feature = "nvidia")]
+    #[test]
+    fn nvdec_takes_even_sized_vp8_only() {
+        let mut info = StreamInfo {
+            codec: "vp8".into(),
+            width: 176,
+            height: 144,
+            frame_rate: 30.0,
+            duration: 0.0,
+            pixel_format: PixelFormat::Yuv420p,
+            color_space: ColorSpace::Bt709,
+            total_frames: 0,
+            bitrate: 0,
+            color_metadata: Default::default(),
+        };
+        assert!(nvdec_takes_vp8("vp8", &info));
+        (info.width, info.height) = (175, 143);
+        assert!(!nvdec_takes_vp8("vp8", &info));
+        assert!(nvdec_takes_vp8("vp9", &info));
+        assert!(nvdec_takes_vp8("h264", &info));
+    }
+
+    /// An odd-sized NV12 picture: chroma ceil(w / 2) x ceil(h / 2).
+    #[cfg(any(feature = "nvidia", feature = "amd", feature = "qsv"))]
+    #[test]
+    fn nv12_chroma_of_an_odd_picture_is_rounded_up() {
+        // 3x3 luma (stride 4), chroma 2x2 interleaved (stride 4).
+        let y: Vec<u8> = (0..12).collect();
+        let uv: Vec<u8> = vec![100, 200, 101, 201, 102, 202, 103, 203];
+        let out = nv12_planes_to_yuv420p(&y, 4, &uv, 4, 3, 3);
+        assert_eq!(out.len(), 9 + 2 * 4);
+        assert_eq!(&out[..9], &[0, 1, 2, 4, 5, 6, 8, 9, 10]);
+        assert_eq!(&out[9..13], &[100, 101, 102, 103]);
+        assert_eq!(&out[13..], &[200, 201, 202, 203]);
+    }
 
     /// A decoder that yields one frame with a distinctive top-left pixel.
     struct OneFrame {
