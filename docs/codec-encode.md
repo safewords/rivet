@@ -275,15 +275,30 @@ and it says so at `warn` when it does.
   four times libaom's `cq-level` for the quality target — the same table the
   hardware tiers are equalised against.
 - **Rate.** A bitrate rung is coded to its average rate by the crate's rate
-  controller (bits per frame = bitrate / frame rate). `rate=cbr` and a coded
-  picture buffer are refused by name.
+  controller (bits per frame = bitrate / frame rate): each frame's quantiser
+  is planned over the next frames from a rate model refitted after every
+  frame, the source's complexity measured before the frame is coded (so a
+  scene cut is priced before it is spent), over- and under-spending repaid
+  over 12 frames. Over ten seconds of 640x360 at 100, 300 and 1000 kb/s it
+  lands within 2.5 % on a fast pan, fresh noise in every frame and a new
+  scene every second, at speeds 4, 6 and 8 (a still frame within 7 %, until
+  it cannot use the bits: 1000 kb/s is more than a still scene takes at
+  quantiser 1). The end-to-end rung test (one second of a 128x96 ramp and
+  square) asked 300 kb/s, which that clip cannot use — about 250 kb/s at
+  quantiser 1, the 0.84x it measured — and now asks 120 kb/s: 1.04x with
+  the MP4 container. `rate=cbr` and a coded picture buffer are refused by
+  name.
 - **Speed.** The tier is the encoder's effort (`av1::Config::speed`: `draft`
   8, `standard` 6, `archive` 4 — how much of its rate-distortion search runs
-  and which tools) and the motion search range (±8 / ±16 / ±32). The frame is
-  cut into tile columns — as many as the encoder's threads, a power of two,
-  each at least 256 pixels wide (a `tiles=` override names them) — coded in
-  parallel: at `standard` about 0.25 frames/s at 1280x720 on one thread and
-  0.8 with four. A fallback, not a production encoder.
+  and which tools) and the motion search range (±8 / ±16 / ±32). At `draft`
+  and `standard` the encoder searches each frame's superblock rows in a
+  wavefront on its threads, in one tile column (a `tiles=` override still
+  names columns; the stream does not depend on the thread count); at
+  `archive` the frame is cut into tile columns instead — as many as the
+  threads, a power of two, each at least 256 pixels wide — coded in
+  parallel. At `standard` about 1.4 frames/s at 1280x720 on one thread and
+  4.6 on four (`throughput_at_720p`; 0.25 and 0.8 before the encoder's
+  SIMD, pruned search and wavefront). A fallback, not a production encoder.
 - **Colour.** The job's colour description (primaries, transfer, matrix,
   range) goes into the sequence header, and its HDR10 mastering display and
   content light level into metadata OBUs on every key frame: the tier's caps

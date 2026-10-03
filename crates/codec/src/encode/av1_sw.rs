@@ -41,7 +41,10 @@
 //! times four, else the quality target's ([`tuning::av1_sw_params_with`]:
 //! four times libaom's `cq-level`, the same table the hardware tiers are
 //! equalised against). A bitrate rung is coded to its average rate by the
-//! encoder's rate controller (bits per frame at the rung's frame rate); a
+//! encoder's rate controller (bits per frame at the rung's frame rate; each
+//! frame's quantiser planned from a rate model refitted after every frame,
+//! with the source's complexity measured before coding — within a few
+//! percent over ten seconds of still, moving, noisy or cut footage); a
 //! constant rate or a coded picture buffer is refused by name. The speed
 //! tier picks the encoder's effort (`av1::Config::speed`: Draft 8, Standard
 //! 6, Archive 4 — how much of its rate-distortion search runs, and which
@@ -49,12 +52,16 @@
 //!
 //! # Speed
 //!
-//! A rate-distortion-searching encoder in Rust, SIMD in its hot kernels.
-//! The frame is cut into tile columns (as many as the encoder's threads, a
-//! power of two, each at least 256 pixels wide, unless `tiles=` asks) that
-//! are coded in parallel: at the Standard tier about 0.25 frames/s
-//! at 1280x720 on one thread, 0.8 with four (`throughput_at_720p`). A fallback,
-//! not a production encoder; the GPU tiers come first.
+//! A rate-distortion-searching encoder in Rust, SIMD in its hot kernels
+//! (its own as well as the decoder's). At the Standard and Draft tiers it
+//! searches each frame's superblock rows in a wavefront on the encoder's
+//! threads (one tile column unless `tiles=` asks; the stream does not depend
+//! on the thread count); at the Archive tier the frame is cut into tile
+//! columns instead (as many as the threads, a power of two, each at least
+//! 256 pixels wide) that are coded in parallel. At the Standard tier about
+//! 1.4 frames/s at 1280x720 on one thread and 4.6 on four
+//! (`throughput_at_720p`; it was 0.25 and 0.8). A fallback, not a production encoder;
+//! the GPU tiers come first.
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
@@ -113,12 +120,18 @@ pub fn hdr_metadata(m: &ColorMetadata) -> av1::HdrMetadata {
 }
 
 /// Tile columns (log2) for a frame `width` wide coded on `threads` threads:
-/// the largest power of two no more than the threads and no narrower than
-/// 256 pixels a tile, unless `asked` names a count (rounded up to a power of
-/// two). The encoder adds columns a frame wider than 4096 needs.
-pub fn tile_cols_log2(width: u32, threads: usize, asked: Option<u32>) -> u32 {
+/// one when the encoder's speed searches superblock rows in a `wavefront`
+/// (it spreads over the threads within a tile, and tile columns cost
+/// compression: contexts reset, no prediction across them), else the
+/// largest power of two no more than the threads and no narrower than 256
+/// pixels a tile; `asked` names a count (rounded up to a power of two)
+/// either way. The encoder adds columns a frame wider than 4096 needs.
+pub fn tile_cols_log2(width: u32, threads: usize, asked: Option<u32>, wavefront: bool) -> u32 {
     if let Some(n) = asked {
         return n.max(1).next_power_of_two().trailing_zeros();
+    }
+    if wavefront {
+        return 0;
     }
     let n = (threads.max(1) as u32).min((width / 256).max(1));
     31 - n.leading_zeros()
@@ -169,7 +182,7 @@ impl Av1Encoder {
         cfg.speed = p.speed;
         cfg.tools = av1::Tools::for_speed(p.speed);
         cfg.threads = threads;
-        cfg.tile_cols_log2 = tile_cols_log2(config.width, threads, p.tile_columns);
+        cfg.tile_cols_log2 = tile_cols_log2(config.width, threads, p.tile_columns, cfg.tools.wavefront);
         cfg.color = color_info(&config.color_metadata);
         cfg.hdr = hdr_metadata(&config.color_metadata);
         if let Some(bps) = rate {
@@ -369,12 +382,15 @@ mod tests {
 
     #[test]
     fn tile_columns_follow_the_threads() {
-        assert_eq!(tile_cols_log2(1280, 1, None), 0);
-        assert_eq!(tile_cols_log2(1280, 4, None), 2);
-        assert_eq!(tile_cols_log2(1280, 16, None), 2);
-        assert_eq!(tile_cols_log2(640, 16, None), 1);
-        assert_eq!(tile_cols_log2(3840, 16, None), 3);
-        assert_eq!(tile_cols_log2(1920, 1, Some(3)), 2);
+        assert_eq!(tile_cols_log2(1280, 1, None, false), 0);
+        assert_eq!(tile_cols_log2(1280, 4, None, false), 2);
+        assert_eq!(tile_cols_log2(1280, 16, None, false), 2);
+        assert_eq!(tile_cols_log2(640, 16, None, false), 1);
+        assert_eq!(tile_cols_log2(3840, 16, None, false), 3);
+        assert_eq!(tile_cols_log2(1920, 1, Some(3), false), 2);
+        // The wavefront speeds keep one column unless asked.
+        assert_eq!(tile_cols_log2(1280, 16, None, true), 0);
+        assert_eq!(tile_cols_log2(1920, 16, Some(2), true), 1);
     }
 
     /// Noisy frames, so a rate has something to spend its bits on.
