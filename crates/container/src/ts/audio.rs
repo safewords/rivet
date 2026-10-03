@@ -760,7 +760,289 @@ pub(super) fn extract_ts_audio(
         AudioCodecKind::MpegAudio => {
             extract_ts_mpeg_audio(data, packets, packet_stride, prefix_len, info.pid)
         }
+        AudioCodecKind::Opus { channel_config_code } => {
+            extract_ts_opus_audio(data, packets, packet_stride, prefix_len, info.pid, channel_config_code)
+        }
+        AudioCodecKind::Dts => {
+            let (es, pes) = reassemble_audio_pes(data, packets, packet_stride, prefix_len, info.pid);
+            let Some((track, starts)) = dts_from_es(&es)? else {
+                return Ok(None);
+            };
+            Ok(Some(TsAudio {
+                first_pts: first_frame_pts(&pes, &starts, &track.durations, track.sample_rate),
+                pes,
+                frame_starts: starts,
+                track,
+            }))
+        }
+        AudioCodecKind::Unsupported(name) => bail!("TS: no reader for {name} audio"),
     }
+}
+
+/// A program's audio: the stream read (the first of its audio streams that
+/// rivet reads, else the first), and — when it is one rivet has no reader
+/// for, or its packets would not read — the track named, with no packets,
+/// for the job to refuse by name instead of writing the video alone.
+pub(super) fn read_program_audio(
+    data: &[u8],
+    packets: usize,
+    packet_stride: usize,
+    prefix_len: usize,
+    streams: &[AudioStreamInfo],
+) -> (Option<TsAudio>, Option<AudioTrack>) {
+    let Some(&info) = streams.iter().find(|s| s.kind.is_read()).or(streams.first()) else {
+        return (None, None);
+    };
+    let named = |name: String| AudioTrack {
+        codec: name,
+        samples: Vec::new(),
+        sample_rate: 0,
+        channels: 0,
+        asc: Vec::new(),
+        codec_private: Vec::new(),
+        timescale: 1,
+        durations: Vec::new(),
+    };
+    if let AudioCodecKind::Unsupported(name) = info.kind {
+        tracing::warn!(audio_pid = info.pid, stream_type = info.stream_type, codec = name, "TS audio stream has no reader in rivet; surfaced by name with no packets");
+        return (None, Some(named(name.to_string())));
+    }
+    match extract_ts_audio(data, packets, packet_stride, prefix_len, info) {
+        Ok(audio) => (audio, None),
+        Err(e) => {
+            tracing::warn!(audio_pid = info.pid, audio_kind = ?info.kind, error = %e, "TS audio extraction failed; the track is surfaced by name with no packets");
+            (None, Some(named(format!("unreadable_{}", info.kind.name()))))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Opus
+// ---------------------------------------------------------------------------
+
+/// The OpusHead body (RFC 7845 §5.1, after the magic) for an Opus-in-TS
+/// `channel_config_code` (the TS mapping's Table 4-3): 0x00 dual mono;
+/// 0x01..=0x08 one to eight channels in the Vorbis order (mapping family 0
+/// for one or two channels, 1 beyond, with the RFC 7845 §5.1.1.2 stream
+/// counts and mapping); 0x80..=0x86 two to eight channels, family 1, one
+/// uncoupled stream each. Anything else (the explicit form included) is
+/// refused by name.
+pub(crate) fn opus_head_for_ts(channel_config_code: u8, pre_skip: u16) -> Result<Vec<u8>> {
+    let (channels, family, streams, coupled, mapping): (u8, u8, u8, u8, Vec<u8>) = match channel_config_code {
+        0x00 => (2, 255, 2, 0, vec![0, 1]),
+        0x01 => (1, 0, 1, 0, vec![]),
+        0x02 => (2, 0, 1, 1, vec![]),
+        0x03 => (3, 1, 2, 1, vec![0, 2, 1]),
+        0x04 => (4, 1, 2, 2, vec![0, 1, 2, 3]),
+        0x05 => (5, 1, 3, 2, vec![0, 4, 1, 2, 3]),
+        0x06 => (6, 1, 4, 2, vec![0, 4, 1, 2, 3, 5]),
+        0x07 => (7, 1, 4, 3, vec![0, 4, 1, 2, 3, 5, 6]),
+        0x08 => (8, 1, 5, 3, vec![0, 6, 1, 2, 3, 4, 5, 7]),
+        c @ 0x80..=0x86 => {
+            let n = c - 0x7E;
+            (n, 1, n, 0, (0..n).collect())
+        }
+        other => bail!("TS: Opus channel_config_code 0x{other:02X} is not one rivet reads"),
+    };
+    let mut head = vec![1, channels];
+    head.extend_from_slice(&pre_skip.to_le_bytes());
+    head.extend_from_slice(&48_000u32.to_le_bytes());
+    head.extend_from_slice(&0i16.to_le_bytes());
+    head.push(family);
+    if family != 0 {
+        head.push(streams);
+        head.push(coupled);
+        head.extend_from_slice(&mapping);
+    }
+    Ok(head)
+}
+
+/// One `opus_control_header` (the TS mapping §6.2): the payload's size and
+/// the header's own length, and the start / end trims, in 48 kHz samples.
+struct OpusControl {
+    header_len: usize,
+    payload_size: usize,
+    start_trim: u16,
+    end_trim: u16,
+}
+
+fn parse_opus_control(au: &[u8]) -> Option<OpusControl> {
+    // control_header_prefix: 11 bits of 0x3FF, then start_trim_flag,
+    // end_trim_flag, control_extension_flag and two reserved bits.
+    if au.len() < 3 || au[0] != 0x7F || au[1] & 0xE0 != 0xE0 {
+        return None;
+    }
+    let (start_flag, end_flag, ext_flag) = (au[1] & 0x10 != 0, au[1] & 0x08 != 0, au[1] & 0x04 != 0);
+    let mut at = 2;
+    let mut payload_size = 0usize;
+    loop {
+        let b = *au.get(at)?;
+        at += 1;
+        payload_size += usize::from(b);
+        if b != 0xFF {
+            break;
+        }
+    }
+    let mut trim = |flag: bool| -> Option<u16> {
+        if !flag {
+            return Some(0);
+        }
+        let v = u16::from_be_bytes([*au.get(at)?, *au.get(at + 1)?]) & 0x1FFF;
+        at += 2;
+        Some(v)
+    };
+    let start_trim = trim(start_flag)?;
+    let end_trim = trim(end_flag)?;
+    if ext_flag {
+        at += 1 + usize::from(*au.get(at)?);
+    }
+    Some(OpusControl { header_len: at, payload_size, start_trim, end_trim })
+}
+
+/// Extract Opus access units from PES packets on `audio_pid`: each AU's
+/// control header stripped (its payload is the Opus packet, or for several
+/// streams the self-delimited packets and the last one — the same form an
+/// MP4 or Ogg sample takes), one sample per AU; the OpusHead built from the
+/// descriptor's channel configuration and the first AU's start trim as its
+/// pre-skip. Each AU lasts what its packet's TOC says.
+fn extract_ts_opus_audio(
+    data: &[u8],
+    packets: usize,
+    packet_stride: usize,
+    prefix_len: usize,
+    audio_pid: u16,
+    channel_config_code: u8,
+) -> Result<Option<TsAudio>> {
+    let (es, pes) = reassemble_audio_pes(data, packets, packet_stride, prefix_len, audio_pid);
+    if es.is_empty() {
+        return Ok(None);
+    }
+    let mut samples = Vec::new();
+    let mut durations = Vec::new();
+    let mut starts = Vec::new();
+    let mut pre_skip = None;
+    let mut end_trim = 0u16;
+    // A PES packet holds whole AUs (§6), so each is walked on its own.
+    for (i, &(begin, _, _)) in pes.iter().enumerate() {
+        let end = pes.get(i + 1).map_or(es.len(), |&(next, _, _)| next);
+        let mut at = begin;
+        while at < end {
+            let au = &es[at..end];
+            let (payload, next) = match parse_opus_control(au) {
+                Some(c) if c.header_len + c.payload_size <= au.len() => {
+                    if pre_skip.is_none() {
+                        pre_skip = Some(c.start_trim);
+                    }
+                    end_trim = c.end_trim;
+                    (&au[c.header_len..c.header_len + c.payload_size], at + c.header_len + c.payload_size)
+                }
+                // No control header: the rest of the PES packet is one AU.
+                None => (au, end),
+                Some(_) => break,
+            };
+            if !payload.is_empty() {
+                durations.push(crate::ogg::opus_packet_samples(payload).unwrap_or(960));
+                samples.push(payload.to_vec());
+                starts.push(at);
+            }
+            at = next;
+        }
+    }
+    if samples.is_empty() {
+        return Ok(None);
+    }
+    if end_trim > 0 {
+        tracing::info!(end_trim, "TS Opus: the last access unit's end trim is not applied");
+    }
+    let head = opus_head_for_ts(channel_config_code, pre_skip.unwrap_or(0))?;
+    let channels = u16::from(head[1]);
+    Ok(Some(TsAudio {
+        first_pts: first_frame_pts(&pes, &starts, &durations, 48_000),
+        pes,
+        frame_starts: starts,
+        track: AudioTrack {
+            codec: "opus".into(),
+            samples,
+            sample_rate: 48_000,
+            channels,
+            asc: Vec::new(),
+            codec_private: head,
+            timescale: 48_000,
+            durations,
+        },
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// DTS
+// ---------------------------------------------------------------------------
+
+/// Where the next DTS core sync word (`7F FE 80 01`, the 16-bit big-endian
+/// form) is, at or after `from`.
+fn find_dts_sync(es: &[u8], from: usize) -> Option<usize> {
+    es.get(from..)?.windows(4).position(|w| w == [0x7F, 0xFE, 0x80, 0x01]).map(|i| from + i)
+}
+
+/// A DTS track from an elementary stream: one sample per core frame, with
+/// the DTS-HD extension substream that follows it (ETSI TS 102 114; the
+/// extension is carried, the core decoded); beside it, where each frame
+/// starts. The first core header gives the rate, channels and the `ddts`.
+/// `None` for a stream with no core frame. Shared by the transport-stream
+/// reader and raw `.dts` files.
+pub(crate) fn dts_from_es(es: &[u8]) -> Result<Option<(AudioTrack, Vec<usize>)>> {
+    let Some(mut cursor) = find_dts_sync(es, 0) else {
+        return Ok(None);
+    };
+    let first = crate::dts_sync::parse_core_sync(&es[cursor..]).map_err(|e| anyhow::anyhow!("TS: first DTS frame: {e}"))?;
+    let hd = crate::dts_sync::has_hd_extension(&es[cursor..], &first);
+    let mut samples = Vec::new();
+    let mut durations = Vec::new();
+    let mut starts = Vec::new();
+    while let Some(found) = find_dts_sync(es, cursor) {
+        cursor = found;
+        let Ok(core) = crate::dts_sync::parse_core_sync(&es[cursor..]) else {
+            cursor += 1;
+            continue;
+        };
+        if core.sample_rate != first.sample_rate || core.frame_size < 96 {
+            cursor += 1;
+            continue;
+        }
+        let core_end = cursor + core.frame_size;
+        if core_end > es.len() {
+            break;
+        }
+        // The frame runs to the next core sync: past an extension substream
+        // when one follows the core, else the core alone.
+        let end = if crate::dts_sync::has_hd_extension(&es[cursor..], &core) {
+            find_dts_sync(es, core_end).unwrap_or(es.len())
+        } else {
+            core_end
+        };
+        samples.push(es[cursor..end].to_vec());
+        durations.push(core.samples_per_frame);
+        starts.push(cursor);
+        cursor = end;
+    }
+    if samples.is_empty() {
+        return Ok(None);
+    }
+    if hd {
+        tracing::info!("DTS: DTS-HD extension present; carried through, the core decoded");
+    }
+    Ok(Some((
+        AudioTrack {
+            codec: "dts".into(),
+            samples,
+            sample_rate: first.sample_rate,
+            channels: first.channels,
+            asc: Vec::new(),
+            codec_private: crate::mux::ddts_body_from_sync(&first, hd),
+            timescale: first.sample_rate,
+            durations,
+        },
+        starts,
+    )))
 }
 
 /// Extract MPEG audio (MP3 / MP2) frames from PES packets on `audio_pid`:

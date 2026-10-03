@@ -345,8 +345,7 @@ fn adts_channel_configuration_zero_takes_the_layout_from_the_in_band_pce() {
     assert_ne!(&audio.asc[2..], &block[..audio.asc.len() - 2], "re-serialised, not copied");
 
     // channel_configuration = 0 with no PCE in the block is refused by name
-    // (demux_ts turns that into a video-only result with a warning; the
-    // extractor itself says why).
+    // (the extractor says why).
     let mut bad = build_adts_header_7(1, 3, 0, 7 + 40).to_vec();
     bad.extend_from_slice(&[0x00u8; 40]);
     let buf = super::build_ts_with_audio(STREAM_TYPE_AAC_ADTS, &[], 0x300, &bad);
@@ -360,7 +359,11 @@ fn adts_channel_configuration_zero_takes_the_layout_from_the_in_band_pce() {
         .expect_err("no PCE → error")
         .to_string();
     assert!(err.contains("PCE"), "{err}");
-    assert!(demux_ts(&buf).unwrap().audio.is_none(), "and the file comes out video-only");
+    // The file's audio is named, with no packets, so a job refuses it by
+    // name instead of writing the video alone.
+    let named = demux_ts(&buf).unwrap().audio.expect("a named track");
+    assert_eq!(named.codec, "unreadable_aac");
+    assert!(named.samples.is_empty());
 
     // Table 1.19 config 7 is eight channels too.
     let mut seven = build_adts_header_7(1, 3, 7, 7 + 8).to_vec();

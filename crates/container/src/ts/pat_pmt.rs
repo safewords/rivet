@@ -6,9 +6,11 @@
 
 use super::{
     AudioCodecKind, AudioStreamInfo, PatProgram, VideoStreamInfo, DESC_TAG_REGISTRATION, REG_AC3,
-    REG_EAC3, STREAM_TYPE_AAC_ADTS, STREAM_TYPE_AC3, STREAM_TYPE_EAC3, STREAM_TYPE_H264,
-    STREAM_TYPE_HEVC, STREAM_TYPE_MPEG1_AUDIO, STREAM_TYPE_MPEG1_VIDEO, STREAM_TYPE_MPEG2_AUDIO, STREAM_TYPE_MPEG2_VIDEO,
-    STREAM_TYPE_PES_PRIVATE,
+    REG_DTS1, REG_DTS2, REG_DTS3, REG_EAC3, REG_OPUS, STREAM_TYPE_AAC_ADTS, STREAM_TYPE_AAC_LATM, STREAM_TYPE_AC3,
+    STREAM_TYPE_BD_EAC3, STREAM_TYPE_BD_LPCM, STREAM_TYPE_DTS, STREAM_TYPE_DTS_HD_HR, STREAM_TYPE_DTS_HD_MA,
+    STREAM_TYPE_EAC3, STREAM_TYPE_H264, STREAM_TYPE_HEVC, STREAM_TYPE_MPEG1_AUDIO, STREAM_TYPE_MPEG1_VIDEO,
+    STREAM_TYPE_MPEG2_AUDIO, STREAM_TYPE_MPEG2_VIDEO, STREAM_TYPE_MPEG4_AUDIO_RAW, STREAM_TYPE_PES_PRIVATE,
+    STREAM_TYPE_TRUEHD,
 };
 
 /// Walk the PAT section and return every `(program_number, pmt_pid)`
@@ -150,31 +152,33 @@ pub(super) fn parse_pmt_streams(
                     kind: AudioCodecKind::Ac3,
                 });
             }
-            STREAM_TYPE_EAC3 => {
+            STREAM_TYPE_EAC3 | STREAM_TYPE_BD_EAC3 => {
                 audio.push(AudioStreamInfo {
                     pid,
                     stream_type: stype,
                     kind: AudioCodecKind::Eac3,
                 });
             }
+            STREAM_TYPE_DTS | STREAM_TYPE_DTS_HD_HR | STREAM_TYPE_DTS_HD_MA => {
+                audio.push(AudioStreamInfo { pid, stream_type: stype, kind: AudioCodecKind::Dts });
+            }
+            STREAM_TYPE_BD_LPCM | STREAM_TYPE_TRUEHD | STREAM_TYPE_AAC_LATM | STREAM_TYPE_MPEG4_AUDIO_RAW => {
+                let name = match stype {
+                    STREAM_TYPE_BD_LPCM => "pcm_bluray",
+                    STREAM_TYPE_TRUEHD => "truehd",
+                    STREAM_TYPE_AAC_LATM => "aac_latm",
+                    _ => "mpeg4_audio_raw",
+                };
+                audio.push(AudioStreamInfo { pid, stream_type: stype, kind: AudioCodecKind::Unsupported(name) });
+            }
             STREAM_TYPE_PES_PRIVATE => {
-                // DVB carries AC-3 / E-AC-3 here. Walk the ES descriptor
-                // loop and look for a registration_descriptor whose
-                // 4-char tag is "AC-3" or "EAC3".
-                if let Some(reg) = find_registration(descriptors) {
-                    match reg {
-                        REG_AC3 => audio.push(AudioStreamInfo {
-                            pid,
-                            stream_type: stype,
-                            kind: AudioCodecKind::Ac3,
-                        }),
-                        REG_EAC3 => audio.push(AudioStreamInfo {
-                            pid,
-                            stream_type: stype,
-                            kind: AudioCodecKind::Eac3,
-                        }),
-                        _ => {}
-                    }
+                // DVB (ETSI TS 101 154) carries AC-3, E-AC-3, DTS and Opus
+                // here: the codec is named by a registration_descriptor
+                // ("AC-3", "EAC3", "DTS1".."DTS3", "Opus") or by a DVB
+                // descriptor (ETSI EN 300 468 Annex D / G). A PES-private
+                // stream with neither (subtitles, teletext, data) is not audio.
+                if let Some(kind) = private_audio_kind(descriptors) {
+                    audio.push(AudioStreamInfo { pid, stream_type: stype, kind });
                 }
             }
             _ => {}
@@ -182,6 +186,55 @@ pub(super) fn parse_pmt_streams(
         i += 5 + esi_len;
     }
     Some((video, audio))
+}
+
+/// The audio codec a PES-private (stream_type 0x06) stream's descriptors
+/// name, if any.
+fn private_audio_kind(descriptors: &[u8]) -> Option<AudioCodecKind> {
+    match find_registration(descriptors) {
+        Some(REG_AC3) => return Some(AudioCodecKind::Ac3),
+        Some(REG_EAC3) => return Some(AudioCodecKind::Eac3),
+        Some(REG_DTS1 | REG_DTS2 | REG_DTS3) => return Some(AudioCodecKind::Dts),
+        Some(REG_OPUS) => {
+            // The opus_audio_descriptor: DVB's extension descriptor (tag
+            // 0x7F) with descriptor_tag_extension 0x80, then
+            // channel_config_code.
+            let code = descriptor_bodies(descriptors)
+                .find(|&(tag, body)| tag == 0x7F && body.first() == Some(&0x80))
+                .and_then(|(_, body)| body.get(1).copied());
+            return Some(match code {
+                Some(c) => AudioCodecKind::Opus { channel_config_code: c },
+                // No descriptor: stereo, the default of the mapping's most
+                // common configuration, read with the decoder's checks.
+                None => AudioCodecKind::Opus { channel_config_code: 0x02 },
+            });
+        }
+        _ => {}
+    }
+    // ETSI EN 300 468 descriptors: AC-3 (0x6A), enhanced AC-3 (0x7A), DTS
+    // (0x7B), AAC (0x7C), and the extension descriptor (0x7F) for DTS-HD
+    // (0x0E), DTS Neural (0x0F) and AC-4 (0x15).
+    descriptor_bodies(descriptors).find_map(|(tag, body)| match (tag, body.first()) {
+        (0x6A, _) => Some(AudioCodecKind::Ac3),
+        (0x7A, _) => Some(AudioCodecKind::Eac3),
+        (0x7B, _) => Some(AudioCodecKind::Dts),
+        (0x7C, _) => Some(AudioCodecKind::Unsupported("aac_dvb_private")),
+        (0x7F, Some(0x0E | 0x0F)) => Some(AudioCodecKind::Dts),
+        (0x7F, Some(0x15)) => Some(AudioCodecKind::Unsupported("ac4")),
+        _ => None,
+    })
+}
+
+/// Every `(descriptor_tag, body)` of a descriptor loop.
+fn descriptor_bodies(descriptors: &[u8]) -> impl Iterator<Item = (u8, &[u8])> {
+    let mut i = 0usize;
+    std::iter::from_fn(move || {
+        let tag = *descriptors.get(i)?;
+        let len = usize::from(*descriptors.get(i + 1)?);
+        let body = descriptors.get(i + 2..i + 2 + len)?;
+        i += 2 + len;
+        Some((tag, body))
+    })
 }
 
 /// Walk the ES descriptor loop and look for a registration_descriptor

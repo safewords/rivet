@@ -15,7 +15,7 @@ use super::{
     STREAM_TYPE_H264, STREAM_TYPE_HEVC, STREAM_TYPE_MPEG1_VIDEO, STREAM_TYPE_MPEG2_VIDEO,
     TS_PACKET, TS_SYNC,
 };
-use super::audio::{TsAudio, extract_ts_audio};
+use super::audio::{TsAudio, read_program_audio};
 use super::clock::{PTS_HZ, ProgramClock, PtsUnwrapper};
 use super::framerate::estimate_frame_rate_from_ptses;
 use super::pat_pmt::{parse_pat_all_programs, parse_pmt_streams};
@@ -97,13 +97,15 @@ pub struct TsStreamingDemuxer {
 /// estimated from.
 pub(super) const FRAME_RATE_WINDOW: usize = 64;
 
-pub(crate) fn demux_ts_streaming_init(data: bytes::Bytes) -> Result<TsStreamingDemuxer> {
-    let owned = data;
-    let (packets, packet_stride, prefix_len) = super::detect_packet_layout(&owned)?;
-    if packets == 0 {
-        bail!("TS: file contains no TS packets");
-    }
-
+/// Every program the PAT advertises, with the video and audio streams its
+/// PMT names (the first PMT section seen per PID; the demuxer reads from
+/// the start of the file, so first-section semantics are correct).
+pub(super) fn scan_programs(
+    owned: &[u8],
+    packets: usize,
+    packet_stride: usize,
+    prefix_len: usize,
+) -> Result<Vec<ProgramInfo>> {
     // Phase 1: walk the PAT and collect every program + its PMT PID.
     let mut pat_programs: Vec<PatProgram> = Vec::new();
     for i in 0..packets {
@@ -168,6 +170,18 @@ pub(crate) fn demux_ts_streaming_init(data: bytes::Bytes) -> Result<TsStreamingD
         }
     }
 
+    Ok(programs)
+}
+
+pub(crate) fn demux_ts_streaming_init(data: bytes::Bytes) -> Result<TsStreamingDemuxer> {
+    let owned = data;
+    let (packets, packet_stride, prefix_len) = super::detect_packet_layout(&owned)?;
+    if packets == 0 {
+        bail!("TS: file contains no TS packets");
+    }
+
+    let programs = scan_programs(&owned, packets, packet_stride, prefix_len)?;
+
     // Phase 3: pick the default active program — first one with a
     // recognised video stream. Matches legacy "first program wins"
     // semantics for single-program files.
@@ -177,7 +191,6 @@ pub(crate) fn demux_ts_streaming_init(data: bytes::Bytes) -> Result<TsStreamingD
         .context("TS: no program advertises a recognised video elementary stream")?;
     let active = &programs[active_program_idx];
     let video = active.video_streams[0];
-    let audio = active.audio_streams.first().copied();
     let codec = match video.stream_type {
         STREAM_TYPE_MPEG2_VIDEO => "mpeg2",
         STREAM_TYPE_MPEG1_VIDEO => "mpeg1",
@@ -285,22 +298,10 @@ pub(crate) fn demux_ts_streaming_init(data: bytes::Bytes) -> Result<TsStreamingD
     }
     let pixel_format_detected = scan.head.as_ref().is_some_and(|h| h.has_sps);
 
-    // Audio passthrough still happens up-front (Squad-18 contract).
-    // Squad-37 routes by codec kind (AAC / AC-3 / E-AC-3).
-    let audio_track = audio.and_then(|info| {
-        match extract_ts_audio(&owned, packets, packet_stride, prefix_len, info) {
-            Ok(track) => track,
-            Err(e) => {
-                tracing::warn!(
-                    audio_pid = info.pid,
-                    audio_kind = ?info.kind,
-                    error = %e,
-                    "TS audio extraction failed; emitting video-only"
-                );
-                None
-            }
-        }
-    });
+    // Audio passthrough still happens up-front (Squad-18 contract), routed
+    // by codec kind; a stream rivet cannot read comes back named.
+    let (audio_track, named_audio) =
+        read_program_audio(&owned, packets, packet_stride, prefix_len, &active.audio_streams);
     let layout = (packets, packet_stride, prefix_len);
     let breaks = discontinuity::time_base_breaks(
         &owned,
@@ -326,6 +327,7 @@ pub(crate) fn demux_ts_streaming_init(data: bytes::Bytes) -> Result<TsStreamingD
         clock,
         info.frame_rate,
     );
+    let audio_track = audio_track.or(named_audio);
 
     Ok(TsStreamingDemuxer {
         data: owned,
@@ -397,7 +399,6 @@ impl TsStreamingDemuxer {
             );
         }
         let video = self.programs[new_idx].video_streams[0];
-        let audio = self.programs[new_idx].audio_streams.first().copied();
         let codec = match video.stream_type {
             STREAM_TYPE_MPEG2_VIDEO => "mpeg2",
             STREAM_TYPE_MPEG1_VIDEO => "mpeg1",
@@ -472,28 +473,15 @@ impl TsStreamingDemuxer {
         self.eof = false;
         self.encrypted_drop = false;
         self.pts_unwrapper = PtsUnwrapper::default();
-        // Re-extract audio from the new program's first audio stream, and
-        // place both streams on the new program's clock.
-        let audio = audio.and_then(|info| {
-            match extract_ts_audio(
-                &self.data,
-                self.packets,
-                self.packet_stride,
-                self.prefix_len,
-                info,
-            ) {
-                Ok(track) => track,
-                Err(e) => {
-                    tracing::warn!(
-                        audio_pid = info.pid,
-                        audio_kind = ?info.kind,
-                        error = %e,
-                        "TS audio extraction failed on program switch; emitting video-only"
-                    );
-                    None
-                }
-            }
-        });
+        // Re-extract audio from the new program's audio streams, and place
+        // both streams on the new program's clock.
+        let (audio, named_audio) = read_program_audio(
+            &self.data,
+            self.packets,
+            self.packet_stride,
+            self.prefix_len,
+            &self.programs[new_idx].audio_streams,
+        );
         let layout = (self.packets, self.packet_stride, self.prefix_len);
         let breaks = discontinuity::time_base_breaks(
             &self.data,
@@ -524,6 +512,9 @@ impl TsStreamingDemuxer {
             clock,
             self.header.info.frame_rate,
         );
+        if self.audio.is_none() {
+            self.audio = named_audio;
+        }
         Ok(())
     }
 

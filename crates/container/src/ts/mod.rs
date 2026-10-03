@@ -110,6 +110,27 @@ pub(super) const STREAM_TYPE_EAC3: u8 = 0x87;
 pub(super) const DESC_TAG_REGISTRATION: u8 = 0x05;
 pub(super) const REG_AC3: u32 = 0x41432D33; // "AC-3"
 pub(super) const REG_EAC3: u32 = 0x45414333; // "EAC3"
+/// The Opus registration (Opus-in-TS, ETSI draft TS "Opus Interactive Audio
+/// Codec Transport Multiplexing", §4.3): `"Opus"`.
+pub(super) const REG_OPUS: u32 = 0x4F707573;
+/// The DTS registrations of the SMPTE registration authority, by core
+/// frame size: `"DTS1"` (512 samples), `"DTS2"` (1024), `"DTS3"` (2048).
+pub(super) const REG_DTS1: u32 = 0x44545331;
+pub(super) const REG_DTS2: u32 = 0x44545332;
+pub(super) const REG_DTS3: u32 = 0x44545333;
+/// Blu-ray / BDAV audio stream_types (user-private range, ISO/IEC 13818-1
+/// Table 2-34 0x80..0xFF): LPCM, DTS, Dolby TrueHD, E-AC-3, DTS-HD High
+/// Resolution and Master Audio (each with a DTS core).
+pub(super) const STREAM_TYPE_BD_LPCM: u8 = 0x80;
+pub(super) const STREAM_TYPE_DTS: u8 = 0x82;
+pub(super) const STREAM_TYPE_TRUEHD: u8 = 0x83;
+pub(super) const STREAM_TYPE_BD_EAC3: u8 = 0x84;
+pub(super) const STREAM_TYPE_DTS_HD_HR: u8 = 0x85;
+pub(super) const STREAM_TYPE_DTS_HD_MA: u8 = 0x86;
+/// ISO/IEC 13818-1 Table 2-34: MPEG-4 audio in LATM (0x11) and with no
+/// additional transport syntax (0x1C) — AAC rivet does not unwrap.
+pub(super) const STREAM_TYPE_AAC_LATM: u8 = 0x11;
+pub(super) const STREAM_TYPE_MPEG4_AUDIO_RAW: u8 = 0x1C;
 
 // ---------------------------------------------------------------------------
 // Shared public types
@@ -137,6 +158,37 @@ pub enum AudioCodecKind {
     Eac3,
     /// MPEG-1 / MPEG-2 audio, Layer I / II / III (stream_type 0x03 / 0x04).
     MpegAudio,
+    /// Opus (stream_type 0x06 + registration "Opus"), with the
+    /// `channel_config_code` of its `opus_audio_descriptor`.
+    Opus { channel_config_code: u8 },
+    /// DTS Coherent Acoustics, with or without a DTS-HD extension (stream_type
+    /// 0x82 / 0x85 / 0x86, or 0x06 + registration "DTS1".."DTS3" or the DVB
+    /// DTS audio descriptor).
+    Dts,
+    /// An audio stream rivet has no reader for, by the name it is reported
+    /// under: surfaced as a named track with no packets, so a job refuses it
+    /// by name rather than writing the video alone.
+    Unsupported(&'static str),
+}
+
+impl AudioCodecKind {
+    /// Whether rivet reads this kind's packets.
+    pub fn is_read(self) -> bool {
+        !matches!(self, AudioCodecKind::Unsupported(_))
+    }
+
+    /// The codec name a track of this kind carries.
+    pub fn name(self) -> &'static str {
+        match self {
+            AudioCodecKind::AacAdts => "aac",
+            AudioCodecKind::Ac3 => "ac3",
+            AudioCodecKind::Eac3 => "eac3",
+            AudioCodecKind::MpegAudio => "mp3",
+            AudioCodecKind::Opus { .. } => "opus",
+            AudioCodecKind::Dts => "dts",
+            AudioCodecKind::Unsupported(name) => name,
+        }
+    }
 }
 
 /// Per-stream info gathered from one PMT entry.
@@ -259,7 +311,7 @@ pub(crate) fn demux_ts(data: &[u8]) -> Result<DemuxResult> {
     // emit video-only).
     let mut pmt_pid: Option<u16> = None;
     let mut chosen_video: Option<VideoStreamInfo> = None;
-    let mut chosen_audio: Option<AudioStreamInfo> = None;
+    let mut chosen_audio: Vec<AudioStreamInfo> = Vec::new();
     for i in 0..packets {
         let start = i * packet_stride + prefix_len;
         let pkt = &data[start..start + TS_PACKET];
@@ -283,7 +335,7 @@ pub(crate) fn demux_ts(data: &[u8]) -> Result<DemuxResult> {
             && let Some((video_streams, audio_streams)) = pat_pmt::parse_pmt_streams(payload)
         {
             chosen_video = video_streams.into_iter().next();
-            chosen_audio = audio_streams.into_iter().next();
+            chosen_audio = audio_streams;
             if chosen_video.is_some() {
                 break;
             }
@@ -511,20 +563,7 @@ pub(crate) fn demux_ts(data: &[u8]) -> Result<DemuxResult> {
     // through Squad-27's path; AC-3 / E-AC-3 use the new pure-Rust
     // extractors that derive `dac3` / `dec3` from the first frame's
     // sync header (Squad-26 helpers).
-    let audio = chosen_audio.and_then(|info| {
-        match audio::extract_ts_audio(data, packets, packet_stride, prefix_len, info) {
-            Ok(track) => track,
-            Err(e) => {
-                tracing::warn!(
-                    audio_pid = info.pid,
-                    audio_kind = ?info.kind,
-                    error = %e,
-                    "TS audio extraction failed; emitting video-only"
-                );
-                None
-            }
-        }
-    });
+    let (audio, named_audio) = audio::read_program_audio(data, packets, packet_stride, prefix_len, &chosen_audio);
 
     // Where the streams start on the program clock — the same late starts
     // the streaming reader gives the pipeline. The samples stay every one the
@@ -547,6 +586,7 @@ pub(crate) fn demux_ts(data: &[u8]) -> Result<DemuxResult> {
         clock,
         info.frame_rate,
     );
+    let audio = audio.or(named_audio);
 
     Ok(DemuxResult {
         codec,
@@ -556,4 +596,36 @@ pub(crate) fn demux_ts(data: &[u8]) -> Result<DemuxResult> {
         video_presentation: clock.video_presentation(),
         audio_edit,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Audio-only transport streams
+// ---------------------------------------------------------------------------
+
+/// Whether any program of the transport stream names a video stream rivet
+/// recognises.
+pub(crate) fn has_video(data: &[u8]) -> Result<bool> {
+    let (packets, stride, prefix) = detect_packet_layout(data)?;
+    Ok(streaming::scan_programs(data, packets, stride, prefix)?.iter().any(|p| !p.video_streams.is_empty()))
+}
+
+/// The audio of a transport stream with no video (a radio service, an
+/// `-vn` capture): the first program with an audio stream, its stream read
+/// as the video demuxer reads one beside video — the first rivet reads,
+/// else the first, named — and placed by its own timestamps across
+/// time-base breaks (no video to measure holes against, so none is kept).
+/// `None` when no program has an audio stream.
+pub(crate) fn read_audio_only(data: &[u8]) -> Result<Option<crate::demux::AudioTrack>> {
+    let (packets, stride, prefix) = detect_packet_layout(data)?;
+    let programs = streaming::scan_programs(data, packets, stride, prefix)?;
+    let Some(program) = programs.iter().find(|p| !p.audio_streams.is_empty()) else {
+        return Ok(None);
+    };
+    let (audio, named) = audio::read_program_audio(data, packets, stride, prefix, &program.audio_streams);
+    let layout = (packets, stride, prefix);
+    let breaks =
+        discontinuity::time_base_breaks(data, layout, discontinuity::pcr_pid(data, layout, program.pmt_pid));
+    let (track, _gaps) =
+        retime::place_program_audio(audio, &breaks, &[], 0, clock::ProgramClock::default(), 0.0);
+    Ok(track.or(named))
 }

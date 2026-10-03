@@ -208,3 +208,27 @@ pub(crate) fn demux_avi(data: &[u8]) -> Result<DemuxResult> {
         audio_edit,
     })
 }
+
+/// The `hdrl` and `movi` lists of an AVI, as the readers take them.
+fn hdrl_and_movi(data: &[u8]) -> Result<((usize, usize), Vec<(usize, usize)>)> {
+    let mut hdrl = None;
+    let mut movi_lists = Vec::new();
+    scan_top_level_records(data, &mut hdrl, &mut movi_lists);
+    Ok((hdrl.context("AVI: missing hdrl LIST")?, movi_lists))
+}
+
+/// Whether the AVI declares a video stream (`strh` of type `vids`), whether
+/// or not rivet reads its codec.
+pub(crate) fn has_video(data: &[u8]) -> Result<bool> {
+    let ((start, end), _) = hdrl_and_movi(data)?;
+    let hdrl = &data[start..end];
+    // Each `LIST strl` holds a `strh` whose first four bytes are the type.
+    Ok(hdrl.windows(12).any(|w| &w[..4] == b"strh" && &w[8..12] == b"vids"))
+}
+
+/// The first audio stream of an AVI with no video stream (an `-vn` capture,
+/// a WAV-in-AVI), read exactly as beside video; `None` when it has none.
+pub(crate) fn read_audio_only(data: &[u8]) -> Result<Option<(crate::demux::AudioTrack, Option<crate::edit::AudioEdit>)>> {
+    let ((start, end), movi_lists) = hdrl_and_movi(data)?;
+    Ok(audio::read_audio(data, &data[start..end], &movi_lists).map(|a| (a.track, a.edit)))
+}
