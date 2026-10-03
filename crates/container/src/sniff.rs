@@ -39,16 +39,25 @@ pub enum ContainerKind {
     /// A native FLAC stream: the `fLaC` marker, possibly after an ID3v2 tag.
     /// Audio only, so it is a source for the audio-only output mode.
     Flac,
-    /// An Ogg file (`OggS` pages): Opus or Vorbis audio. Read for its audio
-    /// alone ([`crate::ogg`]).
+    /// An Ogg file (`OggS` pages): Opus, Vorbis or FLAC audio. Read for its
+    /// audio alone ([`crate::ogg`]).
     Ogg,
+    /// A RIFF / RF64 / BW64 WAVE file. Audio only ([`crate::raw_audio`]).
+    Wav,
+    /// A bare ADTS AAC stream (`.aac`). Audio only.
+    Adts,
+    /// A bare AC-3 / E-AC-3 stream (`.ac3`, `.eac3`). Audio only.
+    Ac3Es,
+    /// A bare DTS stream (`.dts`). Audio only.
+    DtsEs,
     /// Nothing this crate demuxes.
     Unknown,
 }
 
 impl ContainerKind {
     /// The short label the demux dispatch and `probe` report: `"mp4"`,
-    /// `"mkv"`, `"avi"`, `"ts"`, `"ps"`, `"mp3"`, `"flac"`, `"ogg"`, `"unknown"`.
+    /// `"mkv"`, `"avi"`, `"ts"`, `"ps"`, `"mp3"`, `"flac"`, `"ogg"`, `"wav"`,
+    /// `"aac"`, `"ac3"`, `"dts"`, `"unknown"`.
     pub fn label(self) -> &'static str {
         match self {
             ContainerKind::IsoBmff => "mp4",
@@ -59,6 +68,10 @@ impl ContainerKind {
             ContainerKind::Mp3 => "mp3",
             ContainerKind::Flac => "flac",
             ContainerKind::Ogg => "ogg",
+            ContainerKind::Wav => "wav",
+            ContainerKind::Adts => "aac",
+            ContainerKind::Ac3Es => "ac3",
+            ContainerKind::DtsEs => "dts",
             ContainerKind::Unknown => "unknown",
         }
     }
@@ -72,7 +85,16 @@ impl ContainerKind {
     /// what [`crate::streaming::demux_audio`] reads and the video demuxer
     /// refuses.
     pub fn is_audio_only(self) -> bool {
-        matches!(self, ContainerKind::Mp3 | ContainerKind::Flac | ContainerKind::Ogg)
+        matches!(
+            self,
+            ContainerKind::Mp3
+                | ContainerKind::Flac
+                | ContainerKind::Ogg
+                | ContainerKind::Wav
+                | ContainerKind::Adts
+                | ContainerKind::Ac3Es
+                | ContainerKind::DtsEs
+        )
     }
 }
 
@@ -97,6 +119,10 @@ pub fn sniff_container(data: &[u8]) -> ContainerKind {
     if &data[..4] == b"RIFF" && &data[8..12] == b"AVI " {
         return ContainerKind::Avi;
     }
+    // RIFF WAVE, and its 64-bit forms.
+    if crate::raw_audio::sniff_wav(data) {
+        return ContainerKind::Wav;
+    }
     // MPEG-TS: 0x47 sync byte at offset 0 AND at offset 188 (and 376 if we
     // have the bytes). A single 0x47 appears routinely in random payloads, so
     // require two confirming hits before committing.
@@ -114,6 +140,16 @@ pub fn sniff_container(data: &[u8]) -> ContainerKind {
     // MPEG program stream: a pack header opens it.
     if crate::ps::is_program_stream(data) {
         return ContainerKind::MpegPs;
+    }
+    // Bare audio elementary streams: frames that chain (see `raw_audio`).
+    if crate::raw_audio::sniff_adts(data) {
+        return ContainerKind::Adts;
+    }
+    if crate::raw_audio::sniff_ac3(data) {
+        return ContainerKind::Ac3Es;
+    }
+    if crate::raw_audio::sniff_dts(data) {
+        return ContainerKind::DtsEs;
     }
     // A FLAC stream may open with an ID3v2 tag too: its `fLaC` marker is
     // looked for before the MP3 sniff takes the tag as MPEG audio.

@@ -229,6 +229,8 @@ pub fn demux_streaming_shared(data: bytes::Bytes) -> Result<Box<dyn StreamingDem
         "mp3" => bail!("an MP3 file has no video track"),
         "flac" => bail!("a native FLAC stream has no video track"),
         "ogg" => bail!("rivet reads no video from an Ogg file (its audio is read alone)"),
+        "wav" => bail!("a WAVE file has no video track"),
+        "aac" | "ac3" | "dts" => bail!("a bare {} audio stream has no video track", detect_container(&data)),
         other => bail!("unsupported container: {other}"),
     }
 }
@@ -253,7 +255,7 @@ pub struct AudioSource {
 pub fn demux_audio(data: bytes::Bytes) -> Result<Option<AudioSource>> {
     let kind = crate::sniff::sniff_container(&data);
     let video_error = match kind {
-        crate::sniff::ContainerKind::Mp3 | crate::sniff::ContainerKind::Flac | crate::sniff::ContainerKind::Ogg => None,
+        k if k.is_audio_only() => None,
         _ => match demux_streaming_shared(data.clone()) {
             Ok(d) => {
                 return Ok(d.audio().cloned().map(|track| AudioSource {
@@ -291,6 +293,10 @@ pub fn demux_audio(data: bytes::Bytes) -> Result<Option<AudioSource>> {
             let (track, edit) = crate::ogg::read_audio(&data)?;
             Ok(audio_only(track, edit))
         }
+        crate::sniff::ContainerKind::Wav => Ok(audio_only(crate::raw_audio::read_wav(&data)?, None)),
+        crate::sniff::ContainerKind::Adts => Ok(audio_only(crate::raw_audio::read_adts(&data)?, None)),
+        crate::sniff::ContainerKind::Ac3Es => Ok(audio_only(crate::raw_audio::read_ac3(&data)?, None)),
+        crate::sniff::ContainerKind::DtsEs => Ok(audio_only(crate::raw_audio::read_dts(&data)?, None)),
         crate::sniff::ContainerKind::IsoBmff => {
             let Some(track) = crate::demux::audio::extract_mp4_audio(&data) else {
                 return Ok(None);

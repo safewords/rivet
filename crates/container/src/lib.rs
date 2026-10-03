@@ -16,6 +16,7 @@ pub mod mux;
 pub mod nal_mux;
 pub mod ogg;
 pub mod ps;
+pub mod raw_audio;
 pub mod reorder;
 pub mod sniff;
 pub mod streaming;

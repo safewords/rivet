@@ -227,19 +227,35 @@ fn extract_ts_aac_audio(
     // stream — shared with the AC-3 / E-AC-3 paths (Squad-37). ADTS
     // sync words let us split into frames after the fact.
     let (es, pes) = reassemble_audio_pes(data, packets, packet_stride, prefix_len, audio_pid);
+    let Some((track, starts)) = aac_from_adts_es(&es)? else {
+        return Ok(None);
+    };
+    Ok(Some(TsAudio {
+        first_pts: first_frame_pts(&pes, &starts, &track.durations, track.sample_rate),
+        pes,
+        frame_starts: starts,
+        track,
+    }))
+}
 
+/// An AAC track from an ADTS elementary stream: one raw access unit per
+/// frame (the ADTS header stripped), the AudioSpecificConfig synthesised
+/// from the first header (or its in-band PCE); beside it, where each frame
+/// starts. `None` for a stream with no ADTS frame. Shared by the
+/// transport-stream reader and raw `.aac` files.
+pub(crate) fn aac_from_adts_es(es: &[u8]) -> Result<Option<(AudioTrack, Vec<usize>)>> {
     if es.is_empty() {
         return Ok(None);
     }
 
-    // Step 2: scan for the first valid ADTS sync, derive ASC.
-    let mut cursor = match find_adts_sync(&es, 0) {
+    // Scan for the first valid ADTS sync, derive ASC.
+    let mut cursor = match find_adts_sync(es, 0) {
         Some(idx) => idx,
         None => return Ok(None),
     };
-    let first = parse_adts_header(&es[cursor..]).context("TS: first ADTS frame failed to parse")?;
+    let first = parse_adts_header(&es[cursor..]).context("ADTS: first frame failed to parse")?;
     let sample_rate = decode_sample_rate_index(first.sampling_frequency_index)
-        .context("TS: AAC sampling_frequency_index out of range")?;
+        .context("ADTS: AAC sampling_frequency_index out of range")?;
     // channel_configuration 0 means the layout is described by a PCE at the
     // head of the (first) raw data block — ffmpeg writes 7.1 that way, and
     // anything with `-aac_pce 1`. Read it: the count comes from the PCE and
@@ -248,14 +264,14 @@ fn extract_ts_aac_audio(
     // the in-band PCE is legal in MP4 and matches the ASC's.
     let (channels, asc) = if first.channel_configuration == 0 {
         let pce = pce_from_raw_block(&es[cursor + first.header_len..])
-            .context("TS: AAC channel_configuration=0 but the first raw data block does not start with a PCE")?;
+            .context("ADTS: AAC channel_configuration=0 but the first raw data block does not start with a PCE")?;
         let channels = pce.channel_count();
         if channels == 0 {
-            bail!("TS: AAC PCE describes no output channels");
+            bail!("ADTS: AAC PCE describes no output channels");
         }
         tracing::info!(
             channels,
-            "TS: AAC channel layout taken from the in-band PCE (channel_configuration=0)"
+            "ADTS: AAC channel layout taken from the in-band PCE (channel_configuration=0)"
         );
         (
             channels,
@@ -278,7 +294,7 @@ fn extract_ts_aac_audio(
         // Resync if we've drifted off a frame boundary (rare in practice
         // but possible on packet loss or if a PES header extension we
         // don't recognise pushed garbage into the ES).
-        let Some(found) = find_adts_sync(&es, cursor) else {
+        let Some(found) = find_adts_sync(es, cursor) else {
             break;
         };
         cursor = found;
@@ -289,7 +305,7 @@ fn extract_ts_aac_audio(
             || hdr.channel_configuration != first.channel_configuration
         {
             tracing::warn!(
-                "TS: AAC ADTS stream switched sr_idx/ch_cfg mid-stream; truncating audio at frame {}",
+                "ADTS: AAC ADTS stream switched sr_idx/ch_cfg mid-stream; truncating audio at frame {}",
                 samples.len()
             );
             break;
@@ -312,11 +328,8 @@ fn extract_ts_aac_audio(
         return Ok(None);
     }
 
-    Ok(Some(TsAudio {
-        first_pts: first_frame_pts(&pes, &starts, &durations, sample_rate),
-        pes,
-        frame_starts: starts,
-        track: AudioTrack {
+    Ok(Some((
+        AudioTrack {
             codec: "aac".into(),
             samples,
             sample_rate,
@@ -326,7 +339,8 @@ fn extract_ts_aac_audio(
             timescale: sample_rate,
             durations,
         },
-    }))
+        starts,
+    )))
 }
 
 // ---------------------------------------------------------------------------
@@ -381,6 +395,19 @@ fn ac3_frame_size(brc: u8, fscod: u8, frmsizecod_low_bit: u8) -> Option<usize> {
         0
     };
     Some(base + extra)
+}
+
+/// The byte length of the AC-3 or E-AC-3 syncframe at the start of `b`
+/// (`bsid` up to 10: AC-3's frame size table; 11 to 16: E-AC-3's `frmsiz`).
+pub(crate) fn ac3_syncframe_len(b: &[u8]) -> Option<usize> {
+    if b.len() < 6 || b[0] != 0x0B || b[1] != 0x77 {
+        return None;
+    }
+    match b[5] >> 3 {
+        0..=10 => ac3_frame_size((b[4] & 0x3F) >> 1, b[4] >> 6, b[4] & 1),
+        11..=16 => Some(eac3_frame_size(u16::from_be_bytes([b[2], b[3]]) & 0x07FF)),
+        _ => None,
+    }
 }
 
 /// Compute the byte length of one E-AC-3 syncframe — the BSI directly
@@ -507,23 +534,39 @@ fn extract_ts_eac3_audio(
     audio_pid: u16,
 ) -> Result<Option<TsAudio>> {
     let (es, pes) = reassemble_audio_pes(data, packets, packet_stride, prefix_len, audio_pid);
+    let Some((track, starts)) = eac3_from_es(&es)? else {
+        return Ok(None);
+    };
+    Ok(Some(TsAudio {
+        first_pts: first_frame_pts(&pes, &starts, &track.durations, track.sample_rate),
+        pes,
+        frame_starts: starts,
+        track,
+    }))
+}
+
+/// An E-AC-3 track from an elementary stream: one sample per access unit
+/// (an independent syncframe and its dependent substreams), the `dec3`
+/// from the first; beside it, where each starts. `None` for a stream with
+/// no frame. Shared by the transport-stream reader and raw `.eac3` files.
+pub(crate) fn eac3_from_es(es: &[u8]) -> Result<Option<(AudioTrack, Vec<usize>)>> {
     if es.is_empty() {
         return Ok(None);
     }
-    let mut cursor = match find_ac3_sync(&es, 0) {
+    let mut cursor = match find_ac3_sync(es, 0) {
         Some(idx) => idx,
         None => return Ok(None),
     };
     let first: Eac3SyncInfo = match ac3_sync::parse_sync_info(&es[cursor..])
-        .context("TS: first E-AC-3 frame failed to parse sync header")?
+        .context("E-AC-3: first frame failed to parse sync header")?
     {
         SyncInfo::Eac3(s) => s,
-        SyncInfo::Ac3(_) => bail!("TS: E-AC-3 PMT entry but bitstream is AC-3 (bsid<=10)"),
+        SyncInfo::Ac3(_) => bail!("E-AC-3: the stream is AC-3 (bsid<=10)"),
     };
     let sample_rate = eac3_sample_rate_hz(first.fscod, first.fscod2);
     if sample_rate == 0 {
         bail!(
-            "TS: E-AC-3 reserved sample rate (fscod={}, fscod2={})",
+            "E-AC-3: E-AC-3 reserved sample rate (fscod={}, fscod2={})",
             first.fscod,
             first.fscod2
         );
@@ -534,7 +577,7 @@ fn extract_ts_eac3_audio(
     let mut durations: Vec<u32> = Vec::new();
     let mut starts: Vec<usize> = Vec::new();
     while cursor < es.len() {
-        let Some(found) = find_ac3_sync(&es, cursor) else {
+        let Some(found) = find_ac3_sync(es, cursor) else {
             break;
         };
         cursor = found;
@@ -571,13 +614,10 @@ fn extract_ts_eac3_audio(
     // The dec3 and the channel count from the first access unit, its
     // dependent substreams included.
     let Some((dec3, _, channels)) = crate::mux::eac3_config_from_access_unit(&samples[0]) else {
-        bail!("TS: the first E-AC-3 access unit does not parse");
+        bail!("E-AC-3: the first E-AC-3 access unit does not parse");
     };
-    Ok(Some(TsAudio {
-        first_pts: first_frame_pts(&pes, &starts, &durations, sample_rate),
-        pes,
-        frame_starts: starts,
-        track: AudioTrack {
+    Ok(Some((
+        AudioTrack {
             codec: "eac3".into(),
             samples,
             sample_rate,
@@ -587,7 +627,8 @@ fn extract_ts_eac3_audio(
             timescale: sample_rate,
             durations,
         },
-    }))
+        starts,
+    )))
 }
 
 // ---------------------------------------------------------------------------
@@ -993,7 +1034,7 @@ pub(crate) fn dts_from_es(es: &[u8]) -> Result<Option<(AudioTrack, Vec<usize>)>>
     let Some(mut cursor) = find_dts_sync(es, 0) else {
         return Ok(None);
     };
-    let first = crate::dts_sync::parse_core_sync(&es[cursor..]).map_err(|e| anyhow::anyhow!("TS: first DTS frame: {e}"))?;
+    let first = crate::dts_sync::parse_core_sync(&es[cursor..]).map_err(|e| anyhow::anyhow!("DTS: first core frame: {e}"))?;
     let hd = crate::dts_sync::has_hd_extension(&es[cursor..], &first);
     let mut samples = Vec::new();
     let mut durations = Vec::new();
