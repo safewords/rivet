@@ -85,6 +85,11 @@ pub struct DecodePumpConfig {
     /// *decoded* frames: the range decides what is decoded, the trim decides
     /// what is kept.
     pub sample_range: Option<DecodeRange>,
+    /// How many decode pumps run at once (the ladder's range-split decode),
+    /// so a software decoder that spreads over the machine's threads takes
+    /// its share of them rather than all of them each
+    /// ([`codec::decode::create_decoder_shared`]). `1` for a pump alone.
+    pub software_share: usize,
     /// Clockwise rotation the container declared, in degrees (0/90/180/270).
     ///
     /// Applied to every frame as it leaves the decoder, so nothing fed by this
@@ -174,6 +179,7 @@ impl DecodePumpConfig {
             ),
             gpu_index,
             sample_range: None,
+            software_share: 1,
             rotation_degrees: header.rotation_degrees,
             filters,
             decimate: decimation(header.info.frame_rate, spec.max_frame_rate),
@@ -482,7 +488,7 @@ fn decode_clip(
         streaming::demux_streaming_shared(clip.input.clone())
             .context("demuxing clip for decode pump")?;
     let decoder =
-        decode::create_decoder_on(&cfg.codec_name, cfg.info_for_decoder.clone(), cfg.gpu_index)
+        decode::create_decoder_shared(&cfg.codec_name, cfg.info_for_decoder.clone(), cfg.gpu_index, cfg.software_share)
             .context("creating decoder for decode pump")?;
     // Wrapped here rather than at each consumer: every rung fed by this pump
     // wants the picture the right way up. A rotation of 0 returns the decoder
@@ -1302,6 +1308,7 @@ mod tests {
             sdr_to_hdr: None,
             gpu_index: None,
             sample_range: None,
+            software_share: 1,
             rotation_degrees: 0,
             filters: std::sync::Arc::new(
                 codec::filter::FilterChain::prepare(&[]).expect("empty chain"),
@@ -1530,6 +1537,7 @@ mod tests {
             sdr_to_hdr: None,
             gpu_index: None,
             sample_range: None,
+            software_share: 1,
             rotation_degrees: header.rotation_degrees,
             filters: std::sync::Arc::new(codec::filter::FilterChain::prepare(&[]).expect("empty chain")),
             decimate: None,
@@ -1601,6 +1609,7 @@ mod tests {
             sdr_to_hdr: None,
             gpu_index: None,
             sample_range: None,
+            software_share: 1,
             rotation_degrees: header.rotation_degrees,
             filters: std::sync::Arc::new(codec::filter::FilterChain::prepare(&[]).expect("empty chain")),
             decimate: None,

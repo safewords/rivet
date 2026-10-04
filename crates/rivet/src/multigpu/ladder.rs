@@ -693,7 +693,8 @@ struct RangeJob {
     is_final: bool,
     multi_range: bool,
     frames_per_chunk: u32,
-    /// Decode workers running at once, which share the machine's threads.
+    /// Decode workers running at once: they share the machine's threads,
+    /// for a software decoder and for the filters alike.
     concurrent: usize,
 }
 
@@ -745,6 +746,7 @@ fn run_range(
     if job.multi_range {
         for clip in clips.iter_mut() {
             clip.cfg.sample_range = job.range.sample_range();
+            clip.cfg.software_share = job.concurrent;
         }
     }
     // Several pumps at once share the machine: each one's filters (the

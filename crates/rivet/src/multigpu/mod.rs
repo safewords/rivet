@@ -270,6 +270,7 @@ impl MultiGpuParams<'_> {
                     ),
                     gpu_index: gpu,
                     sample_range: None,
+                    software_share: 1,
                     rotation_degrees: self.header.rotation_degrees,
                     filters: self.filters.clone(),
                     // `frame_rate` is the source's, capped.

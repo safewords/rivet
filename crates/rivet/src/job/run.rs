@@ -165,6 +165,7 @@ pub(super) async fn run_single_file(
         ),
         gpu_index: decode_gpu,
         sample_range: None,
+        software_share: 1,
         rotation_degrees: header.rotation_degrees,
         filters: Arc::clone(&filter_chain),
         decimate,
