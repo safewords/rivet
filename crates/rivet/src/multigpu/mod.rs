@@ -48,15 +48,17 @@ mod ladder;
 mod single_file;
 pub(crate) mod speed;
 
+#[cfg(all(test, feature = "server"))]
+pub(crate) use gpu_policy::cards_for_policy;
 pub(crate) use gpu_policy::check_rate_pool;
+#[cfg(test)]
+pub(crate) use gpu_policy::host_verdicts;
 pub use gpu_policy::{
     CardVerdict, HostCards, SOFTWARE_SLOTS_ENV, SoftwarePoolPlan, detect_gpu_pool,
     gpu_pool_for_job, gpu_pool_for_policy, gpu_pool_for_serial, gpu_pool_for_serial_job,
     host_software_pool_plan, policy_gpu_indices, serial_gpu_for_policy, serial_target,
     software_only, software_pool_plan,
 };
-#[cfg(test)]
-pub(crate) use gpu_policy::{cards_for_policy, host_verdicts};
 pub use hls::run_multigpu_hls;
 pub use single_file::{RungPackets, run_multigpu_single_file, single_file_chunk_frames};
 
