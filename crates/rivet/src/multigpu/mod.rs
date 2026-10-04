@@ -56,7 +56,7 @@ pub use gpu_policy::{
 };
 pub(crate) use gpu_policy::check_rate_pool;
 pub use hls::run_multigpu_hls;
-pub use single_file::{RungPackets, run_multigpu_single_file};
+pub use single_file::{RungPackets, run_multigpu_single_file, single_file_chunk_frames};
 
 /// The run was stopped by its caller's cancel signal
 /// ([`MultiGpuParams::cancel`]) rather than by a failure. Comes back as the

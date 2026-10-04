@@ -352,6 +352,17 @@ pub(super) fn preflight_encoder(params: &MultiGpuParams<'_>, width: u32, height:
 /// the job, and the finish-time gate keeps it off the tail entirely.
 pub(super) const RANGES_PER_CARD: usize = 4;
 
+/// A card decodes in a split only if it is expected to be at least this
+/// fraction as fast as the fastest decode-capable card.
+///
+/// Decoding is not free for the card that does it: every decoded frame comes
+/// back over its PCIe link, the link its encode traffic also crosses. On
+/// devbox the A380 (3.0 x2) decoding its share of the ranges slowed its own
+/// encoding by more than its decode saved — the ladder took 5.8 s split
+/// against 4.8 s with the A750 decoding everything. A card well behind the
+/// fastest helps most by encoding only.
+pub(super) const DECODE_PEER_RATIO: f64 = 0.6;
+
 /// The decode for this job: the ranges the source is cut into, and the
 /// devices that decode them. Each device runs one decode worker that pulls
 /// the next range when it is free (see [`spawn_decode`]).
@@ -390,7 +401,7 @@ pub(super) fn plan_decode(params: &MultiGpuParams<'_>, shape: LadderShape, capac
     } else if decode_gpus.is_empty() {
         vec![None; capacity.max(1)]
     } else {
-        decode_gpus.iter().copied().map(Some).collect()
+        decode_peers(&role, &decode_gpus).into_iter().map(Some).collect()
     };
     let want = match params.decode {
         crate::spec::DecodePolicy::Auto if slots.len() > 1 => slots.len() * RANGES_PER_CARD,
@@ -467,6 +478,31 @@ fn pump_share(job_threads: usize, pumps: usize) -> usize {
         return 0;
     }
     (job_threads / pumps).max(1)
+}
+
+/// The decode-capable cards fit to share a split decode: those expected to be
+/// at least [`DECODE_PEER_RATIO`] as fast as the fastest, in detection order.
+fn decode_peers(role: &str, gpus: &[u32]) -> Vec<u32> {
+    if gpus.len() < 2 {
+        return gpus.to_vec();
+    }
+    let keys: Vec<DeviceKey> = gpus.iter().map(|&g| DeviceKey::Gpu(g)).collect();
+    let board = SpeedBoard::new(speed::priors_for(role, &keys));
+    peers_at(&board, gpus)
+}
+
+fn peers_at(board: &SpeedBoard, gpus: &[u32]) -> Vec<u32> {
+    let best = (0..gpus.len()).map(|d| board.rate(d)).fold(0.0f64, f64::max);
+    let peers: Vec<u32> =
+        gpus.iter().enumerate().filter(|&(d, _)| board.rate(d) >= best * DECODE_PEER_RATIO).map(|(_, &g)| g).collect();
+    if peers.len() < gpus.len() {
+        tracing::info!(
+            candidates = ?gpus,
+            decoding = ?peers,
+            "split decode: cards well behind the fastest encode only"
+        );
+    }
+    peers
 }
 
 /// The speed record's role for decoding `codec`.
@@ -1887,6 +1923,16 @@ mod tests {
         let split = decode_through_ladder(&input, DecodePlan { ranges, devices: vec![None; 2] }, shape).expect("ran whole");
         assert!(whole[0][1..].iter().all(|c| c.1 == 10), "a whole decode leads every chunk after the first in");
         assert_same(&split, &whole);
+    }
+
+    /// A card expected well under the fastest is left out of a split decode;
+    /// cards of one speed all decode.
+    #[test]
+    fn a_much_slower_card_does_not_decode_in_a_split() {
+        let a380_a750 = SpeedBoard::new(speed::normalise_priors(vec![0.43, 1.0], vec![None, None]));
+        assert_eq!(peers_at(&a380_a750, &[0, 1]), vec![1]);
+        let alike = SpeedBoard::new(speed::normalise_priors(vec![1.0, 0.9, 1.0], vec![None, None, None]));
+        assert_eq!(peers_at(&alike, &[0, 1, 2]), vec![0, 1, 2]);
     }
 
     /// The default plan on a multi-card host cuts several ranges per card;

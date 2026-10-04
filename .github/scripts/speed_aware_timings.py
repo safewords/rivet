@@ -8,7 +8,7 @@ cards together are no slower than the fastest card alone.
 For every plan — each card pinned (`--encode gpu:N --decode gpu:N`), and all
 the cards (`--encode family:VENDOR`, decode `auto` and `whole`) — it runs a
 three-rung AV1 HLS ladder on SRC_LADDER and a one-rung H.265 single file on
-SRC_SINGLE, takes the best of N wall times, and prints a Markdown table
+SRC_SINGLE and on SRC_LADDER (reported only), takes the best of N wall times, and prints a Markdown table
 (`--base` adds the same runs with another build, e.g. develop's, as a
 "before" column). With two or more cards it then asserts, for this build:
 
@@ -74,6 +74,7 @@ def main():
         return
     ladder = [a.ladder_src, "--mode", "hls", "--codec", "av1", "--rung", "1920x1080", "--rung", "1280x720", "--rung", "854x480"]
     single = [a.single_src, "--codec", "h265", "--rung", "1920x1080"]
+    single_long = [a.ladder_src, "--codec", "h265", "--rung", "1920x1080"]
     plans = [(f"gpu {g} alone", ["--encode", f"gpu:{g}", "--decode", f"gpu:{g}"]) for g in found]
     plans += [
         ("all cards, decode auto", ["--encode", f"family:{a.vendor}", "--decode", "auto"]),
@@ -81,7 +82,8 @@ def main():
     ]
     builds = [("after", a.rivet)] + ([("before", a.base)] if a.base else [])
     times = {}
-    for job, job_args in (("ladder", ladder), ("single", single)):
+    jobs = (("ladder", ladder), ("single", single), ("single-long", single_long))
+    for job, job_args in jobs:
         for plan, plan_args in plans:
             for build, binary in builds:
                 tag = f"{job}-{plan}-{build}".replace(" ", "-").replace(",", "")
@@ -90,7 +92,7 @@ def main():
 
     head = "| job | plan | " + " | ".join(b for b, _ in builds) + " |"
     lines = [head, "|" + "---|" * (2 + len(builds))]
-    for job in ("ladder", "single"):
+    for job, _ in jobs:
         for plan, _ in plans:
             lines.append(f"| {job} | {plan} | " + " | ".join(f"{times[(job, plan, b)]:.2f} s" for b, _ in builds) + " |")
     table = "\n".join(lines)
@@ -101,18 +103,20 @@ def main():
             f.write("\n### Speed-aware scheduling: wall times (best of %d)\n\n%s\n" % (a.repeat, table))
 
     failures = []
-    for job, limit in (("ladder", 0.95), ("single", 1.10)):
+    # single-long (the ladder source as one rung: two chunks) is reported,
+    # not judged: two chunks of unequal length on cards 3x apart.
+    for job, limit in (("ladder", 0.95), ("single", 1.10), ("single-long", None)):
         alone = {g: times[(job, f"gpu {g} alone", "after")] for g in found}
         fastest = min(alone, key=alone.get)
         together = times[(job, "all cards, decode auto", "after")]
         ratio = together / alone[fastest]
-        verdict = "ok" if ratio <= limit else "FAIL"
+        verdict = "reported" if limit is None else ("ok" if ratio <= limit else "FAIL")
         line = f"{job}: all cards {together:.2f} s vs gpu {fastest} alone {alone[fastest]:.2f} s = {ratio:.2f}x (limit {limit}x) {verdict}"
         print(line)
         if summary:
             with open(summary, "a") as f:
                 f.write(f"- {line}\n")
-        if ratio > limit:
+        if limit is not None and ratio > limit:
             failures.append(line)
     if failures:
         raise SystemExit("\n".join(failures))

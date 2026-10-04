@@ -69,6 +69,11 @@ fn coverage_error(label: &str, expected: usize, indices: &[usize]) -> Option<Str
 /// ~130 chunks to spread across the GPUs.
 const GOPS_PER_CHUNK: u32 = 10;
 
+/// Frames per single-file chunk at this GOP: [`GOPS_PER_CHUNK`] GOPs.
+pub fn single_file_chunk_frames(keyframe_interval: u32) -> u32 {
+    keyframe_interval.saturating_mul(GOPS_PER_CHUNK).max(1)
+}
+
 /// How the chunk lead-in margin is made safe.
 ///
 /// A margin is only correct if the first *kept* frame is a random-access point,
@@ -125,7 +130,7 @@ pub async fn run_multigpu_single_file(
         return Ok(Vec::new());
     }
     let shape = LadderShape {
-        frames_per_chunk: params.keyframe_interval.saturating_mul(GOPS_PER_CHUNK).max(1),
+        frames_per_chunk: single_file_chunk_frames(params.keyframe_interval),
         overlap: lead_in_margin(params.keyframe_interval),
     };
     let total_segments = total_segments_for_rung(params.total_input_frames, shape.frames_per_chunk);
