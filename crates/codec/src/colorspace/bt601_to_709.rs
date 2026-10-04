@@ -41,11 +41,14 @@ use bytes::BytesMut;
 
 use crate::frame::{ColorSpace, VideoFrame};
 
+// The AVX2 kernel's scalar tails; nothing else uses them.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline(always)]
 fn clamp_y(v: i32) -> u8 {
     v.clamp(16, 235) as u8
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline(always)]
 fn clamp_c(v: i32) -> u8 {
     v.clamp(16, 240) as u8

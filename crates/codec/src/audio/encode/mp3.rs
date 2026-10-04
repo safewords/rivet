@@ -49,9 +49,15 @@ pub struct Mp3Encoder {
     first_pts: Option<i64>,
     frames_out: u64,
     flushed: bool,
+    threads: usize,
 }
 
 impl Mp3Encoder {
+    /// The thread count handed to the encoder (`config.threads`).
+    pub fn threads(&self) -> usize {
+        self.threads
+    }
+
     pub fn new(config: AudioEncoderConfig) -> Result<Self, AudioError> {
         if config.codec != AudioCodec::Mp3 {
             return Err(AudioError::Encode(format!("Mp3Encoder constructed with codec {:?}", config.codec)));
@@ -73,7 +79,7 @@ impl Mp3Encoder {
             )));
         }
         let out_rate = mp3_sample_rate(config.sample_rate);
-        let inner = ::mp3::Encoder::new(::mp3::EncoderConfig {
+        let mut inner = ::mp3::Encoder::new(::mp3::EncoderConfig {
             sample_rate: out_rate,
             channels: config.channels,
             bitrate: ::mp3::BitrateMode::Cbr(bitrate),
@@ -81,7 +87,9 @@ impl Mp3Encoder {
         })
         .map_err(encode_error)?;
         debug_assert_eq!(inner.frame_samples(), MP3_FRAME_SAMPLES as usize);
+        inner.set_threads(config.threads);
         Ok(Self {
+            threads: config.threads,
             inner,
             in_rate: config.sample_rate,
             out_rate,
@@ -168,7 +176,7 @@ mod tests {
     use super::*;
 
     fn config(sample_rate: u32, channels: u8, bitrate: u32) -> AudioEncoderConfig {
-        AudioEncoderConfig { codec: AudioCodec::Mp3, sample_rate, channels, bitrate, quality: None, layout: None }
+        AudioEncoderConfig { codec: AudioCodec::Mp3, sample_rate, channels, bitrate, quality: None, layout: None, threads: 0 }
     }
 
     #[test]

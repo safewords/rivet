@@ -91,14 +91,20 @@ fn read_u16le(bytes: &[u8]) -> Vec<u16> {
 }
 
 fn write_u16le(out: &mut BytesMut, samples: &[u16]) {
-    for s in samples {
-        out.extend_from_slice(&s.to_le_bytes());
+    // One growth and a straight loop the compiler vectorises, rather than
+    // an `extend_from_slice` (and its capacity check) per sample.
+    let at = out.len();
+    out.resize(at + 2 * samples.len(), 0);
+    for (d, s) in out[at..].as_chunks_mut::<2>().0.iter_mut().zip(samples) {
+        *d = s.to_le_bytes();
     }
 }
 
 fn write_u16le_vec(out: &mut Vec<u8>, samples: &[u16]) {
-    for s in samples {
-        out.extend_from_slice(&s.to_le_bytes());
+    let at = out.len();
+    out.resize(at + 2 * samples.len(), 0);
+    for (d, s) in out[at..].as_chunks_mut::<2>().0.iter_mut().zip(samples) {
+        *d = s.to_le_bytes();
     }
 }
 

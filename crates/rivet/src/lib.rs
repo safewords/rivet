@@ -73,6 +73,7 @@ pub mod settings;
 pub mod spec;
 #[cfg(feature = "thumbnail")]
 pub mod avif;
+pub mod thread_budget;
 #[cfg(feature = "thumbnail")]
 pub mod thumbnail;
 pub mod transcode;

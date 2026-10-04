@@ -75,6 +75,14 @@ pub(crate) fn png_level(speed: u8) -> u8 {
     }
 }
 
+/// The PNG encoder at `level`, compressing on this job's share of the
+/// machine rather than one thread per core.
+fn png_encoder(level: u8) -> rpng::Encoder {
+    let mut encoder = rpng::Encoder::with_level(level);
+    encoder.compression.threads = crate::thread_budget::per_job();
+    encoder
+}
+
 /// PNG: RGB, or RGBA when the picture has transparency; adaptive filtering.
 fn png(pixels: &Pixels<'_>, level: u8) -> Result<Vec<u8>> {
     let (w, h) = pixels.image.dimensions();
@@ -84,7 +92,7 @@ fn png(pixels: &Pixels<'_>, level: u8) -> Result<Vec<u8>> {
         rpng::Image::new(w, h, rpng::ColorType::Rgb, 8, pixels.image.to_rgb())
     }
     .map_err(|e| anyhow!("PNG encode failed: {e}"))?;
-    let mut encoder = rpng::Encoder::with_level(level);
+    let mut encoder = png_encoder(level);
     if let Some(icc) = pixels.icc {
         encoder.metadata.icc_profile = Some(rpng::IccProfile { name: "ICC profile".into(), profile: icc.to_vec() });
     }
@@ -94,6 +102,14 @@ fn png(pixels: &Pixels<'_>, level: u8) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PNG's deflate is handed this job's share of the machine, not its
+    /// default of a worker per core.
+    #[test]
+    fn png_compresses_on_the_jobs_share_of_the_machine() {
+        let threads = png_encoder(6).compression.threads;
+        assert!((1..=crate::thread_budget::parallelism()).contains(&threads), "{threads}");
+    }
 
     #[test]
     fn png_levels_follow_the_speed() {

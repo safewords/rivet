@@ -102,13 +102,19 @@ pub struct AudioEncoderConfig {
     /// the count: what AC-3 and DTS, whose channel arrangements a count
     /// alone does not name (4 channels are 4.0, quad(side) or 3.1), code.
     pub layout: Option<filter::ChannelLayout>,
+    /// Worker threads the encoder may use, for the codecs that spread a
+    /// batch of frames over several (FLAC, ALAC, MP3, Vorbis); 0 is the
+    /// codec's own default, one per CPU. The stream is the same whatever
+    /// the count. A process running several jobs at once passes each its
+    /// share of the machine (rivet's `thread_budget`).
+    pub threads: usize,
 }
 
 impl AudioEncoderConfig {
-    /// `codec` at `sample_rate` / `channels`, `bitrate` (0: the default) and
-    /// the default quality.
+    /// `codec` at `sample_rate` / `channels`, `bitrate` (0: the default),
+    /// the default quality and the codec's default thread count.
     pub fn new(codec: AudioCodec, sample_rate: u32, channels: u8, bitrate: u32) -> Self {
-        Self { codec, sample_rate, channels, bitrate, quality: None, layout: None }
+        Self { codec, sample_rate, channels, bitrate, quality: None, layout: None, threads: 0 }
     }
 }
 
@@ -402,6 +408,28 @@ impl From<lossless::Error> for AudioError {
         match e {
             lossless::Error::Invalid(m) => AudioError::Decode(m),
             lossless::Error::Unsupported(m) => AudioError::Unsupported(m),
+        }
+    }
+}
+
+#[cfg(test)]
+mod thread_count_tests {
+    use super::*;
+
+    /// The FLAC, ALAC, MP3 and Vorbis adapters hand `config.threads` to
+    /// their encoders (0 keeps the codec's default, one per CPU).
+    #[test]
+    fn the_adapters_forward_the_thread_count() {
+        for threads in [0usize, 1, 3] {
+            let cfg = |codec| AudioEncoderConfig { threads, ..AudioEncoderConfig::new(codec, 48_000, 2, 0) };
+            let flac = encode::flac::FlacAudioEncoder::new(&cfg(AudioCodec::Mp3), 16, encode::flac::FlacLevel::default()).unwrap();
+            assert_eq!(flac.threads(), threads);
+            let alac = encode::alac::AlacAudioEncoder::new(&cfg(AudioCodec::Mp3), 16).unwrap();
+            assert_eq!(alac.threads(), threads);
+            let mp3 = encode::mp3::Mp3Encoder::new(cfg(AudioCodec::Mp3)).unwrap();
+            assert_eq!(mp3.threads(), threads);
+            let vorbis = encode::vorbis::VorbisEncoder::new(&cfg(AudioCodec::Vorbis)).unwrap();
+            assert_eq!(vorbis.threads(), threads);
         }
     }
 }

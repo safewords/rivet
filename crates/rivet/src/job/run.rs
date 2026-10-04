@@ -496,11 +496,11 @@ pub(super) fn encode_rung_single_file(
 // Misc helpers local to this file
 // ---------------------------------------------------------------------------
 
-/// The thread budget each of `rungs` concurrent serial encoders gets:
-/// the machine divided by the rung count, never below one.
+/// The thread budget each of `rungs` concurrent serial encoders gets: this
+/// job's share of the machine ([`crate::thread_budget::per_job`]) divided by
+/// the rung count, never below one.
 fn serial_threads_per_rung(rungs: usize) -> usize {
-    let parallelism = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-    divide_threads(parallelism, rungs)
+    divide_threads(crate::thread_budget::per_job(), rungs)
 }
 
 /// `parallelism / rungs`, clamped to at least one thread per rung.

@@ -624,6 +624,7 @@ pub fn run_image_job_with_hooks(
     spec: &ImageSpec,
     hooks: &crate::hooks::Hooks,
 ) -> Result<ImageJobOutput> {
+    let _slot = crate::thread_budget::enter_job();
     if hooks.is_empty() {
         return run_image_job_inner(input, spec, hooks);
     }

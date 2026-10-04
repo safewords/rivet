@@ -19,19 +19,24 @@ use crate::audio::{AudioEncoder, AudioEncoderConfig, AudioError, AudioFrame, Enc
 pub struct FlacAudioEncoder {
     inner: FlacEncoder,
     samples_out: u64,
+    threads: usize,
 }
 
 impl FlacAudioEncoder {
     pub fn new(config: &AudioEncoderConfig, bits_per_sample: u8, level: FlacLevel) -> Result<Self, AudioError> {
-        Ok(Self {
-            inner: FlacEncoder::new(FlacEncoderConfig {
-                sample_rate: config.sample_rate,
-                channels: config.channels,
-                bits_per_sample,
-                level,
-            })?,
-            samples_out: 0,
-        })
+        let mut inner = FlacEncoder::new(FlacEncoderConfig {
+            sample_rate: config.sample_rate,
+            channels: config.channels,
+            bits_per_sample,
+            level,
+        })?;
+        inner.set_threads(config.threads);
+        Ok(Self { inner, samples_out: 0, threads: config.threads })
+    }
+
+    /// The thread count handed to the encoder (`config.threads`).
+    pub fn threads(&self) -> usize {
+        self.threads
     }
 
     fn packets(&mut self, frames: Vec<(Vec<u8>, u32)>) -> Vec<EncodedAudioPacket> {

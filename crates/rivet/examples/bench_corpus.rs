@@ -4,8 +4,12 @@
 //! encoder and MP4 muxer, from generators written here; no external program.
 //!
 //! ```text
-//! cargo run --release --example bench_corpus -- OUT_DIR [--seconds 20] [--size 1920x1080]
+//! cargo run --release --example bench_corpus -- OUT_DIR [--seconds 20] [--size 1920x1080] [--yuv]
 //! ```
+//!
+//! `--yuv` also writes each clip's generated pictures as raw 8-bit 4:2:0
+//! (`<kind>_<W>x<H>.yuv`), the input a codec benchmark (the h26x encoder,
+//! a pipeline timing harness) wants without a decode in front of it.
 //!
 //! - `grain.mp4`: the test pattern averaged with per-sample random luma at
 //!   35% — detail under heavy sensor-like noise.
@@ -137,8 +141,33 @@ fn frame(kind: &str, w: u32, h: u32, n: u64, fps: u32, rng: &mut Rng, still: &[u
 }
 
 fn main() {
+    const USAGE: &str = "usage: bench_corpus OUT_DIR [--seconds S] [--size WxH] [--yuv]";
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let out = std::path::PathBuf::from(args.first().expect("usage: bench_corpus OUT_DIR [--seconds S] [--size WxH]"));
+    // A flag is never the output directory: `--help` (or a typo) must not
+    // become a directory a gigabyte of clips is written into.
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--seconds" | "--size" if i + 1 < args.len() => i += 2,
+            "--yuv" => i += 1,
+            other => {
+                eprintln!("bench_corpus: unexpected argument {other:?}
+{USAGE}");
+                std::process::exit(2);
+            }
+        }
+    }
+    let out = match args.first().map(String::as_str) {
+        Some("-h" | "--help") => {
+            println!("{USAGE}");
+            return;
+        }
+        Some(dir) if !dir.starts_with('-') => std::path::PathBuf::from(dir),
+        _ => {
+            eprintln!("{USAGE}");
+            std::process::exit(2);
+        }
+    };
     let opt = |name: &str| args.iter().position(|a| a == name).map(|i| args[i + 1].clone());
     let seconds: f64 = opt("--seconds").map_or(20.0, |s| s.parse().expect("--seconds S"));
     let (w, h) = opt("--size").map_or((1920, 1080), |s| {
@@ -152,6 +181,10 @@ fn main() {
         let n = (seconds * f64::from(FPS)).round() as u64;
         let mut rng = Rng::new(42);
         let pictures: Vec<Vec<u8>> = (0..n).map(|i| frame(kind, w, h, i, FPS, &mut rng, &still)).collect();
+        if args.iter().any(|a| a == "--yuv") {
+            let raw = out.join(format!("{kind}_{w}x{h}.yuv"));
+            std::fs::write(&raw, pictures.concat()).expect("write the raw pictures");
+        }
         let cfg = H264 { qp: 12, ..H264::new(w, h, FPS) };
         let coded = synth::encode_h264(&cfg, pictures);
         let mp4 = synth::mp4(&coded, w, h, FPS, None, None);

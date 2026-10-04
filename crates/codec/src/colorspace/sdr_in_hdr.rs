@@ -292,6 +292,22 @@ impl SdrToHdr {
     /// Convert a `Yuv420p` or `Yuv420p10le` frame into `Yuv420p10le` BT.2020
     /// in the target transfer, limited range.
     pub fn convert(&self, frame: &VideoFrame) -> Result<VideoFrame> {
+        self.convert_at(frame, crate::simd::Level::get())
+    }
+
+    /// [`Self::convert`] at a given SIMD level. Every level writes the same
+    /// bytes: the vector rows do the scalar pixel's IEEE-754 operations in
+    /// its order (no fused multiply-add; the table reads are gathers of the
+    /// same entries), and a chroma sample's four values are summed in the
+    /// same order.
+    pub(crate) fn convert_at(&self, frame: &VideoFrame, level: crate::simd::Level) -> Result<VideoFrame> {
+        self.convert_with(frame, level, crate::simd::picture_threads())
+    }
+
+    /// [`Self::convert_at`] with its rows split across up to `threads`
+    /// threads (bands of at least 16 chroma rows). Every split writes the
+    /// same bytes.
+    fn convert_with(&self, frame: &VideoFrame, level: crate::simd::Level, threads: usize) -> Result<VideoFrame> {
         let depth: u32 = match frame.format {
             PixelFormat::Yuv420p => 8,
             PixelFormat::Yuv420p10le => 10,
@@ -325,33 +341,75 @@ impl SdrToHdr {
             (16.0 * s, 219.0 * s, 224.0 * s)
         };
         let (cb_at, cr_at) = (w * h, w * h + cw * ch);
+        #[cfg(target_arch = "x86_64")]
+        let rows = Rows { data, bytes, w, cw, cb_at, cr_at, black, y_span, mid, c_span };
 
-        let mut y_out = Vec::with_capacity((w * h + 2 * cw * ch) * 2);
+        let mut y_code = vec![0u16; w * h];
         let mut cb_sum = vec![0f32; cw * ch];
         let mut cr_sum = vec![0f32; cw * ch];
-        let code = |v: f32| (v.round().clamp(0.0, 1023.0) as u16).to_le_bytes();
-        for py in 0..h {
-            for px in 0..w {
-                let c = (py / 2) * cw + px / 2;
-                let yn = (sample(py * w + px) - black) / y_span;
-                let cbn = (sample(cb_at + c) - mid) / c_span;
-                let crn = (sample(cr_at + c) - mid) / c_span;
-                let (yo, cbo, cro) = self.pixel(yn, cbn, crn);
-                y_out.extend_from_slice(&code(876.0 * yo + 64.0));
-                cb_sum[c] += cbo;
-                cr_sum[c] += cro;
+        // Bands of whole chroma rows (luma row pairs) across threads: each
+        // row's codes and each chroma row's sums come from that band's
+        // samples alone, so the split cannot change a byte.
+        let band = |cy0: usize, y_code: &mut [u16], cb_sum: &mut [f32], cr_sum: &mut [f32]| {
+            for py in 2 * cy0..(2 * cy0 + y_code.len() / w.max(1)).min(h) {
+                let r = py - 2 * cy0;
+                let (yc, cbs, crs) = (&mut y_code[r * w..(r + 1) * w], &mut cb_sum[(r / 2) * cw..], &mut cr_sum[(r / 2) * cw..]);
+                #[allow(unused_mut)]
+                let mut done = 0;
+                #[cfg(target_arch = "x86_64")]
+                // PQ only: HLG's inverse OOTF and OETF take `powf` and `ln`, which
+                // have no lane-wise twin that rounds the way the C library does,
+                // and calling them lane by lane from the vector rows measured
+                // slower than the scalar loop (117 ms against 45 at 1080p).
+                if level >= crate::simd::Level::Avx2 && self.target == TransferFn::St2084 {
+                    // SAFETY: the level is only ever Avx2 or above on a CPU that
+                    // has AVX2 (`Level::host`); `row_avx2` reads and writes only
+                    // inside the planes checked above and the row slices.
+                    done = unsafe { self.row_avx2(&rows, py, yc, cbs, crs) };
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                let _ = level;
+                for px in done..w {
+                    let c = (py / 2) * cw + px / 2;
+                    let yn = (sample(py * w + px) - black) / y_span;
+                    let cbn = (sample(cb_at + c) - mid) / c_span;
+                    let crn = (sample(cr_at + c) - mid) / c_span;
+                    let (yo, cbo, cro) = self.pixel(yn, cbn, crn);
+                    yc[px] = code(876.0 * yo + 64.0);
+                    cbs[px / 2] += cbo;
+                    crs[px / 2] += cro;
+                }
             }
+        };
+        let bands = threads.min(ch / 16).max(1);
+        let pairs_per_band = ch.div_ceil(bands);
+        if bands == 1 || w == 0 {
+            band(0, &mut y_code, &mut cb_sum, &mut cr_sum);
+        } else {
+            std::thread::scope(|scope| {
+                let bands = y_code
+                    .chunks_mut(2 * w * pairs_per_band)
+                    .zip(cb_sum.chunks_mut(cw * pairs_per_band))
+                    .zip(cr_sum.chunks_mut(cw * pairs_per_band))
+                    .enumerate();
+                for (i, ((y_code, cb_sum), cr_sum)) in bands {
+                    let band = &band;
+                    scope.spawn(move || band(i * pairs_per_band, y_code, cb_sum, cr_sum));
+                }
+            });
         }
+        let mut out = Vec::with_capacity((w * h + 2 * cw * ch) * 2);
+        super::write_u16le_vec(&mut out, &y_code);
         for sums in [&cb_sum, &cr_sum] {
             for cy in 0..ch {
                 for cx in 0..cw {
                     let n = ((w - 2 * cx).min(2) * (h - 2 * cy).min(2)) as f32;
-                    y_out.extend_from_slice(&code(896.0 * sums[cy * cw + cx] / n + 512.0));
+                    out.extend_from_slice(&code(896.0 * sums[cy * cw + cx] / n + 512.0).to_le_bytes());
                 }
             }
         }
         Ok(VideoFrame::new(
-            Bytes::from(y_out),
+            Bytes::from(out),
             frame.width,
             frame.height,
             PixelFormat::Yuv420p10le,
@@ -359,6 +417,140 @@ impl SdrToHdr {
             frame.pts,
         ))
     }
+
+    /// The first `w & !7` samples of luma row `py` of a PQ conversion,
+    /// eight at a time, as the scalar loop in [`Self::convert_at`] does them: their 10-bit luma
+    /// codes into `y_code`, their converted chroma added into the row's
+    /// `cb_sum` / `cr_sum` (each pair in pixel order). Returns how many it
+    /// did; a chunk of eight never splits a chroma pair.
+    ///
+    /// # Safety
+    /// AVX2. `rows` describes planes that hold the whole frame (as
+    /// `convert_at` checks), `y_code` is the row's `w` codes and the sums
+    /// start at the row's first chroma sample.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn row_avx2(&self, rows: &Rows<'_>, py: usize, y_code: &mut [u16], cb_sum: &mut [f32], cr_sum: &mut [f32]) -> usize {
+        use std::arch::x86_64::*;
+        unsafe {
+            let w = rows.w;
+            let wide = w & !7;
+            let c0 = (py / 2) * rows.cw;
+            // Eight samples at index `at` of a plane, as f32 (exact).
+            let load8 = |at: usize| -> __m256 {
+                let v = if rows.bytes == 1 {
+                    _mm256_cvtepu8_epi32(_mm_loadl_epi64(rows.data.as_ptr().add(at) as *const __m128i))
+                } else {
+                    _mm256_cvtepu16_epi32(_mm_loadu_si128(rows.data.as_ptr().add(2 * at) as *const __m128i))
+                };
+                _mm256_cvtepi32_ps(v)
+            };
+            // Four chroma samples at `at`, each twice: the eight pixels' own.
+            let load4x2 = |at: usize| -> __m256 {
+                let v = if rows.bytes == 1 {
+                    _mm_cvtepu8_epi32(_mm_cvtsi32_si128((rows.data.as_ptr().add(at) as *const i32).read_unaligned()))
+                } else {
+                    _mm_cvtepu16_epi32(_mm_loadl_epi64(rows.data.as_ptr().add(2 * at) as *const __m128i))
+                };
+                let f = _mm256_castps128_ps256(_mm_cvtepi32_ps(v));
+                _mm256_permutevar8x32_ps(f, _mm256_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3))
+            };
+            let set = _mm256_set1_ps;
+            let (black, y_span, mid, c_span) = (set(rows.black), set(rows.y_span), set(rows.mid), set(rows.c_span));
+            let (kr, kb) = (self.kr, self.kb);
+            // The scalar pixel's constants, computed as it computes them.
+            let (k_r, k_b, k_g) = (set(2.0 * (1.0 - kr)), set(2.0 * (1.0 - kb)), set(1.0 - kr - kb));
+            let (zero, one) = (_mm256_setzero_ps(), set(1.0));
+            let lerp = |table: &[f32], x: __m256| lerp_avx2(table, x);
+            let m = self.primaries;
+            let (kr20, kg20, kb20) = (set(KR_2020), set(1.0 - KR_2020 - KB_2020), set(KB_2020));
+            let (dcb, dcr) = (set(2.0 * (1.0 - KB_2020)), set(2.0 * (1.0 - KR_2020)));
+            let mut x = 0;
+            while x < wide {
+                let c = c0 + x / 2;
+                let y = _mm256_div_ps(_mm256_sub_ps(load8(py * w + x), black), y_span);
+                let cb = _mm256_div_ps(_mm256_sub_ps(load4x2(rows.cb_at + c), mid), c_span);
+                let cr = _mm256_div_ps(_mm256_sub_ps(load4x2(rows.cr_at + c), mid), c_span);
+                // `pixel`, step by step.
+                let r = _mm256_add_ps(y, _mm256_mul_ps(k_r, cr));
+                let b = _mm256_add_ps(y, _mm256_mul_ps(k_b, cb));
+                let g = _mm256_div_ps(_mm256_sub_ps(_mm256_sub_ps(y, _mm256_mul_ps(set(kr), r)), _mm256_mul_ps(set(kb), b)), k_g);
+                let lin = [lerp(&self.eotf, r), lerp(&self.eotf, g), lerp(&self.eotf, b)];
+                let l: [__m256; 3] = std::array::from_fn(|i| {
+                    let s = _mm256_add_ps(
+                        _mm256_add_ps(_mm256_mul_ps(set(m[i][0]), lin[0]), _mm256_mul_ps(set(m[i][1]), lin[1])),
+                        _mm256_mul_ps(set(m[i][2]), lin[2]),
+                    );
+                    _mm256_min_ps(_mm256_max_ps(s, zero), one)
+                });
+                let out = l.map(|v| lerp(&self.pq, _mm256_sqrt_ps(v)));
+                let yp = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(kr20, out[0]), _mm256_mul_ps(kg20, out[1])), _mm256_mul_ps(kb20, out[2]));
+                let cbo = _mm256_div_ps(_mm256_sub_ps(out[2], yp), dcb);
+                let cro = _mm256_div_ps(_mm256_sub_ps(out[0], yp), dcr);
+                // Luma codes: `round` (half away from zero), clamp, narrow.
+                let v = _mm256_add_ps(_mm256_mul_ps(set(876.0), yp), set(64.0));
+                let t = _mm256_round_ps::<{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }>(v);
+                let half = _mm256_cmp_ps::<_CMP_GE_OQ>(_mm256_andnot_ps(set(-0.0), _mm256_sub_ps(v, t)), set(0.5));
+                let away = _mm256_and_ps(half, _mm256_or_ps(_mm256_and_ps(v, set(-0.0)), one));
+                let q = _mm256_min_ps(_mm256_max_ps(_mm256_add_ps(t, away), zero), set(1023.0));
+                let q = _mm256_cvttps_epi32(q);
+                let q = _mm_packus_epi32(_mm256_castsi256_si128(q), _mm256_extracti128_si256::<1>(q));
+                _mm_storeu_si128(y_code.as_mut_ptr().add(x) as *mut __m128i, q);
+                // Chroma: the even pixel's value first, then the odd one's.
+                let (even, odd) = (_mm256_setr_epi32(0, 2, 4, 6, 0, 0, 0, 0), _mm256_setr_epi32(1, 3, 5, 7, 0, 0, 0, 0));
+                for (sums, v) in [(&mut *cb_sum, cbo), (&mut *cr_sum, cro)] {
+                    let p = sums.as_mut_ptr().add(x / 2);
+                    let e = _mm256_castps256_ps128(_mm256_permutevar8x32_ps(v, even));
+                    let o = _mm256_castps256_ps128(_mm256_permutevar8x32_ps(v, odd));
+                    _mm_storeu_ps(p, _mm_add_ps(_mm_add_ps(_mm_loadu_ps(p), e), o));
+                }
+                x += 8;
+            }
+            wide
+        }
+    }
+}
+
+/// [`lerp_table`] on eight lanes: the same clamp, scale, truncation and
+/// `a + (b - a) * f`, the two entries gathered.
+///
+/// # Safety
+/// AVX2; `table` holds `LUT_STEPS + 1` entries.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn lerp_avx2(table: &[f32], x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
+    use std::arch::x86_64::*;
+    unsafe {
+        let p = _mm256_mul_ps(_mm256_min_ps(_mm256_max_ps(x, _mm256_setzero_ps()), _mm256_set1_ps(1.0)), _mm256_set1_ps(LUT_STEPS as f32));
+        let i = _mm256_min_epi32(_mm256_cvttps_epi32(p), _mm256_set1_epi32(LUT_STEPS as i32 - 1));
+        let f = _mm256_sub_ps(p, _mm256_cvtepi32_ps(i));
+        let a = _mm256_i32gather_ps::<4>(table.as_ptr(), i);
+        let b = _mm256_i32gather_ps::<4>(table.as_ptr().add(1), i);
+        _mm256_add_ps(a, _mm256_mul_ps(_mm256_sub_ps(b, a), f))
+    }
+}
+
+/// What the row kernels read: the frame's samples (`bytes` per sample),
+/// its width, chroma width and plane offsets, and the source's range.
+#[cfg(target_arch = "x86_64")]
+struct Rows<'a> {
+    data: &'a [u8],
+    bytes: usize,
+    w: usize,
+    cw: usize,
+    cb_at: usize,
+    cr_at: usize,
+    black: f32,
+    y_span: f32,
+    mid: f32,
+    c_span: f32,
+}
+
+/// A 10-bit code from a normalised value already scaled to codes:
+/// rounded half away from zero and clamped, as `f32::round` and a clamp.
+fn code(v: f32) -> u16 {
+    v.round().clamp(0.0, 1023.0) as u16
 }
 
 #[cfg(test)]
@@ -486,6 +678,68 @@ mod tests {
         (392, 395, 715),
         (103, 512, 512),
     ];
+
+    /// Every SIMD level the host has writes the scalar reference's bytes:
+    /// random pictures (with values past the nominal range), 8 and 10 bits,
+    /// both transfers, limited and full range, BT.709 and BT.601 sources,
+    /// and widths that leave a scalar tail and an odd chroma column.
+    #[test]
+    fn every_simd_level_writes_the_scalar_bytes() {
+        let mut seed = 0x5d0_u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as u32
+        };
+        let levels = [crate::simd::Level::Avx2, crate::simd::Level::Avx512].into_iter().filter(|&l| l <= crate::simd::Level::host());
+        let mut checked = 0;
+        for level in levels {
+            for &(w, h) in &[(16usize, 4usize), (37, 5), (64, 3), (8, 8), (7, 3)] {
+                for ten in [false, true] {
+                    let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+                    let n = w * h + 2 * cw * ch;
+                    let data: Vec<u8> = if ten {
+                        (0..n).flat_map(|_| ((next() % 1024) as u16).to_le_bytes()).collect()
+                    } else {
+                        (0..n).map(|_| next() as u8).collect()
+                    };
+                    let format = if ten { PixelFormat::Yuv420p10le } else { PixelFormat::Yuv420p };
+                    let frame = VideoFrame::new(Bytes::from(data), w as u32, h as u32, format, ColorSpace::Bt709, 3);
+                    for target in [TransferFn::St2084, TransferFn::AribStdB67] {
+                        for (matrix, primaries, full) in [(1, 1, false), (6, 6, false), (1, 1, true), (9, 9, false)] {
+                            let c = SdrToHdr::new(&sdr(matrix, primaries, full), target).unwrap();
+                            let want = c.convert_at(&frame, crate::simd::Level::Scalar).unwrap();
+                            let got = c.convert_at(&frame, level).unwrap();
+                            assert!(got.data == want.data, "{level:?} {w}x{h} ten={ten} {target:?} matrix {matrix} full {full}");
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if crate::simd::Level::host() >= crate::simd::Level::Avx2 {
+            assert!(checked > 0);
+        }
+    }
+
+    /// Split into bands across threads, a tall picture converts to the same
+    /// bytes as in one piece, at every level the host has.
+    #[test]
+    fn bands_write_the_whole_pictures_bytes() {
+        let (w, h) = (70usize, 130usize);
+        let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+        let data: Vec<u8> = (0..w * h + 2 * cw * ch).map(|i| (i * 37 % 251) as u8).collect();
+        let frame = VideoFrame::new(Bytes::from(data), w as u32, h as u32, PixelFormat::Yuv420p, ColorSpace::Bt709, 0);
+        let levels = [crate::simd::Level::Scalar, crate::simd::Level::Avx2].into_iter().filter(|&l| l <= crate::simd::Level::host());
+        for level in levels {
+            for target in [TransferFn::St2084, TransferFn::AribStdB67] {
+                let c = SdrToHdr::new(&sdr(1, 1, false), target).unwrap();
+                let whole = c.convert_with(&frame, level, 1).unwrap();
+                for threads in [2usize, 3, 5, 64] {
+                    assert!(c.convert_with(&frame, level, threads).unwrap().data == whole.data, "{level:?} {target:?} {threads} threads");
+                }
+            }
+        }
+    }
 
     #[test]
     fn sdr_white_lands_on_hdr_reference_white() {

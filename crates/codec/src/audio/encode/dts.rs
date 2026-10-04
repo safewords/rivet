@@ -206,6 +206,7 @@ mod tests {
             bitrate,
             quality: None,
             layout: Some(layout),
+            threads: 0,
         }
     }
 
