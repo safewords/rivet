@@ -13,7 +13,14 @@
 //!   priming at the output rate. The AudioSpecificConfig signals SBR / PS
 //!   explicitly and hierarchically (audio object type 5 or 29 first, then the
 //!   core's), the form ISO/IEC 14496-3 1.6.5.2 describes for MP4 and Apple's
-//!   players need: `mp4a.40.5` / `mp4a.40.29`.
+//!   players need: `mp4a.40.5` / `mp4a.40.29`. Mono HE-AAC (v1) is the
+//!   exception: that form cannot say there is no parametric stereo — with
+//!   object type 5 first, PS may still turn up implicitly in the SBR data,
+//!   and a decoder must keep a stereo output ready for it (ffmpeg reports
+//!   such a stream as stereo). Its configuration is the backward-compatible
+//!   explicit form instead (the AAC-LC core's, then `syncExtensionType`
+//!   0x2B7 with SBR and its rate, then 0x548 with `psPresentFlag` 0), which
+//!   says mono and only mono; it is still `mp4a.40.5`.
 
 pub use aac::encode::{
     ENCODER_DELAY, FRAME_SAMPLES, HE_AAC_DELAY, HE_AAC_RATES, Profile, SUPPORTED_RATES, adts_frame, adts_header,
@@ -139,7 +146,9 @@ impl AacEncoder {
     }
 
     /// The AudioSpecificConfig (ISO/IEC 14496-3 1.6.2.1) for the MP4 `esds`:
-    /// AAC-LC's plain one, HE-AAC's with SBR / PS signalled hierarchically.
+    /// AAC-LC's plain one, HE-AAC's with SBR / PS signalled hierarchically
+    /// (mono HE-AAC's backward compatibly, with `psPresentFlag` 0: see the
+    /// module notes).
     /// At 24 kHz or less, where a plain AAC-LC configuration leaves a
     /// decoder to guess whether SBR follows in the access units (and some
     /// then play it at twice the rate), the AAC-LC one ends with the
@@ -149,6 +158,9 @@ impl AacEncoder {
         match self.inner.profile() {
             Profile::Lc if self.inner.coding_rate() <= 24_000 => lc_without_sbr(self.inner.audio_specific_config()),
             Profile::Lc => self.inner.audio_specific_config().to_vec(),
+            Profile::HeAac if self.inner.channel_configuration() == 1 => {
+                self.inner.audio_specific_config_with(aac::encode::Signalling::BackwardCompatible)
+            }
             _ => self.inner.audio_specific_config_with(aac::encode::Signalling::Hierarchical),
         }
     }
@@ -365,7 +377,18 @@ mod tests {
                 AacEncoder::with_profile(AacConfig { sample_rate: 44_100, channels, bitrate: 0 }, profile).unwrap();
             assert_eq!((enc.sample_rate(), enc.pre_skip()), (44_100, HE_AAC_DELAY as u16));
             let asc = enc.extra_data();
-            assert_eq!(asc[0] >> 3, aot, "{profile:?}: explicit hierarchical signalling");
+            if channels == 1 {
+                // Backward compatible, so it can say there is no PS.
+                let p = aac::decode::AudioSpecificConfig::parse(&asc).unwrap();
+                let parsed = (p.object_type, p.sbr.explicit_sbr, p.sbr.explicit_ps);
+                assert_eq!(parsed, (2, true, false), "mono HE-AAC: LC core, SBR, no PS");
+                // The container's reader (and the `codecs` string) sees
+                // explicit SBR without PS.
+                let c = container::aac_asc::parse_aac_asc(&asc).unwrap();
+                assert!(!c.ps_present && c.sbr_present, "{c:?}");
+            } else {
+                assert_eq!(asc[0] >> 3, aot, "{profile:?}: explicit hierarchical signalling");
+            }
             let mut aus = enc.encode(&AudioFrame { samples: pcm, sample_rate: 44_100, channels, pts: 0 }).unwrap();
             aus.extend(enc.flush().unwrap());
             assert!(aus.iter().all(|p| p.duration == 2048));

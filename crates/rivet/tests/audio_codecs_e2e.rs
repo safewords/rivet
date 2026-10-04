@@ -192,6 +192,21 @@ fn audio_only_outputs_of_a_stereo_source() {
     }
 }
 
+/// Mono HE-AAC stays mono: its AudioSpecificConfig says there is no
+/// parametric stereo (backward-compatible signalling, `psPresentFlag` 0), so
+/// rivet's demuxer and decoder — and any decoder that goes by the
+/// configuration — present one channel; it is still `mp4a.40.5`.
+#[test]
+fn mono_he_aac_is_mono() {
+    let src = native_flac(&tones(&[440.0], 1.5), 1);
+    let source = presented(Bytes::from(src.clone()));
+    let (file, out) = run(&src, "mode=audio audio=he-aac", 0, 0);
+    assert_eq!(out.audio_codecs.as_deref(), Some("mp4a.40.5"));
+    let got = presented(Bytes::from(file));
+    assert_eq!(got.channels, 1);
+    compare("mono he-aac", &source, &got, 15.0);
+}
+
 /// HE-AAC v2 codes a stereo image parametrically: the waveform of each side
 /// is not kept, but the length, the levels and which tone is on which side
 /// are.

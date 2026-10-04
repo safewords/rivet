@@ -560,7 +560,9 @@ job-output consumers count core-only decodes by). A full decode reads
 kHz) and `audio=he-aacv2` (stereo) encode them, with the AudioSpecificConfig
 signalling SBR / PS explicitly and hierarchically (object type 5 / 29 first,
 the core's sampling frequency, then the SBR rate as the extension sampling
-frequency: `mp4a.40.5` / `mp4a.40.29`); `audio=aac` keeps any AAC source,
+frequency: `mp4a.40.5` / `mp4a.40.29`; mono HE-AAC backward compatibly
+instead, with `psPresentFlag` 0, the one form that says it has no PS — since
+2026-10-03, see [codec-encode.md](codec-encode.md)); `audio=aac` keeps any AAC source,
 `he-aac` an HE-AAC one, `he-aacv2` an HE-AAC v2 one. The container's own ASC
 parser read the hierarchical form's leading sampling frequency as the SBR
 rate until this change (it is the core's, ISO/IEC 14496-3 1.6.2.1), and did
@@ -1276,7 +1278,8 @@ through rivet-vp8; it landed in the same change) and `crates/imagecodecs`
 jpeg-decoder, zune-\*, gif, tiff and image-webp), jpeg-encoder, and the
 `webp` crate with Google's libwebp. Each is clean-room and in its own
 repository, as §34 asks; the third-party crates left on media paths are not
-codecs — moxcms (ICC colour management), rubato (resampling), `mp4` and
+codecs — moxcms (ICC colour management), rubato (resampling; replaced by
+rivet's own resampler on 2026-10-03), `mp4` and
 `matroska-demuxer` (container parsing), candle (`dpir`) — plus openh264 behind
 `openh264-fallback`, until §40 removed it.
 
@@ -1594,3 +1597,62 @@ was wanted, and nothing when it was not; the default should be the safe one.
 [`transcode.rs`](../crates/rivet/src/transcode.rs),
 [`decode/alac.rs`](../crates/codec/src/audio/decode/alac.rs);
 [container.md](container.md), [cli.md](cli.md).
+
+### 43. Odd sizes: kept where the codec carries them, cropped to even where it cannot
+**Decision.** On 2026-10-03 an odd-sized source stopped being resampled to
+the even size below it. A cross-check against ffmpeg found every video
+output of a 351x241 source at 350x240, the whole picture resized 0.3 %
+smaller — every sample blurred a little and the picture shifted by up to
+half a sample (27.8 dB against the source's top-left 350x240). Now:
+
+- **The codecs that carry odd sizes code them.** AV1, VP8, VP9 (any size in
+  the frame header), MPEG-2 (`horizontal_size` / `vertical_size`), MPEG-4
+  Part 2 (`video_object_layer_width` / `height`) and ProRes (the frame
+  header's size) from rivet's own encoders: their rungs are planned on a
+  one-sample grid (`fit::fit_rungs_aligned`, `align` 1), the scaler writes
+  the odd frame with the rounded-up `ceil(w/2) x ceil(h/2)` chroma planes
+  the decoders already produce, and the encoders code that size. A 351x241
+  source comes out 351x241. `codec::encode::codes_odd_sizes` is the answer;
+  it is `false` for a codec a compiled hardware backend may encode (AV1 with
+  any GPU feature, VP9 with `qsv`): a GPU's surfaces are even, and the size
+  must not depend on which encoder the dispatch chain ends up with.
+- **H.264 and H.265 are evened by a crop.** Neither can code an odd 4:2:0
+  size: `frame_crop_*_offset` and the conformance window count in chroma
+  samples (`CropUnitX` / `SubWidthC` = 2). So when the fitted size is the
+  picture's own evened down — at most one column and one row short, square
+  samples — the last column and row are cut off and everything else is
+  copied untouched (`fit::place_aligned` sets the crop; `scale_region` copies
+  a window that is already its output's size). The right and bottom edges
+  are the ones dropped, as those codecs' own cropping drops them.
+- **"The source's size" is the even box that holds it**
+  (`MediaInfo::display_dims` rounds up): with no rung given, a 351x241
+  source's rung box is 352x242, which fitting sizes to 351x241 or crops to
+  350x240 — never enlarges, `upscale` or not.
+
+**Why not pad and signal the crop.** Coding 352x242 with the bitstream's
+cropping saying 351x241 is what H.264 and H.265 would need, and they cannot
+say it at 4:2:0 (above). The other codecs need no padding: they carry the
+size itself.
+
+**What was measured** (ffmpeg 8.1 as the decoder, PSNR-Y against the
+source's top-left at the output size, default quality): H.264 350x240 45.1
+dB, H.265 350x240 45.2 dB, AV1 351x241 45.6 dB, VP9 351x241 43.0 dB, VP8
+351x241 40.2 dB, MPEG-2 351x241 43.4 dB, MPEG-4 351x241 43.1 dB, ProRes 422
+351x241 53.3 dB, ProRes 4444 351x241 64.5 dB — every file read by ffmpeg at
+the size rivet wrote.
+
+**Consequences.**
+- A rung's box is still even (`validate` refuses an odd one); its output may
+  be odd. Labels follow the output (`241p`).
+- `Placement` carries the grid it was planned on (`align`); a frame of
+  another size mid-stream is refitted on the same grid. Pad offsets stay
+  even, so a padded picture's chroma starts on a whole chroma sample.
+- `fit_e2e::an_odd_source_keeps_its_size_or_is_cropped_to_even` checks every
+  software encoder; `codec/tests/software_odd_sizes.rs` the encoders and
+  decoders alone.
+
+**Where.** [`fit.rs`](../crates/rivet/src/fit.rs),
+[`colorspace/scale.rs`](../crates/codec/src/colorspace/scale.rs)
+(`scale_region`), [`encode/mod.rs`](../crates/codec/src/encode/mod.rs)
+(`codes_odd_sizes`), [`probe.rs`](../crates/rivet/src/probe.rs),
+[output-spec.md](output-spec.md#fitting-the-source-into-a-rung).

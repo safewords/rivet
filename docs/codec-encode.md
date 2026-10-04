@@ -57,7 +57,7 @@ Three load-bearing decisions shape this whole side, and they recur below:
 | [`audio/decode/`](../crates/codec/src/audio/decode/mod.rs) | Decoders → interleaved f32 PCM, adapters onto the workspace's codec crates: MP3 / MP2 / MP1 (`crates/mp3`), Vorbis (`crates/vorbis`), Opus (`crates/opus`), AC-3 / E-AC-3 and DTS (`crates/ac3`, `crates/dts`), AAC / HE-AAC (`crates/aac`), FLAC and ALAC (`crates/lossless`), linear PCM. [codec-decode.md](codec-decode.md) describes the AC-3 / E-AC-3, AAC, FLAC and ALAC decoders. |
 | [`audio/encode/`](../crates/codec/src/audio/encode/mod.rs) | Encoders, adapters onto the same crates: Opus (`opus.rs`), MP3 (`mp3.rs`), Vorbis (`vorbis.rs`), AAC-LC / HE-AAC / HE-AAC v2 (`aac.rs`), AC-3 / E-AC-3 (`ac3.rs`), DTS (`dts.rs`), FLAC (`flac.rs`) and ALAC (`alac.rs`). |
 | [`audio/remix.rs`](../crates/codec/src/audio/remix.rs) | Layout-to-layout downmix matrices (ITU-R BS.775) and the layout each codec carries a source in. |
-| [`audio/resample.rs`](../crates/codec/src/audio/resample.rs) | Sample-rate conversion (rubato sinc), and `AlignedResampler`, which an encoder puts in front of itself: delay trimmed, length exact — e.g. 44.1 kHz → 48 kHz Opus. |
+| [`audio/resample.rs`](../crates/codec/src/audio/resample.rs) | Sample-rate conversion: `AlignedResampler`, rivet's own windowed-sinc (Kaiser, 120 dB) resampler, which an encoder puts in front of itself — no delay at all (each output sample is the input at its own time), pass band flat to 90 % of the lower Nyquist frequency, length exact — e.g. 44.1 kHz → 48 kHz Opus, 96 → 48 kHz AAC. |
 
 ---
 
@@ -1872,10 +1872,17 @@ rivet's (`job/audio.rs`). The wire model
   and DTS, whose frames describe themselves) and, for MP3, the bare file's tag
   frame (`file_header`).
 - [`AlignedResampler`](../crates/codec/src/audio/resample.rs) puts an encoder's
-  input at a rate it codes (rubato's band-limited sinc), the filter's measured
-  delay trimmed and the output cut to the input's length at the new rate, so an
-  encoder's `pre_skip` is its own codec delay alone and the output keeps the
-  input's timing to within half a sample.
+  input at a rate it codes: rivet's own band-limited resampler, a Kaiser-
+  windowed sinc (120 dB stop band from the lower rate's Nyquist frequency,
+  pass band to 90 % of it, flat to well under ±0.01 dB, each polyphase phase
+  normalised to unity gain) evaluated at each output sample's own input time,
+  so there is no delay to trim — an impulse at input sample `n` comes out
+  centred on `n · out / in`, fractional or not — and the output is the
+  input's length at the new rate, rounded up. An encoder's `pre_skip` is its
+  own codec delay alone, and the output keeps the input's timing exactly.
+  It replaced rubato (2026-10-03): rubato's delay is a fraction of a sample at
+  some ratios, and trimming the whole samples of it left 96 → 48 kHz half an
+  output sample late.
 - The lossless encoders, clean-room and pure Rust, in the `lossless` crate
   ([`crates/lossless`](../crates/lossless/README.md), a git submodule: the
   [rivet-lossless](https://github.com/safewords/rivet-lossless)
@@ -1961,7 +1968,10 @@ Encoders:
   list hides; for a bare `.mp3`, `file_header` is the encoder's own `Info`
   frame with its LAME-style extension (encoder string `rivetmp3`, delay,
   padding, music CRC, tag CRC), so a gapless player — rivet's own reader among
-  them — presents exactly the input.
+  them — presents exactly the input. A reader that keys on a LAME version
+  string ignores the fields under `rivetmp3` (ffmpeg does); the encoder string
+  stays honest, and MP3 in an `.m4a` (`audio-container=mp4`) is the gapless
+  form for those, its edit list hiding the 1057 samples.
 - [`VorbisEncoder`](../crates/codec/src/audio/encode/vorbis.rs) adapts the
   `crates/vorbis` encoder: quality −1 to 10 (5 by default; no bit rate:
   Vorbis is variable-rate by design), 8 to 192 kHz as the input has it, mono
@@ -1993,7 +2003,13 @@ Encoders:
   samples per access unit, 3586 samples of priming (`HE_AAC_DELAY`), 48k / 32k
   stereo by default. Their AudioSpecificConfig signals SBR / PS explicitly and
   hierarchically (object type 5 or 29 first), the form MP4 and Apple's players
-  read as `mp4a.40.5` / `mp4a.40.29`.
+  read as `mp4a.40.5` / `mp4a.40.29` — except mono HE-AAC, whose configuration
+  is the backward-compatible explicit form ending in `syncExtensionType` 0x548
+  with `psPresentFlag` 0: object type 5 first cannot say there is no
+  parametric stereo (PS may then still be signalled implicitly in the SBR
+  data, as ISO/IEC 14496-3 allows), so a decoder has to be ready for stereo, and
+  ffmpeg reported rivet's mono HE-AAC as two channels until 2026-10-03. It is
+  still `mp4a.40.5`.
 - [`Ac3Encoder`](../crates/codec/src/audio/encode/ac3.rs) adapts the
   `crates/ac3` encoder (written from ATSC A/52:2018, Annex E for E-AC-3):
   **AC-3** at Table 5.18's rates (32–640 kb/s; 96k mono, 192k stereo, 384k for

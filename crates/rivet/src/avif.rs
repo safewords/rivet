@@ -9,7 +9,12 @@
 //! - one `av01` item — a key frame, profile 0, 8-bit 4:2:0 — with its `ispe`
 //!   (size), `pixi` (bit depth), `av1C` (the codec configuration, carrying
 //!   the sequence header) and `colr` (`nclx`: sRGB primaries and transfer,
-//!   BT.601 matrix, full range) properties;
+//!   BT.601 matrix, full range) properties — the sequence header's
+//!   `color_config()` says the same (`color_description_present_flag` 1
+//!   with those code points, `color_range` 1), so a reader that goes by the
+//!   bitstream and one that goes by the container (MIAF 7.3.6.4 has the
+//!   `colr` box win) read the same pixels, and the samples are full-range
+//!   BT.601 Y'CbCr exactly as both say;
 //! - or, for a picture larger than one item should be (wider than the
 //!   encoder's 4096 or over [`TILE_PIXELS`]), a `grid` item over equal tiles,
 //!   each its own hidden `av01` item, which are encoded in parallel — the
@@ -17,7 +22,10 @@
 //!   the machine;
 //! - and, when the picture has transparency, an alpha item (or grid) of the
 //!   same shape, linked to the colour item by an `auxl` reference and marked
-//!   with the alpha `auxC` URN. Its luma is the alpha; its chroma is flat.
+//!   with the alpha `auxC` URN. It is coded monochrome and full range, as
+//!   the AV1 Image File Format requires of an alpha item (`mono_chrome` 1,
+//!   `color_range` 1; no `colr`): its one plane is the alpha, 0 transparent
+//!   to 255 opaque.
 //!
 //! What the reader in `image::heif` reads is exactly this, which is what
 //! the round-trip tests check; browsers and libavif read it as well (the
@@ -150,20 +158,24 @@ fn encode_plane_set(rgba: &[u8], width: u32, layout: &Layout, q: u32, plane: Pla
     out.into_iter().map(|c| c.unwrap_or_else(|| Err(anyhow!("AVIF: a tile was not encoded")))).collect()
 }
 
-/// The `tw` x `th` tile at (`x0`, `y0`) as an 8-bit 4:2:0 frame: full-range
-/// BT.601 Y'CbCr of the colour, or the alpha as luma over flat chroma.
+/// The `tw` x `th` tile at (`x0`, `y0`) as an 8-bit frame: 4:2:0 full-range
+/// BT.601 Y'CbCr of the colour, or the alpha as a monochrome (luma-only)
+/// frame.
 /// Samples past the picture's edge repeat its last row and column.
 #[allow(clippy::too_many_arguments)]
 fn tile_frame(rgba: &[u8], w: u32, h: u32, x0: u32, y0: u32, tw: u32, th: u32, plane: Plane) -> av1::Frame {
-    let mut f = av1::Frame::new(tw, th, 8, av1::ChromaFormat::Yuv420);
+    let chroma = match plane {
+        Plane::Colour => av1::ChromaFormat::Yuv420,
+        Plane::Alpha => av1::ChromaFormat::Mono,
+    };
+    let mut f = av1::Frame::new(tw, th, 8, chroma);
     let at = |x: u32, y: u32| -> [f32; 4] {
         let (x, y) = ((x0 + x).min(w - 1), (y0 + y).min(h - 1));
         let i = (y as usize * w as usize + x as usize) * 4;
         [f32::from(rgba[i]), f32::from(rgba[i + 1]), f32::from(rgba[i + 2]), f32::from(rgba[i + 3])]
     };
     let clamp = |v: f32| v.round().clamp(0.0, 255.0) as u8;
-    let (yp, cp) = (f.planes[0], f.planes[1]);
-    let (u_off, v_off) = (f.planes[1].offset, f.planes[2].offset);
+    let yp = f.planes[0];
     for y in 0..th {
         for x in 0..tw {
             let p = at(x, y);
@@ -174,20 +186,22 @@ fn tile_frame(rgba: &[u8], w: u32, h: u32, x0: u32, y0: u32, tw: u32, th: u32, p
             f.data[yp.offset + (y * tw + x) as usize] = clamp(luma);
         }
     }
+    if let Plane::Alpha = plane {
+        return f;
+    }
+    let cp = f.planes[1];
+    let (u_off, v_off) = (f.planes[1].offset, f.planes[2].offset);
     for cy in 0..cp.height {
         for cx in 0..cp.width {
-            let (mut cb, mut cr) = (128.0, 128.0);
-            if let Plane::Colour = plane {
-                // The mean of the 2x2 block's chroma.
-                let (mut sb, mut sr) = (0.0, 0.0);
-                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let p = at((2 * cx + dx).min(tw - 1), (2 * cy + dy).min(th - 1));
-                    sb += -0.168_736 * p[0] - 0.331_264 * p[1] + 0.5 * p[2];
-                    sr += 0.5 * p[0] - 0.418_688 * p[1] - 0.081_312 * p[2];
-                }
-                cb = 128.0 + sb / 4.0;
-                cr = 128.0 + sr / 4.0;
+            // The mean of the 2x2 block's chroma.
+            let (mut sb, mut sr) = (0.0, 0.0);
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let p = at((2 * cx + dx).min(tw - 1), (2 * cy + dy).min(th - 1));
+                sb += -0.168_736 * p[0] - 0.331_264 * p[1] + 0.5 * p[2];
+                sr += 0.5 * p[0] - 0.418_688 * p[1] - 0.081_312 * p[2];
             }
+            let cb = 128.0 + sb / 4.0;
+            let cr = 128.0 + sr / 4.0;
             let i = (cy * cp.width + cx) as usize;
             f.data[u_off + i] = clamp(cb);
             f.data[v_off + i] = clamp(cr);
@@ -209,6 +223,23 @@ fn encode_tile(frame: &av1::Frame, q: u32) -> Result<Coded> {
     // content included); the grid's tiles already run in parallel.
     cfg.speed = AVIF_SPEED;
     cfg.tools = av1::Tools::for_speed(AVIF_SPEED);
+    // The sequence header says what the `colr` box says (full range; the
+    // colour's code points), so the two cannot disagree.
+    cfg.monochrome = frame.chroma == av1::ChromaFormat::Mono;
+    cfg.color = if cfg.monochrome {
+        // An alpha plane: no colour description (it has none), full range.
+        av1::ColorInfo { full_range: true, ..av1::ColorInfo::default() }
+    } else {
+        av1::ColorInfo {
+            color_primaries: NCLX_PRIMARIES.into(),
+            transfer_characteristics: NCLX_TRANSFER.into(),
+            matrix_coefficients: NCLX_MATRIX.into(),
+            full_range: true,
+            // The chroma is the mean of each 2x2 block: centred, which
+            // AV1 calls unknown (0).
+            chroma_sample_position: 0,
+        }
+    };
     let mut enc = av1::Encoder::new(cfg);
     let tu = enc.encode(frame).map_err(|e| anyhow!("AV1 encode of an AVIF item failed: {e}"))?;
     let mut obus = Vec::with_capacity(tu.len());
@@ -224,7 +255,7 @@ fn encode_tile(frame: &av1::Frame, q: u32) -> Result<Coded> {
         }
     }
     let (sh_obu, sh) = sequence_header.context("the AV1 encoder wrote no sequence header on a key frame")?;
-    Ok(Coded { obus, av1c: av1c(&sh_obu, &sh, frame.bit_depth) })
+    Ok(Coded { obus, av1c: av1c(&sh_obu, &sh, frame.bit_depth, frame.chroma == av1::ChromaFormat::Mono) })
 }
 
 const OBU_SEQUENCE_HEADER: u8 = 1;
@@ -267,16 +298,17 @@ fn leb128(data: &[u8]) -> Result<(usize, usize)> {
 /// `AV1CodecConfigurationRecord` (AV1-ISOBMFF 2.3): marker and version, the
 /// profile, level and tier of operating point 0, the colour format, then the
 /// sequence header OBU as the configuration OBUs.
-fn av1c(sequence_header_obu: &[u8], sh: &[u8], bit_depth: u32) -> Vec<u8> {
+fn av1c(sequence_header_obu: &[u8], sh: &[u8], bit_depth: u32, monochrome: bool) -> Vec<u8> {
     let (profile, level, tier) = profile_level_tier(sh).unwrap_or((0, 31, 0));
     let high_bitdepth = u8::from(bit_depth > 8);
     let twelve_bit = u8::from(bit_depth == 12);
     let mut out = vec![
         0x81,
         (profile << 5) | (level & 31),
-        // tier, high_bitdepth, twelve_bit, monochrome 0, subsampling 1 1,
-        // chroma_sample_position 0 (unknown) — 4:2:0 as the encoder codes.
-        (tier << 7) | (high_bitdepth << 6) | (twelve_bit << 5) | (1 << 3) | (1 << 2),
+        // tier, high_bitdepth, twelve_bit, monochrome, subsampling 1 1 (a
+        // monochrome stream's are 1 1 too), chroma_sample_position 0
+        // (unknown) — 4:2:0 or luma only, as the encoder codes.
+        (tier << 7) | (high_bitdepth << 6) | (twelve_bit << 5) | (u8::from(monochrome) << 4) | (1 << 3) | (1 << 2),
         // No initial_presentation_delay.
         0,
     ];
@@ -367,12 +399,18 @@ fn pixi(channels: u8) -> Vec<u8> {
     full(b"pixi", 0, 0, &b)
 }
 
+/// The colour item's code points (ITU-T H.273): BT.709 primaries, the sRGB
+/// transfer, the BT.601 matrix (the conversion [`tile_frame`] does).
+const NCLX_PRIMARIES: u16 = 1;
+const NCLX_TRANSFER: u16 = 13;
+const NCLX_MATRIX: u16 = 6;
+
 /// `colr` `nclx`: BT.709 primaries, sRGB transfer, BT.601 matrix, full range.
 fn colr() -> Vec<u8> {
     let mut b = b"nclx".to_vec();
-    b.extend_from_slice(&1u16.to_be_bytes());
-    b.extend_from_slice(&13u16.to_be_bytes());
-    b.extend_from_slice(&6u16.to_be_bytes());
+    b.extend_from_slice(&NCLX_PRIMARIES.to_be_bytes());
+    b.extend_from_slice(&NCLX_TRANSFER.to_be_bytes());
+    b.extend_from_slice(&NCLX_MATRIX.to_be_bytes());
     b.push(0x80);
     bx(b"colr", &b)
 }
@@ -575,5 +613,33 @@ mod tests {
         assert_eq!(c.av1c[1] >> 5, 0, "profile 0");
         assert_eq!(c.av1c[2] & 0x0c, 0x0c, "4:2:0");
         assert!(c.obus.first().is_some_and(|b| (b >> 3) & 15 == OBU_SEQUENCE_HEADER), "no temporal delimiter");
+    }
+
+    /// The sequence header says what `colr` says: full range and the
+    /// `nclx` code points for the colour; the alpha is monochrome, full
+    /// range (AV1 Image File Format 4), its `av1C` saying monochrome.
+    #[test]
+    fn the_sequence_header_agrees_with_the_container() {
+        let rgba: Vec<u8> = (0..32 * 16).flat_map(|i| [(i % 251) as u8, 40, 200, (i * 7 % 256) as u8]).collect();
+        let colour = tile_frame(&rgba, 32, 16, 0, 0, 32, 16, Plane::Colour);
+        let alpha = tile_frame(&rgba, 32, 16, 0, 0, 32, 16, Plane::Alpha);
+        assert_eq!(alpha.chroma, av1::ChromaFormat::Mono);
+        for (frame, mono) in [(colour, false), (alpha, true)] {
+            let c = encode_tile(&frame, 40).unwrap();
+            assert_eq!(c.av1c[2] & 0x10 != 0, mono, "av1C monochrome");
+            let mut d = av1::Decoder::new();
+            let out = d.decode(&c.obus).unwrap().expect("a key frame shows");
+            assert!(out.color.full_range, "color_range 1");
+            if mono {
+                assert_eq!(out.chroma, av1::ChromaFormat::Mono);
+                // The alpha comes back as stored, 0..255 unscaled.
+                let worst = (0..32 * 16).map(|i| (i32::from(out.data[i]) - i32::from(rgba[i * 4 + 3])).abs()).max();
+                assert!(worst.unwrap() < 24, "{worst:?}");
+            } else {
+                assert_eq!(out.chroma, av1::ChromaFormat::Yuv420);
+                let cp = (out.color.color_primaries, out.color.transfer_characteristics, out.color.matrix_coefficients);
+                assert_eq!(cp, (1, 13, 6));
+            }
+        }
     }
 }

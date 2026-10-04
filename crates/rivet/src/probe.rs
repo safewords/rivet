@@ -81,9 +81,12 @@ pub struct AudioStreamInfo {
 
 /// Probe an input file.
 impl MediaInfo {
-    /// The picture's size as shown, in square pixels and even: `width x
+    /// The picture's size as shown, in square pixels, evened up: `width x
     /// height` with non-square samples accounted for (720x576 at 64:45 is
-    /// 1024x576). What an output "at the source's size" is.
+    /// 1024x576). The box of an output "at the source's size": an even box
+    /// (as a rung's is) that holds the whole picture, which fitting then
+    /// sizes to the source: 351x241 for a codec that codes odd sizes,
+    /// 350x240 (the odd column and row cropped) for one that does not.
     pub fn display_dims(&self) -> (u32, u32) {
         let shape = crate::fit::SourceShape {
             width: self.width,
@@ -91,7 +94,8 @@ impl MediaInfo {
             sample_aspect: self.sample_aspect,
         };
         let (w, h) = shape.display_size();
-        ((w.round() as u32) & !1, (h.round() as u32) & !1)
+        let even_up = |v: f64| ((v.round() as u32) + 1) & !1;
+        (even_up(w), even_up(h))
     }
 }
 

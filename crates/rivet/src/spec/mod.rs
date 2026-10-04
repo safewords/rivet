@@ -579,8 +579,10 @@ impl OutputSpec {
     /// as an earlier one are gone. Also returns what became of each requested
     /// rung, in request order. See [`crate::fit::fit_rungs`].
     pub fn with_rungs_fitted(&self, source: crate::fit::SourceShape) -> (OutputSpec, Vec<crate::fit::FittedRung>) {
+        // A codec that codes odd sizes keeps an odd source's (see crate::fit).
+        let align = if codec::encode::codes_odd_sizes(self.video_codec.codec()) { 1 } else { 2 };
         let (rungs, report) =
-            crate::fit::fit_rungs(&self.rungs, source, self.fit, self.orientation, self.upscale);
+            crate::fit::fit_rungs_aligned(&self.rungs, source, self.fit, self.orientation, self.upscale, align);
         (OutputSpec { rungs, ..self.clone() }, report)
     }
 

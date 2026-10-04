@@ -1561,7 +1561,50 @@ fn scale_region_of_the_whole_even_frame_is_scale_frame() {
 fn scale_region_refuses_a_picture_that_overflows_its_canvas() {
     let src = region_frame(16, 16, |_, _| 100, 128, 128);
     assert!(super::scale_region(&src, (0, 0, 16, 16), (16, 16), (16, 8), (0, 0)).is_err());
-    assert!(super::scale_region(&src, (0, 0, 16, 16), (15, 16), (16, 16), (0, 0)).is_err(), "odd size");
+    assert!(super::scale_region(&src, (0, 0, 16, 16), (14, 16), (16, 16), (1, 0)).is_err(), "odd offset");
+}
+
+/// An odd frame evened by a crop: the 350x240 top-left of a 351x241
+/// picture, every sample exactly where it was — cut, not resampled.
+#[test]
+fn scale_region_crops_an_odd_frame_to_even_exactly() {
+    let (w, h) = (351u32, 241u32);
+    let (cw, ch) = (w.div_ceil(2) as usize, h.div_ceil(2) as usize);
+    let luma = |x: u32, y: u32| ((x * 7 + y * 3) % 220 + 16) as u8;
+    let mut src = region_frame(w, h, luma, 0, 0);
+    let mut data = src.data.to_vec();
+    for (i, s) in data[(w * h) as usize..].iter_mut().enumerate() {
+        let (x, y) = ((i % (cw * ch)) % cw, (i % (cw * ch)) / cw);
+        *s = (40 + x % 50 + y % 30 + if i >= cw * ch { 100 } else { 0 }) as u8;
+    }
+    src.data = Bytes::from(data);
+    let out = super::scale_region(&src, (0, 0, 350, 240), (350, 240), (350, 240), (0, 0)).unwrap();
+    let (y, u, v) = planes_of(&out);
+    for row in 0..240 {
+        for col in 0..350 {
+            assert_eq!(y[row * 350 + col], luma(col as u32, row as u32), "luma at {col},{row}");
+        }
+    }
+    let at = |plane: usize, x: usize, y: usize| src.data[(w * h) as usize + plane * cw * ch + y * cw + x];
+    for row in 0..120 {
+        for col in 0..175 {
+            assert_eq!((u[row * 175 + col], v[row * 175 + col]), (at(0, col, row), at(1, col, row)));
+        }
+    }
+}
+
+/// An odd output for an encoder that codes odd sizes: laid out with
+/// rounded-up chroma, and the whole odd frame at its own size comes back as
+/// it was.
+#[test]
+fn scale_region_writes_an_odd_output_with_rounded_up_chroma() {
+    let src = region_frame(7, 5, |x, y| (x * 10 + y) as u8, 60, 200);
+    let same = super::scale_region(&src, (0, 0, 7, 5), (7, 5), (7, 5), (0, 0)).unwrap();
+    assert_eq!(same.data, src.data);
+    let out = super::scale_region(&src, (0, 0, 7, 5), (5, 3), (5, 3), (0, 0)).unwrap();
+    assert_eq!((out.width, out.height), (5, 3));
+    assert_eq!(out.data.len(), 5 * 3 + 2 * 3 * 2);
+    assert!(out.data[15..21].iter().all(|&s| s == 60) && out.data[21..].iter().all(|&s| s == 200));
 }
 
 #[test]

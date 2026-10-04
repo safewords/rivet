@@ -137,10 +137,6 @@ rpng.workspace = true
 # mp4 crate is still needed by the container demuxer side.
 mp4.workspace = true
 
-# Sample-rate conversion (MIT) for the encoders' input: 44.1 -> 48 kHz for
-# Opus, and any rate a codec does not code to the nearest one it does. Not a
-# codec. Every audio codec is this workspace's own (see below).
-rubato = "0.15"
 # No FFmpeg, in any build (see the note at the top of `[features]`). What it
 # once provided is covered in-tree with no external toolchain:
 #   decode  -> NVDEC / AMF / QSV (hand-rolled dlopen FFI, no SDK at build time),
