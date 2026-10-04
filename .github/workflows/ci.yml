@@ -7,12 +7,14 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
-# Pushes and pull requests from branches in this repository run on the
-# safewords org's self-hosted runners (`safewords-runners`, and
-# `safewords-runners-gpu` / `safewords-runners-gpu-x2` for the hardware jobs,
-# each card held by one job at a time). Pull requests from forks always run
-# on GitHub-hosted runners: self-hosted machines never execute unreviewed
-# outside code.
+# Every job runs on the safewords org's self-hosted runners
+# (`safewords-runners`, and `safewords-runners-gpu` / `safewords-runners-gpu-x2`
+# for the hardware jobs, each card held by one job at a time); nothing runs on
+# GitHub-hosted runners. Pull requests from forks run there too, but only once
+# a maintainer approves the run (the repository requires approval for every
+# outside contributor), and never the GPU jobs. arm64 is covered on the same
+# x86-64 runners: cross-compiled for aarch64-unknown-linux-gnu and run under
+# QEMU's user-mode emulator.
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,7 +22,7 @@ env:
 jobs:
   test:
     name: build + lib tests (linux)
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'safewords-runners' }}
+    runs-on: safewords-runners
     steps:
       - uses: actions/checkout@v4
         with:
@@ -150,7 +152,7 @@ jobs:
     name: MSRV (1.99)
     # The workspace's rust-version: every crate, the submodules included,
     # builds at it. The test job above runs on stable, which moves.
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'safewords-runners' }}
+    runs-on: safewords-runners
     steps:
       - uses: actions/checkout@v4
         with:
@@ -161,13 +163,31 @@ jobs:
         run: cargo check --workspace --all-targets --locked --features rivet-transcoder/server,rivet-transcoder/batch,rivet-transcoder/image
 
   h26x-arm64:
-    name: h26x + pipeline kernel tests (linux arm64, NEON kernels)
-    runs-on: ubuntu-24.04-arm
+    name: h26x + pipeline kernel tests (linux arm64 under QEMU, NEON kernels)
+    # Cross-compiled for aarch64 on an x86-64 runner; cargo runs each test
+    # binary under qemu-aarch64 (user mode), which implements NEON, so the
+    # kernels are checked against the scalar reference as on arm64 hardware.
+    runs-on: safewords-runners
+    env:
+      CARGO_BUILD_TARGET: aarch64-unknown-linux-gnu
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER: qemu-aarch64 -L /usr/aarch64-linux-gnu
+      CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: aarch64 cross toolchain and QEMU
+        # The runner image has these; the install is a fallback for an image
+        # that predates them.
+        run: |
+          if ! command -v qemu-aarch64 >/dev/null || ! command -v aarch64-linux-gnu-gcc >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          fi
       - uses: Swatinem/rust-cache@v2
 
       - name: h26x tests
