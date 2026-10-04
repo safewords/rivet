@@ -873,3 +873,26 @@ fn vp9_hidden_frames_fold_into_the_next_shown_frame() {
     assert_eq!(out.pts, 1);
     assert_eq!(vp9::superframe::split(&out.data), vec![&hidden[..], &inter[..]]);
 }
+
+/// The parameter sets of an access unit are found behind three- and
+/// four-byte start codes, and nothing else is taken.
+#[test]
+fn annexb_parameter_sets_are_found_by_nal_type() {
+    // HEVC: VPS (32), SPS (33), PPS (34), then an IDR slice (19).
+    let hevc = [
+        0, 0, 0, 1, 0x40, 0x01, 0xAA, //
+        0, 0, 1, 0x42, 0x01, 0xBB, //
+        0, 0, 0, 1, 0x44, 0x01, 0xCC, //
+        0, 0, 0, 1, 0x26, 0x01, 0xDD,
+    ];
+    assert_eq!(
+        super::annexb_parameter_sets(&hevc, true),
+        vec![0, 0, 0, 1, 0x40, 0x01, 0xAA, 0, 0, 0, 1, 0x42, 0x01, 0xBB, 0, 0, 0, 1, 0x44, 0x01, 0xCC]
+    );
+    // A slice alone has none.
+    assert!(super::annexb_parameter_sets(&hevc[21..], true).is_empty());
+    // H.264: SPS (7), PPS (8), IDR (5).
+    let avc = [0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22, 0, 0, 1, 0x65, 0x33];
+    assert_eq!(super::annexb_parameter_sets(&avc, false), vec![0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22]);
+}
+

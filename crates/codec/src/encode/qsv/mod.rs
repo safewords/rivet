@@ -111,6 +111,12 @@ pub struct QsvEncoder {
     /// go out in one superframe with the next frame that shows: a container
     /// sample shows one picture.
     vp9_hidden: Vec<bytes::Bytes>,
+    /// H.264 / HEVC parameter sets (Annex B: VPS, SPS, PPS) from the first
+    /// keyframe of the session's first stream.
+    param_sets: Option<bytes::Bytes>,
+    /// Set by [`Encoder::reset`]: the new stream's first keyframe must carry
+    /// the parameter sets.
+    param_sets_due: bool,
     _runtime_lib: libloading::Library,
 }
 
@@ -945,6 +951,8 @@ impl QsvEncoder {
                 frame_counter: 0,
                 force_idr_next: false,
                 vp9_hidden: Vec::new(),
+                param_sets: None,
+                param_sets_due: false,
                 _runtime_lib: runtime_lib,
             })
         }
@@ -1544,6 +1552,7 @@ impl Encoder for QsvEncoder {
         self.packet_cursor = 0;
         self.flushed = false;
         self.force_idr_next = true;
+        self.param_sets_due = true;
         tracing::debug!(
             event = "qsv.reset",
             status = rc,
@@ -1564,8 +1573,12 @@ impl Encoder for QsvEncoder {
 
     fn receive_packet(&mut self) -> Result<Option<EncodedPacket>> {
         while self.packet_cursor < self.encoded_packets.len() {
-            let pkt = self.encoded_packets[self.packet_cursor].clone();
+            let mut pkt = self.encoded_packets[self.packet_cursor].clone();
             self.packet_cursor += 1;
+            if let Some(hevc) = h26x_family(self.config.codec) {
+                self.carry_parameter_sets(&mut pkt, hevc);
+                return Ok(Some(pkt));
+            }
             if self.config.codec != crate::frame::VideoCodec::Vp9 {
                 return Ok(Some(pkt));
             }
@@ -1583,6 +1596,80 @@ impl Encoder for QsvEncoder {
         }
         Ok(None)
     }
+}
+
+impl QsvEncoder {
+    /// Keep the first stream's parameter sets, and put them back on the
+    /// first keyframe after a reset when the runtime left them off.
+    ///
+    /// `MFXVideoENCODE_Reset` starts a new sequence, but iHD does not repeat
+    /// the VPS/SPS/PPS on its first IDR: a reused session's second HEVC stream
+    /// opened on a slice with nothing to decode it from, and the chunk
+    /// engine's codec-invariant check refused it ("could not parse H.265 SPS
+    /// from first encoded packet") — on devbox, whenever one card encoded two
+    /// chunks of a rung. The stream after a reset is the same configuration,
+    /// so the first stream's parameter sets are the right ones.
+    fn carry_parameter_sets(&mut self, pkt: &mut EncodedPacket, hevc: bool) {
+        if !pkt.is_keyframe {
+            return;
+        }
+        let own = annexb_parameter_sets(&pkt.data, hevc);
+        if self.param_sets.is_none() && !own.is_empty() {
+            self.param_sets = Some(bytes::Bytes::from(own.clone()));
+        }
+        if !self.param_sets_due {
+            return;
+        }
+        self.param_sets_due = false;
+        if own.is_empty()
+            && let Some(sets) = &self.param_sets
+        {
+            let mut data = Vec::with_capacity(sets.len() + pkt.data.len());
+            data.extend_from_slice(sets);
+            data.extend_from_slice(&pkt.data);
+            pkt.data = bytes::Bytes::from(data);
+            tracing::debug!(event = "qsv.reset.param_sets", "parameter sets restored on the first keyframe after a reset");
+        }
+    }
+}
+
+/// `Some(is_hevc)` for the codecs whose streams carry Annex B parameter sets.
+fn h26x_family(codec: crate::frame::VideoCodec) -> Option<bool> {
+    match codec {
+        crate::frame::VideoCodec::H264 => Some(false),
+        crate::frame::VideoCodec::H265 => Some(true),
+        _ => None,
+    }
+}
+
+/// The parameter-set NAL units of an Annex B access unit — H.264 SPS and PPS,
+/// HEVC VPS, SPS and PPS — each behind a four-byte start code, in order.
+fn annexb_parameter_sets(data: &[u8], hevc: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut starts = Vec::new();
+    let mut i = 0;
+    while i + 3 <= data.len() {
+        if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 {
+            starts.push(i + 3);
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    for (k, &start) in starts.iter().enumerate() {
+        let mut end = starts.get(k + 1).map_or(data.len(), |&next| next - 3);
+        // A four-byte start code leaves its leading zero on the NAL before.
+        while end > start && data[end - 1] == 0 && k + 1 < starts.len() {
+            end -= 1;
+        }
+        let Some(&header) = data.get(start) else { continue };
+        let is_param_set = if hevc { matches!((header >> 1) & 0x3f, 32..=34) } else { matches!(header & 0x1f, 7 | 8) };
+        if is_param_set {
+            out.extend_from_slice(&[0, 0, 0, 1]);
+            out.extend_from_slice(&data[start..end]);
+        }
+    }
+    out
 }
 
 /// One VP9 packet from the encoder, as a container sample: a frame that
