@@ -68,6 +68,11 @@ jobs:
           # The GPU backends' pure unit tests (parameter layouts, property
           # sequences): dlopen FFI, so they build and run with no card.
           cargo test -p rivet-codec      --lib --features serde,qsv,nvidia,amd --locked
+          # The pipeline kernels (scaler, colour, tonemap, SDR->HDR, denoise,
+          # resampler) once more with every SIMD switch off: the tests above
+          # compare each vector level with the scalar reference explicitly;
+          # this runs everything that dispatches on the scalar paths too.
+          RIVET_PIPE_MAX_SIMD=none RIVET_DENOISE_MAX_SIMD=none RIVET_TONEMAP_SCALAR=1             cargo test -p rivet-codec --lib --release --locked -- simd colorspace tonemap filter audio::resample
           cargo test -p rivet-container  --locked
           # Still images included: every format through rivet's own codecs,
           # AVIF through rivet's own AV1 encoder and decoder (always in the
@@ -148,7 +153,7 @@ jobs:
         run: cargo check --workspace --all-targets --locked --features rivet-transcoder/server,rivet-transcoder/batch,rivet-transcoder/image
 
   h26x-arm64:
-    name: h26x tests (linux arm64, NEON kernels)
+    name: h26x + pipeline kernel tests (linux arm64, NEON kernels)
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -162,6 +167,12 @@ jobs:
         # here; the x86 job covers AVX2 the same way. h26x is pure Rust, so
         # no native build deps.
         run: cargo test -p rivet-h26x --release --locked
+
+      - name: pipeline kernel tests
+        # rivet-codec's per-pixel / per-sample kernels on AArch64: the NEON
+        # resampler against its scalar spelling, and the portable paths of
+        # the scaler, colour conversions, tonemap and denoisers. Pure Rust.
+        run: cargo test -p rivet-codec --lib --release --locked -- simd colorspace tonemap filter audio::resample
 
   intel-gpu:
     name: encode on Intel Arc (QSV)
