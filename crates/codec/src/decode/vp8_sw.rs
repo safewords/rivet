@@ -7,6 +7,11 @@
 //! frame (an IVF frame, a WebM block, an MP4 sample); a hidden frame (an
 //! altref) produces nothing. Output is 8-bit 4:2:0, BT.601 (VP8 has no other
 //! colour space).
+//!
+//! Each frame decodes on `sw_decode_threads`
+//! threads (`RIVET_VP8_DECODE_THREADS`, else the machine's): macroblock rows
+//! in a wavefront, as far as the stream's token partitions allow. The output
+//! does not depend on the count.
 
 use std::collections::VecDeque;
 
@@ -35,7 +40,7 @@ impl Vp8Decoder {
         if !supports(&codec) {
             bail!("the VP8 decoder decodes VP8, not '{codec}'");
         }
-        Ok(Self { inner: vp8::Decoder::new(), info, ready: VecDeque::new(), next_pts: 0 })
+        Ok(Self { inner: vp8::Decoder::with_threads(super::sw_decode_threads("RIVET_VP8_DECODE_THREADS")), info, ready: VecDeque::new(), next_pts: 0 })
     }
 }
 
@@ -92,6 +97,13 @@ mod tests {
             bitrate: 0,
             color_metadata: Default::default(),
         }
+    }
+
+    /// The decoder decodes on the software decoders' thread count.
+    #[test]
+    fn decodes_on_the_software_decoder_threads() {
+        let dec = Vp8Decoder::new(info("vp8")).expect("decoder");
+        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_VP8_DECODE_THREADS"));
     }
 
     #[test]
