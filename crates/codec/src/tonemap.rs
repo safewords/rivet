@@ -383,7 +383,7 @@ fn planes_10(src: &VideoFrame) -> Result<Planes10<'_>> {
         let b = &bytes[at..at + 2 * n];
         match bytemuck_u16(b) {
             Some(s) => std::borrow::Cow::Borrowed(s),
-            None => std::borrow::Cow::Owned(b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()),
+            None => std::borrow::Cow::Owned(b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()),
         }
     };
     let cn = (w / 2) * (h / 2);
