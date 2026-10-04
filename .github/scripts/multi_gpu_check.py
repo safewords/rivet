@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Assertions for the Intel GPU job's all-cards steps (ci.yml, `intel-gpu`).
-The runner holds every card of its host, however many that is.
+"""Assertions for the Intel GPU jobs (ci.yml, `gpu-*`). A runner holds every
+card of its host, however many that is.
 
     multi_gpu_check.py devices DEVICES.json CARDS.json
         `rivet devices --json` lists at least one Intel card, every one at its
@@ -17,6 +17,11 @@ The runner holds every card of its host, however many that is.
         card.
     multi_gpu_check.py faster LABEL SECONDS BASELINE_SECONDS MAX_RATIO
         SECONDS <= BASELINE_SECONDS * MAX_RATIO.
+    multi_gpu_check.py timings CARDS.json OUT.json
+        Collects the wall time of every usage-*.json in the working directory
+        (drm_usage.py's records, named after the run: ladder-gpu-N,
+        ladder-family-intel, busy-CODEC-..., alone-N, together-N) with the
+        cards, into OUT.json, and prints them as a Markdown table.
 """
 
 import json
@@ -107,7 +112,28 @@ def faster(label, seconds, baseline, ratio):
         fail(f"{label}: {seconds:.1f}s is not under {ratio} x {baseline:.1f}s")
 
 
-COMMANDS = {"devices": devices, "pinned": pinned, "all": every, "chunks": chunks, "faster": faster}
+def timings(cards_json, out_json):
+    import glob
+    import os
+    cards = load(cards_json) if os.path.exists(cards_json) else {}
+    devices = load("devices.json")["gpus"] if os.path.exists("devices.json") else []
+    names = {str(g["index"]): g["name"] for g in devices}
+    runs = {}
+    for path in sorted(glob.glob("usage-*.json")):
+        usage = load(path)
+        seen = {pci(k): v for k, v in usage["cards"].items()}
+        busy = {idx: round(video_ns(seen.get(addr, {})) / 1e9, 3) for idx, addr in cards.items()}
+        runs[path[len("usage-"):-len(".json")]] = {"wall_s": usage["wall_s"], "video_busy_s": busy}
+    with open(out_json, "w") as f:
+        json.dump({"cards": {i: {"pci": a, "name": names.get(i)} for i, a in cards.items()}, "runs": runs}, f, indent=1)
+    order = sorted(cards, key=int)
+    print("| run | wall (s) | " + " | ".join(f"card {i} {names.get(i, '')} video busy (s)" for i in order) + " |")
+    print("|---|---|" + "---|" * len(order))
+    for name, r in runs.items():
+        print(f"| {name} | {r['wall_s']} | " + " | ".join(str(r["video_busy_s"][i]) for i in order) + " |")
+
+
+COMMANDS = {"devices": devices, "pinned": pinned, "all": every, "chunks": chunks, "faster": faster, "timings": timings}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
