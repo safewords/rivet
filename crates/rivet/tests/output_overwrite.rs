@@ -297,6 +297,7 @@ fn a_batch_job_never_writes_over_its_input() {
 }
 
 /// Every file under `dir`, recursively.
+#[cfg(feature = "h26x-fallback")]
 fn files_under(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
