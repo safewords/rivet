@@ -21,9 +21,7 @@ mod tests;
 pub use bt601_to_709::{
     bt601_to_bt709_planes, bt601_to_bt709_planes_full_range, bt601_to_bt709_planes_scalar,
 };
-pub use bt601_to_709_10bit::{
-    bt601_to_bt709_planes_10bit, bt601_to_bt709_planes_10bit_scalar,
-};
+pub use bt601_to_709_10bit::{bt601_to_bt709_planes_10bit, bt601_to_bt709_planes_10bit_scalar};
 pub use depth::{
     convert_bit_depth_frame, narrow_u16_to_u8, narrow_u16_to_u8_scalar, narrow_u16_to_u16,
     narrow_u16_to_u16_scalar, planar_bit_depth, widen_u8_to_u16_scalar, with_bit_depth,
@@ -85,7 +83,9 @@ const M_Y_CR_FULL: i32 = (-0.20793764_f64 * 224.0 / 219.0 * 32768.0).round() as 
 
 fn read_u16le(bytes: &[u8]) -> Vec<u16> {
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect()
 }
@@ -221,7 +221,12 @@ fn full_range_to_studio_10bit(frame: &VideoFrame) -> Result<VideoFrame> {
         );
     }
     let mut out = Vec::with_capacity(samples * 2);
-    for (i, pair) in frame.data[..samples * 2].chunks_exact(2).enumerate() {
+    for (i, pair) in frame.data[..samples * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .enumerate()
+    {
         let v = u16::from_le_bytes([pair[0], pair[1]]) as f32;
         let studio = if i < luma {
             64.0 + 876.0 * v / 1023.0

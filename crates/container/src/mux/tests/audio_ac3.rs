@@ -1,13 +1,13 @@
 // AC-3 and E-AC-3 mux box layout (ETSI TS 102 366 §F).
 // 9 #[test] functions.
 
-use crate::AudioInfo;
-use crate::ac3_sync::{Ac3SyncInfo, Eac3SyncInfo};
 use super::super::Av1Mp4Muxer;
 use super::super::audio_track::{
-    build_audio_stsd, build_dac3, build_dec3, build_ac3_sample_entry,
-    build_ec3_sample_entry, dac3_body_from_sync, dec3_body_from_sync,
+    build_ac3_sample_entry, build_audio_stsd, build_dac3, build_dec3, build_ec3_sample_entry,
+    dac3_body_from_sync, dec3_body_from_sync,
 };
+use crate::AudioInfo;
+use crate::ac3_sync::{Ac3SyncInfo, Eac3SyncInfo};
 
 // ---- local fixtures -------------------------------------------------------
 

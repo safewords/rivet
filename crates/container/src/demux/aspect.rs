@@ -64,7 +64,8 @@ pub(crate) fn from_bitstream(
             let in_band: Vec<Vec<u8>> = first_au
                 .map(|au| h26x::nal::annexb_nals(au).map(<[u8]>::to_vec).collect())
                 .unwrap_or_default();
-            from_parameter_sets(codec, parameter_sets).or_else(|| from_parameter_sets(codec, &in_band))
+            from_parameter_sets(codec, parameter_sets)
+                .or_else(|| from_parameter_sets(codec, &in_band))
         }
         "mpeg2" => {
             let dar = parameter_sets
@@ -73,7 +74,10 @@ pub(crate) fn from_bitstream(
                 .chain(first_au)
                 .find_map(|s| frame::pixel_format::parse_mpeg2_display_aspect(s, width, height))?;
             // A sample is DAR / (stored shape) wide.
-            reduce((u64::from(dar.0) * u64::from(height), u64::from(dar.1) * u64::from(width)))
+            reduce((
+                u64::from(dar.0) * u64::from(height),
+                u64::from(dar.1) * u64::from(width),
+            ))
         }
         _ => None,
     }
@@ -94,7 +98,10 @@ fn from_parameter_sets(codec: &str, parameter_sets: &[Vec<u8>]) -> Option<(u32, 
         let sar = match codec {
             "h265" | "hevc" if (first >> 1) & 0x3f == 33 => {
                 let rbsp = h26x::nal::unescape_rbsp(nal);
-                h26x::hevc::Sps::parse(rbsp.get(2..)?).ok()?.vui?.sample_aspect
+                h26x::hevc::Sps::parse(rbsp.get(2..)?)
+                    .ok()?
+                    .vui?
+                    .sample_aspect
             }
             "h264" | "avc" | "avc1" if first & 0x1f == 7 => {
                 let rbsp = h26x::nal::unescape_rbsp(&nal[1..]);
@@ -109,7 +116,11 @@ fn from_parameter_sets(codec: &str, parameter_sets: &[Vec<u8>]) -> Option<(u32, 
 
 /// The container's say, else the stream's, else square — logged when it is
 /// not square, since it changes every output's size.
-pub(crate) fn resolve(container: Option<(u32, u32)>, stream: impl FnOnce() -> Option<(u32, u32)>, label: &str) -> (u32, u32) {
+pub(crate) fn resolve(
+    container: Option<(u32, u32)>,
+    stream: impl FnOnce() -> Option<(u32, u32)>,
+    label: &str,
+) -> (u32, u32) {
     let (sar, from) = match container {
         Some(sar) => (sar, "container"),
         None => match stream() {
@@ -144,7 +155,11 @@ mod tests {
     fn pasp_reads_its_two_spacings() {
         assert_eq!(parse_pasp(&[0, 0, 0, 64, 0, 0, 0, 45]), Some((64, 45)));
         assert_eq!(parse_pasp(&[0, 0, 0, 1, 0, 0, 0, 1]), Some(SQUARE));
-        assert_eq!(parse_pasp(&[0, 0, 0, 0, 0, 0, 0, 1]), None, "a zero spacing is no shape");
+        assert_eq!(
+            parse_pasp(&[0, 0, 0, 0, 0, 0, 0, 1]),
+            None,
+            "a zero spacing is no shape"
+        );
         assert_eq!(parse_pasp(&[0, 0, 0, 1]), None, "truncated");
     }
 
@@ -162,16 +177,27 @@ mod tests {
     fn an_mpeg2_display_ratio_becomes_a_sample_ratio() {
         // sequence_header_code, 720x576, aspect_ratio_information 3 (16:9),
         // frame_rate_code 3 (25).
-        let seq = [0x00, 0x00, 0x01, 0xB3, 0x2D, 0x02, 0x40, 0x33, 0xFF, 0xFF, 0xE0, 0x18];
-        assert_eq!(from_bitstream("mpeg2", &[], Some(&seq), 720, 576), Some((64, 45)));
+        let seq = [
+            0x00, 0x00, 0x01, 0xB3, 0x2D, 0x02, 0x40, 0x33, 0xFF, 0xFF, 0xE0, 0x18,
+        ];
+        assert_eq!(
+            from_bitstream("mpeg2", &[], Some(&seq), 720, 576),
+            Some((64, 45))
+        );
         // Code 2: 4:3 on the same picture is 16:15.
         let mut four_three = seq;
         four_three[7] = 0x23;
-        assert_eq!(from_bitstream("mpeg2", &[], Some(&four_three), 720, 576), Some((16, 15)));
+        assert_eq!(
+            from_bitstream("mpeg2", &[], Some(&four_three), 720, 576),
+            Some((16, 15))
+        );
         // Code 1: square.
         let mut square = seq;
         square[7] = 0x13;
-        assert_eq!(from_bitstream("mpeg2", &[], Some(&square), 720, 576), Some(SQUARE));
+        assert_eq!(
+            from_bitstream("mpeg2", &[], Some(&square), 720, 576),
+            Some(SQUARE)
+        );
     }
 
     #[test]
@@ -181,10 +207,16 @@ mod tests {
             0x67, 0x64, 0x00, 0x0a, 0xac, 0xd9, 0x44, 0x26, 0xff, 0xc0, 0x10, 0x00, 0x0b, 0x44,
             0x00, 0x00, 0x03, 0x00, 0x04, 0x00, 0x00, 0x03, 0x00, 0xc8, 0x3c, 0x48, 0x96, 0x58,
         ];
-        assert_eq!(from_bitstream("h264", std::slice::from_ref(&sps), None, 64, 64), Some((64, 45)));
+        assert_eq!(
+            from_bitstream("h264", std::slice::from_ref(&sps), None, 64, 64),
+            Some((64, 45))
+        );
         let mut au = vec![0, 0, 0, 1];
         au.extend_from_slice(&sps);
-        assert_eq!(from_bitstream("h264", &[], Some(&au), 64, 64), Some((64, 45)));
+        assert_eq!(
+            from_bitstream("h264", &[], Some(&au), 64, 64),
+            Some((64, 45))
+        );
     }
 
     #[test]

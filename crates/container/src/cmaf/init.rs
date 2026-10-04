@@ -8,13 +8,11 @@
 
 use frame::ColorMetadata;
 
-use crate::edit::TrackEdit;
-use crate::mux::{
-    build_audio_stsd, build_av01, build_edts, write_unity_matrix, BoxBuilder,
-};
 use crate::AudioInfo;
+use crate::edit::TrackEdit;
+use crate::mux::{BoxBuilder, build_audio_stsd, build_av01, build_edts, write_unity_matrix};
 
-use super::{brand, SampleFlags};
+use super::{SampleFlags, brand};
 
 // =====================================================================
 // mvex / mehd / trex

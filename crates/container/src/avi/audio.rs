@@ -75,10 +75,18 @@ pub(super) fn find_audio_stream(hdrl: &[u8]) -> Option<AudioStream> {
             && &strh[..4] == b"auds"
             && strf.len() >= 16
         {
-            let u32_at = |b: &[u8], at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+            let u32_at =
+                |b: &[u8], at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
             let u16_at = |b: &[u8], at: usize| u16::from_le_bytes([b[at], b[at + 1]]);
-            let cb_size = if strf.len() >= 18 { usize::from(u16_at(strf, 16)) } else { 0 };
-            let extra = strf.get(18..(18 + cb_size).min(strf.len())).unwrap_or_default().to_vec();
+            let cb_size = if strf.len() >= 18 {
+                usize::from(u16_at(strf, 16))
+            } else {
+                0
+            };
+            let extra = strf
+                .get(18..(18 + cb_size).min(strf.len()))
+                .unwrap_or_default()
+                .to_vec();
             let mut format_tag = u16_at(strf, 0);
             if format_tag == WAVE_FORMAT_EXTENSIBLE && extra.len() >= 10 {
                 format_tag = u16_at(&extra, 6);
@@ -119,7 +127,11 @@ fn riff_chunks(mut data: &[u8]) -> impl Iterator<Item = ([u8; 4], &[u8])> {
 
 /// Every `##wb` chunk of stream `index` in the `LIST movi` bodies, in file
 /// order, empty ones included (`rec ` lists walked into).
-pub(super) fn collect_audio_chunks<'a>(data: &'a [u8], movi_lists: &[(usize, usize)], index: u32) -> Vec<&'a [u8]> {
+pub(super) fn collect_audio_chunks<'a>(
+    data: &'a [u8],
+    movi_lists: &[(usize, usize)],
+    index: u32,
+) -> Vec<&'a [u8]> {
     fn walk<'a>(body: &'a [u8], prefix: &[u8; 2], out: &mut Vec<&'a [u8]>) {
         for (fcc, payload) in riff_chunks(body) {
             if &fcc == b"LIST" && payload.len() >= 4 && &payload[..4] == b"rec " {
@@ -228,7 +240,11 @@ fn chunk_unit_starts(stream: &AudioStream, chunks: &[&[u8]]) -> (Vec<u64>, u64) 
     let origin = u64::from(stream.start);
     let mut starts = Vec::with_capacity(chunks.len());
     if stream.sample_size > 0 {
-        let block = if stream.block_align > 0 { u64::from(stream.block_align) } else { u64::from(stream.sample_size) };
+        let block = if stream.block_align > 0 {
+            u64::from(stream.block_align)
+        } else {
+            u64::from(stream.sample_size)
+        };
         let mut bytes = 0u64;
         for chunk in chunks {
             starts.push(origin + bytes / block);
@@ -248,7 +264,11 @@ fn chunk_unit_starts(stream: &AudioStream, chunks: &[&[u8]]) -> (Vec<u64>, u64) 
 /// The first audio stream of the AVI whose `hdrl` and `movi` bodies are
 /// given, as the pipeline takes it; `None` when the file has no audio
 /// stream or no audio chunks.
-pub(super) fn read_audio(data: &[u8], hdrl: &[u8], movi_lists: &[(usize, usize)]) -> Option<AviAudio> {
+pub(super) fn read_audio(
+    data: &[u8],
+    hdrl: &[u8],
+    movi_lists: &[(usize, usize)],
+) -> Option<AviAudio> {
     let stream = find_audio_stream(hdrl)?;
     let chunks = collect_audio_chunks(data, movi_lists, stream.stream_index);
     if chunks.iter().all(|c| c.is_empty()) {
@@ -256,23 +276,41 @@ pub(super) fn read_audio(data: &[u8], hdrl: &[u8], movi_lists: &[(usize, usize)]
     }
     let codec = match codec_for(&stream) {
         Ok(codec) => codec,
-        Err(name) => return Some(unusable(name, &stream, "no passthrough form and no decoder for this format")),
+        Err(name) => {
+            return Some(unusable(
+                name,
+                &stream,
+                "no passthrough form and no decoder for this format",
+            ));
+        }
     };
     if stream.scale == 0 || stream.rate == 0 {
-        return Some(unusable(codec.into(), &stream, "strh dwScale / dwRate unset: the stream has no timeline"));
+        return Some(unusable(
+            codec.into(),
+            &stream,
+            "strh dwScale / dwRate unset: the stream has no timeline",
+        ));
     }
 
     let mut sample_rate = stream.sample_rate;
     let mut channels = stream.channels;
     let mut asc = Vec::new();
     let mut codec_private = Vec::new();
-    let first = chunks.iter().find(|c| !c.is_empty()).copied().unwrap_or_default();
+    let first = chunks
+        .iter()
+        .find(|c| !c.is_empty())
+        .copied()
+        .unwrap_or_default();
     let mut codec = codec.to_string();
     match codec.as_str() {
         "aac" => {
             // The raw form needs its ASC; ADTS-framed AAC carries none here.
             let Some(parsed) = crate::aac_asc::parse_aac_asc(&stream.extra) else {
-                return Some(unusable("aac_adts".into(), &stream, "AAC without an AudioSpecificConfig (ADTS framing) is not supported"));
+                return Some(unusable(
+                    "aac_adts".into(),
+                    &stream,
+                    "AAC without an AudioSpecificConfig (ADTS framing) is not supported",
+                ));
             };
             channels = crate::aac_asc::effective_output_channels(&parsed);
             sample_rate = parsed.sbr_sample_rate.unwrap_or(parsed.sample_rate);
@@ -280,8 +318,15 @@ pub(super) fn read_audio(data: &[u8], hdrl: &[u8], movi_lists: &[(usize, usize)]
         }
         "ac3" => {
             // Passthrough needs whole syncframes, one to a sample.
-            if chunks.iter().any(|c| !c.is_empty() && !c.starts_with(&[0x0B, 0x77])) {
-                return Some(unusable(codec, &stream, "AC-3 chunks that are not whole syncframes are not supported"));
+            if chunks
+                .iter()
+                .any(|c| !c.is_empty() && !c.starts_with(&[0x0B, 0x77]))
+            {
+                return Some(unusable(
+                    codec,
+                    &stream,
+                    "AC-3 chunks that are not whole syncframes are not supported",
+                ));
             }
             match crate::ac3_sync::parse_sync_info(first) {
                 Ok(crate::ac3_sync::SyncInfo::Ac3(s)) => {
@@ -291,7 +336,11 @@ pub(super) fn read_audio(data: &[u8], hdrl: &[u8], movi_lists: &[(usize, usize)]
                 }
                 Ok(crate::ac3_sync::SyncInfo::Eac3(_)) => {
                     let Some(config) = crate::mux::eac3_config_from_access_unit(first) else {
-                        return Some(unusable(codec, &stream, "first E-AC-3 access unit does not parse"));
+                        return Some(unusable(
+                            codec,
+                            &stream,
+                            "first E-AC-3 access unit does not parse",
+                        ));
                     };
                     (codec_private, sample_rate, channels) = config;
                     codec = "eac3".into();
@@ -300,8 +349,15 @@ pub(super) fn read_audio(data: &[u8], hdrl: &[u8], movi_lists: &[(usize, usize)]
             }
         }
         "dts" => {
-            if chunks.iter().any(|c| !c.is_empty() && !c.starts_with(&[0x7F, 0xFE, 0x80, 0x01])) {
-                return Some(unusable(codec, &stream, "DTS chunks that are not whole core frames are not supported"));
+            if chunks
+                .iter()
+                .any(|c| !c.is_empty() && !c.starts_with(&[0x7F, 0xFE, 0x80, 0x01]))
+            {
+                return Some(unusable(
+                    codec,
+                    &stream,
+                    "DTS chunks that are not whole core frames are not supported",
+                ));
             }
             match crate::dts_sync::parse_core_sync(first) {
                 Ok(core) => {
@@ -323,8 +379,10 @@ pub(super) fn read_audio(data: &[u8], hdrl: &[u8], movi_lists: &[(usize, usize)]
     // `dwStart` (see the module docs for the rule and its sources), then on
     // the track's timescale.
     let timescale = sample_rate;
-    let ticks =
-        |units: u64| (u128::from(units) * u128::from(stream.scale) * u128::from(timescale) / u128::from(stream.rate)) as u64;
+    let ticks = |units: u64| {
+        (u128::from(units) * u128::from(stream.scale) * u128::from(timescale)
+            / u128::from(stream.rate)) as u64
+    };
     let (unit_starts, end_units) = chunk_unit_starts(&stream, &chunks);
     let mut samples = Vec::new();
     let mut starts = Vec::new();
@@ -341,9 +399,22 @@ pub(super) fn read_audio(data: &[u8], hdrl: &[u8], movi_lists: &[(usize, usize)]
         .zip(starts.iter().skip(1).chain(std::iter::once(&end)))
         .map(|(a, b)| (b - a).max(1) as u32)
         .collect();
-    let edit = (delay > 0).then_some(AudioEdit { delay, media_start: 0, media_end: None });
+    let edit = (delay > 0).then_some(AudioEdit {
+        delay,
+        media_start: 0,
+        media_end: None,
+    });
     Some(AviAudio {
-        track: AudioTrack { codec, samples, sample_rate, channels, asc, codec_private, timescale, durations },
+        track: AudioTrack {
+            codec,
+            samples,
+            sample_rate,
+            channels,
+            asc,
+            codec_private,
+            timescale,
+            durations,
+        },
         edit,
     })
 }

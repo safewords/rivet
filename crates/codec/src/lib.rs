@@ -5,13 +5,13 @@ pub mod amf_device;
 /// AMF SDK vtable layout, shared by the AMF encoder and decoder.
 #[cfg(feature = "amd")]
 pub(crate) mod amf_ffi;
-/// AMF runtime / context lifecycle and property helpers, shared likewise.
-#[cfg(feature = "amd")]
-pub(crate) mod amf_runtime;
 /// One machine-wide lock for on-hardware AMF tests (encode + decode share the
 /// single iGPU). Test-support; see the module docs.
 #[cfg(feature = "amd")]
 pub mod amf_hwtest;
+/// AMF runtime / context lifecycle and property helpers, shared likewise.
+#[cfg(feature = "amd")]
+pub(crate) mod amf_runtime;
 pub mod audio;
 pub mod bench;
 pub mod codec_strings;
@@ -28,11 +28,11 @@ pub mod hevc_sei;
 /// Bitstream introspection; lives in `rivet-frame`, re-exported unchanged.
 pub use ::frame::pixel_format;
 pub mod probe;
+#[cfg(feature = "qsv")]
+pub(crate) mod qsv_ffi;
 pub mod quality;
 pub mod simd;
 pub mod threads;
-#[cfg(feature = "qsv")]
-pub(crate) mod qsv_ffi;
 pub mod tonemap;
 pub mod vp9_header;
 

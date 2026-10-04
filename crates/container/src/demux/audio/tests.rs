@@ -25,9 +25,21 @@ fn esds_with_object_type(oti: u8) -> Vec<u8> {
 /// is routed to the DTS path rather than parsed as an AAC config.
 #[test]
 fn esds_object_type_is_read_from_the_decoder_config_descriptor() {
-    assert_eq!(esds_object_type(&esds_with_object_type(0xA9)), Some(0xA9), "DTS core");
-    assert_eq!(esds_object_type(&esds_with_object_type(0xAB)), Some(0xAB), "DTS-HD MA");
-    assert_eq!(esds_object_type(&esds_with_object_type(0x40)), Some(0x40), "MPEG-4 audio");
+    assert_eq!(
+        esds_object_type(&esds_with_object_type(0xA9)),
+        Some(0xA9),
+        "DTS core"
+    );
+    assert_eq!(
+        esds_object_type(&esds_with_object_type(0xAB)),
+        Some(0xAB),
+        "DTS-HD MA"
+    );
+    assert_eq!(
+        esds_object_type(&esds_with_object_type(0x40)),
+        Some(0x40),
+        "MPEG-4 audio"
+    );
     // Not an ES_Descriptor at all.
     assert_eq!(esds_object_type(&[0x04, 2, 0xA9, 0x15]), None);
     assert_eq!(esds_object_type(&[]), None);

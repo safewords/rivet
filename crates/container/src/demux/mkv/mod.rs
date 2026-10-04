@@ -9,24 +9,24 @@ use frame::{ColorMetadata, ColorSpace, ContentLightLevel, PixelFormat, StreamInf
 use matroska_demuxer::{Frame as MkvFrame, MatroskaFile, TrackType as MkvTrackType};
 use std::io::Cursor;
 
+use crate::MkvColorInfo;
 use crate::annexb::{
     NaluCodec, ParamSetTracker, length_prefixed_to_annexb_tracked, parse_avcc, parse_hvcc,
 };
 use crate::streaming::{DemuxHeader, Sample, StreamingDemuxer};
-use crate::MkvColorInfo;
 
-use super::subtitle::{extract_mkv_subtitle_tracks, SubtitleTrack};
+use super::subtitle::{SubtitleTrack, extract_mkv_subtitle_tracks};
 use super::{AudioTrack, DemuxResult};
 
-use colour::{bitrate_from_tags, colour_to_pipeline, container_colour};
 use super::hdr::resolve_source_colour;
+use colour::{bitrate_from_tags, colour_to_pipeline, container_colour};
 use ebml::scan_mkv_colour_raw;
 
 // Re-export the two VInt readers that `demux/tests.rs` pulls directly as
 // `super::mkv::{read_id_vint, read_size_vint}`.
+pub(crate) use ebml::scan_mkv_audio_trims;
 #[allow(unused_imports)] // used only by demux/tests.rs under #[cfg(test)]
 pub(crate) use ebml::{read_id_vint, read_size_vint};
-pub(crate) use ebml::scan_mkv_audio_trims;
 
 // ---------------------------------------------------------------------------
 // Public demux entry point
@@ -684,7 +684,11 @@ fn video_colour_window(
     let mut window = super::hdr::ColourWindow::new(codec)?;
     let mut mkv = MatroskaFile::open(Cursor::new(data)).ok()?;
     let mut frame = MkvFrame::default();
-    let nalu = if codec_id == "V_MPEG4/ISO/AVC" { NaluCodec::Avc } else { NaluCodec::Hevc };
+    let nalu = if codec_id == "V_MPEG4/ISO/AVC" {
+        NaluCodec::Avc
+    } else {
+        NaluCodec::Hevc
+    };
     let mut tracker = ParamSetTracker::new(nalu);
     while let Ok(true) = mkv.next_frame(&mut frame) {
         if frame.track != track_number {
@@ -852,10 +856,16 @@ pub fn probe_mkv_color_info(data: &[u8]) -> Option<MkvColorInfo> {
 ///   codec's configuration, put ahead of the first frame as above.
 ///
 /// Anything else keeps the lowercase `CodecID` as its label, as before.
-pub(super) fn map_video_codec(codec_id: &str, codec_private: Option<&[u8]>) -> (String, FrameFixup) {
+pub(super) fn map_video_codec(
+    codec_id: &str,
+    codec_private: Option<&[u8]>,
+) -> (String, FrameFixup) {
     let config = |codec: &str, dsi: Option<&[u8]>| -> (String, FrameFixup) {
         let fixup = match dsi.filter(|d| !d.is_empty()) {
-            Some(d) => FrameFixup::ConfigPrefix { codec: codec.to_string(), dsi: d.to_vec() },
+            Some(d) => FrameFixup::ConfigPrefix {
+                codec: codec.to_string(),
+                dsi: d.to_vec(),
+            },
             None => FrameFixup::None,
         };
         (codec.to_string(), fixup)
@@ -891,7 +901,10 @@ pub(super) enum FrameFixup {
     ProresHeader,
     /// Put the configuration headers ahead of the first frame when it has
     /// none of its own (`demux::mp4::prepend_config`), then nothing more.
-    ConfigPrefix { codec: String, dsi: Vec<u8> },
+    ConfigPrefix {
+        codec: String,
+        dsi: Vec<u8>,
+    },
 }
 
 impl FrameFixup {
@@ -924,8 +937,12 @@ pub(super) fn mkv_codec_needs_annexb(codec_id: &str) -> bool {
 /// Whether a Matroska / WebM file has a video track at all — what tells an
 /// audio-only file from one whose video the demuxer refused.
 pub(crate) fn has_video_track(data: &[u8]) -> Result<bool> {
-    let mkv = MatroskaFile::open(std::io::Cursor::new(data)).map_err(|e| anyhow::anyhow!("reading MKV header: {e}"))?;
-    Ok(mkv.tracks().iter().any(|t| t.track_type() == MkvTrackType::Video))
+    let mkv = MatroskaFile::open(std::io::Cursor::new(data))
+        .map_err(|e| anyhow::anyhow!("reading MKV header: {e}"))?;
+    Ok(mkv
+        .tracks()
+        .iter()
+        .any(|t| t.track_type() == MkvTrackType::Video))
 }
 
 /// The sample aspect ratio a track's `DisplayWidth`/`DisplayHeight` state, in
@@ -933,12 +950,21 @@ pub(crate) fn has_video_track(data: &[u8]) -> Result<bool> {
 /// is taken instead: a muxer that writes no display size means the picture's
 /// own. Either one alone defaults to the pixel size (the specification's
 /// default for both).
-fn mkv_sample_aspect(video: &matroska_demuxer::Video, width: u32, height: u32) -> Option<(u32, u32)> {
-    let pixels = matches!(video.display_unit(), None | Some(matroska_demuxer::DisplayUnit::Pixels));
+fn mkv_sample_aspect(
+    video: &matroska_demuxer::Video,
+    width: u32,
+    height: u32,
+) -> Option<(u32, u32)> {
+    let pixels = matches!(
+        video.display_unit(),
+        None | Some(matroska_demuxer::DisplayUnit::Pixels)
+    );
     if !pixels || (video.display_width().is_none() && video.display_height().is_none()) {
         return None;
     }
     let dw = video.display_width().map_or(u64::from(width), |v| v.get());
-    let dh = video.display_height().map_or(u64::from(height), |v| v.get());
+    let dh = video
+        .display_height()
+        .map_or(u64::from(height), |v| v.get());
     crate::demux::aspect::from_display_size((width, height), (dw, dh))
 }

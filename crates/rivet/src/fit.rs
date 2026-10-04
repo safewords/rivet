@@ -148,7 +148,11 @@ pub struct SourceShape {
 impl SourceShape {
     /// A source with square pixels.
     pub fn square(width: u32, height: u32) -> Self {
-        Self { width, height, sample_aspect: (1, 1) }
+        Self {
+            width,
+            height,
+            sample_aspect: (1, 1),
+        }
     }
 
     fn sar(&self) -> f64 {
@@ -163,7 +167,11 @@ impl SourceShape {
     /// the resolution the source has: 720x576 at 64:45 is 1024x576.
     pub fn display_size(&self) -> (f64, f64) {
         let (w, h, sar) = (f64::from(self.width), f64::from(self.height), self.sar());
-        if sar >= 1.0 { (w * sar, h) } else { (w, h / sar) }
+        if sar >= 1.0 {
+            (w * sar, h)
+        } else {
+            (w, h / sar)
+        }
     }
 
     /// Width over height as shown.
@@ -273,7 +281,13 @@ fn aligned_floor(v: f64, align: u32) -> u32 {
 ///
 /// Sizes and offsets are even, as 4:2:0 video needs; [`place_aligned`] is the
 /// same plan on another grid.
-pub fn place(source: SourceShape, box_size: (u32, u32), fit: Fit, orientation: Orientation, upscale: bool) -> Placement {
+pub fn place(
+    source: SourceShape,
+    box_size: (u32, u32),
+    fit: Fit,
+    orientation: Orientation,
+    upscale: bool,
+) -> Placement {
     place_aligned(source, box_size, fit, orientation, upscale, 2)
 }
 
@@ -304,7 +318,11 @@ pub fn place_aligned(
     let aspect = dw / dh;
     // Long side x short side: the box takes the source's orientation. A
     // square source or a square box has none to take.
-    let (bw, bh) = if orientation == Orientation::Auto && box_w != box_h && aspect != 1.0 && (aspect > 1.0) != (box_w > box_h) {
+    let (bw, bh) = if orientation == Orientation::Auto
+        && box_w != box_h
+        && aspect != 1.0
+        && (aspect > 1.0) != (box_w > box_h)
+    {
         (box_h, box_w)
     } else {
         (box_w, box_h)
@@ -354,9 +372,16 @@ pub fn place_aligned(
         Fit::Cover => {
             // The largest box-shaped output the source can fill without being
             // enlarged, when it cannot fill the box itself.
-            let k = if upscale { 1.0 } else { (dw / bwf).min(dh / bhf).min(1.0) };
+            let k = if upscale {
+                1.0
+            } else {
+                (dw / bwf).min(dh / bhf).min(1.0)
+            };
             let (cw, ch) = if k < 1.0 {
-                (round(bwf * k).min(floor(dw)).min(bw), round(bhf * k).min(floor(dh)).min(bh))
+                (
+                    round(bwf * k).min(floor(dw)).min(bw),
+                    round(bhf * k).min(floor(dh)).min(bh),
+                )
             } else {
                 (bw, bh)
             };
@@ -460,7 +485,8 @@ pub fn fit_rungs_aligned(
         // two rungs the source collapsed into one. Rungs asked for with the
         // same box are the caller's business and both run.
         let duplicate = kept.iter().zip(&kept_from).find(|(k, from)| {
-            k.placement == fitted.placement && (rungs[**from].width, rungs[**from].height) != requested
+            k.placement == fitted.placement
+                && (rungs[**from].width, rungs[**from].height) != requested
         });
         if let Some((k, &from)) = duplicate {
             report.push(FittedRung {
@@ -475,7 +501,10 @@ pub fn fit_rungs_aligned(
         // Labels name files and HLS renditions, so they stay unique.
         if kept.iter().any(|k| k.label == fitted.label) {
             let base = fitted.label.clone();
-            fitted.label = (2..).map(|n| format!("{base}-{n}")).find(|l| kept.iter().all(|k| &k.label != l)).unwrap_or(base);
+            fitted.label = (2..)
+                .map(|n| format!("{base}-{n}"))
+                .find(|l| kept.iter().all(|k| &k.label != l))
+                .unwrap_or(base);
         }
         report.push(FittedRung {
             label: fitted.label.clone(),
@@ -505,13 +534,26 @@ pub fn filtered_shape(upright: SourceShape, filters: &[codec::filter::VideoFilte
     use codec::filter::VideoFilter;
     let even = |v: u32| v & !1;
     filters.iter().fold(upright, |s, f| match f {
-        VideoFilter::Crop { w, h, x: Some(_), y: Some(_) } => SourceShape { width: even(*w), height: even(*h), ..s },
-        VideoFilter::Crop { w, h, .. } => {
-            SourceShape { width: even((*w).min(s.width)), height: even((*h).min(s.height)), ..s }
-        }
-        VideoFilter::Pad { w, h, .. } => {
-            SourceShape { width: even((*w).max(s.width)), height: even((*h).max(s.height)), ..s }
-        }
+        VideoFilter::Crop {
+            w,
+            h,
+            x: Some(_),
+            y: Some(_),
+        } => SourceShape {
+            width: even(*w),
+            height: even(*h),
+            ..s
+        },
+        VideoFilter::Crop { w, h, .. } => SourceShape {
+            width: even((*w).min(s.width)),
+            height: even((*h).min(s.height)),
+            ..s
+        },
+        VideoFilter::Pad { w, h, .. } => SourceShape {
+            width: even((*w).max(s.width)),
+            height: even((*h).max(s.height)),
+            ..s
+        },
         VideoFilter::Rotate(90 | 270) => SourceShape {
             width: s.height,
             height: s.width,

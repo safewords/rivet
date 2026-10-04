@@ -57,7 +57,14 @@ fn edge_frame(pts: u64) -> VideoFrame {
     }
     data.extend(std::iter::repeat_n(128u8, 2 * cw * ch));
 
-    VideoFrame::new(data.into(), W, H, PixelFormat::Yuv420p, ColorSpace::Bt709, pts)
+    VideoFrame::new(
+        data.into(),
+        W,
+        H,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        pts,
+    )
 }
 
 fn edge_x(pts: u64) -> usize {
@@ -95,8 +102,15 @@ fn encoder_config_b(codec: VideoCodec, bframes: u8) -> EncoderConfig {
 
 /// Encode `FRAMES` frames of `format`, forcing an IDR part way through, and
 /// return the packets in the order the encoder produced them (coding order).
-fn encode(codec: VideoCodec, bframes: u8, format: PixelFormat) -> Vec<codec::encode::EncodedPacket> {
-    let cfg = EncoderConfig { pixel_format: format, ..encoder_config_b(codec, bframes) };
+fn encode(
+    codec: VideoCodec,
+    bframes: u8,
+    format: PixelFormat,
+) -> Vec<codec::encode::EncodedPacket> {
+    let cfg = EncoderConfig {
+        pixel_format: format,
+        ..encoder_config_b(codec, bframes)
+    };
     let mut enc = H26xEncoder::new(cfg).expect("build the software encoder");
     let mut packets = Vec::new();
     for pts in 0..FRAMES {
@@ -161,7 +175,11 @@ fn round_trip_format(codec: VideoCodec, bframes: u8, format: PixelFormat) {
     // the whole input set, each exactly once — the packets carry the display
     // pts of the picture they code, so with B pictures they are NOT in
     // ascending order, but nothing is missing or duplicated.
-    assert_eq!(packets.len() as u64, FRAMES, "{codec:?} b={bframes}: one packet per frame");
+    assert_eq!(
+        packets.len() as u64,
+        FRAMES,
+        "{codec:?} b={bframes}: one packet per frame"
+    );
     let mut pts: Vec<u64> = packets.iter().map(|p| p.pts).collect();
     if bframes > 0 {
         // The reorder actually happened, or the B arm proves nothing the
@@ -172,19 +190,34 @@ fn round_trip_format(codec: VideoCodec, bframes: u8, format: PixelFormat) {
         );
     }
     pts.sort_unstable();
-    assert_eq!(pts, (0..FRAMES).collect::<Vec<u64>>(), "{codec:?} b={bframes}: every timestamp once");
+    assert_eq!(
+        pts,
+        (0..FRAMES).collect::<Vec<u64>>(),
+        "{codec:?} b={bframes}: every timestamp once"
+    );
 
     // Keyframes exactly where they must be: the first picture by rule, the
     // forced one by request, and nowhere else in a GOP longer than the clip.
-    let mut keys: Vec<u64> = packets.iter().filter(|p| p.is_keyframe).map(|p| p.pts).collect();
+    let mut keys: Vec<u64> = packets
+        .iter()
+        .filter(|p| p.is_keyframe)
+        .map(|p| p.pts)
+        .collect();
     keys.sort_unstable();
-    assert_eq!(keys, vec![0, FORCED_IDR_AT], "{codec:?} b={bframes}: keyframe positions");
+    assert_eq!(
+        keys,
+        vec![0, FORCED_IDR_AT],
+        "{codec:?} b={bframes}: keyframe positions"
+    );
 
     // Every packet is Annex-B, and the keyframes carry the parameter sets the
     // muxer will lift into avcC / hvcC.
     for p in &packets {
-        assert!(p.data.starts_with(&[0, 0, 0, 1]) || p.data.starts_with(&[0, 0, 1]),
-            "{codec:?}: packet at pts {} is not Annex-B", p.pts);
+        assert!(
+            p.data.starts_with(&[0, 0, 0, 1]) || p.data.starts_with(&[0, 0, 1]),
+            "{codec:?}: packet at pts {} is not Annex-B",
+            p.pts
+        );
     }
     let has_nal = |data: &[u8], pred: &dyn Fn(u8) -> bool| {
         h26x::nal::annexb_nals(data).any(|n| !n.is_empty() && pred(n[0]))
@@ -203,7 +236,11 @@ fn round_trip_format(codec: VideoCodec, bframes: u8, format: PixelFormat) {
             ),
             _ => unreachable!(),
         };
-        assert!(sps && pps, "{codec:?}: keyframe at pts {} lacks its parameter sets", p.pts);
+        assert!(
+            sps && pps,
+            "{codec:?}: keyframe at pts {} lacks its parameter sets",
+            p.pts
+        );
     }
 
     // Exactly one parameter set of each kind across the WHOLE stream. The
@@ -217,7 +254,11 @@ fn round_trip_format(codec: VideoCodec, bframes: u8, format: PixelFormat) {
     let distinct = |pred: &dyn Fn(u8) -> bool| -> std::collections::BTreeSet<Vec<u8>> {
         packets
             .iter()
-            .flat_map(|p| h26x::nal::annexb_nals(&p.data).map(|n| n.to_vec()).collect::<Vec<_>>())
+            .flat_map(|p| {
+                h26x::nal::annexb_nals(&p.data)
+                    .map(|n| n.to_vec())
+                    .collect::<Vec<_>>()
+            })
             .filter(|n| !n.is_empty() && pred(n[0]))
             .collect()
     };
@@ -234,10 +275,22 @@ fn round_trip_format(codec: VideoCodec, bframes: u8, format: PixelFormat) {
         ),
         _ => unreachable!(),
     };
-    assert_eq!(sps_set.len(), 1, "{codec:?}: one SPS for the stream, got {sps_set:?}");
-    assert_eq!(pps_set.len(), 1, "{codec:?}: one PPS for the stream, got {pps_set:?}");
+    assert_eq!(
+        sps_set.len(),
+        1,
+        "{codec:?}: one SPS for the stream, got {sps_set:?}"
+    );
+    assert_eq!(
+        pps_set.len(),
+        1,
+        "{codec:?}: one PPS for the stream, got {pps_set:?}"
+    );
     if codec == VideoCodec::H265 {
-        assert_eq!(vps_set.len(), 1, "{codec:?}: one VPS for the stream, got {vps_set:?}");
+        assert_eq!(
+            vps_set.len(),
+            1,
+            "{codec:?}: one VPS for the stream, got {vps_set:?}"
+        );
     }
 
     // The one H.264 SPS claims the profile and depth the pictures are coded
@@ -245,10 +298,16 @@ fn round_trip_format(codec: VideoCodec, bframes: u8, format: PixelFormat) {
     // 10. A 10-bit request narrowed to 8 would say 100 / 8 here.
     if codec == VideoCodec::H264 {
         let sps = sps_set.iter().next().expect("one SPS");
-        let sps = h26x::h264::Sps::parse(&h26x::nal::unescape_rbsp(&sps[1..])).expect("the SPS parses");
+        let sps =
+            h26x::h264::Sps::parse(&h26x::nal::unescape_rbsp(&sps[1..])).expect("the SPS parses");
         let (profile, depth) = if ten { (110, 10) } else { (100, 8) };
         assert_eq!(
-            (sps.profile_idc, sps.bit_depth_luma, sps.bit_depth_chroma, sps.chroma_format_idc),
+            (
+                sps.profile_idc,
+                sps.bit_depth_luma,
+                sps.bit_depth_chroma,
+                sps.chroma_format_idc
+            ),
             (profile, depth, depth, 1),
             "{codec:?} b={bframes} {format:?}: SPS profile / depth / chroma"
         );
@@ -257,18 +316,34 @@ fn round_trip_format(codec: VideoCodec, bframes: u8, format: PixelFormat) {
     // The decoder reorders B pictures back to display order, so the frames
     // come out 0..FRAMES whatever the coding order was.
     let frames = decode(codec, &packets);
-    assert_eq!(frames.len() as u64, FRAMES, "{codec:?} b={bframes}: every frame decodes");
+    assert_eq!(
+        frames.len() as u64,
+        FRAMES,
+        "{codec:?} b={bframes}: every frame decodes"
+    );
 
     // Sample thresholds for the two levels (40 and 210 at 8 bits, ×4 at 10).
     let (dark_max, bright_min) = if ten { (400u16, 600u16) } else { (100, 150) };
     for (i, f) in frames.iter().enumerate() {
-        assert_eq!((f.width, f.height), (W, H), "{codec:?}: frame {i} is cropped to size");
+        assert_eq!(
+            (f.width, f.height),
+            (W, H),
+            "{codec:?}: frame {i} is cropped to size"
+        );
         assert_eq!(f.format, format, "{codec:?}: frame {i} format");
         let w = W as usize;
         let luma: Vec<u16> = if ten {
-            f.data[..w * H as usize * 2].chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect()
+            f.data[..w * H as usize * 2]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|p| u16::from_le_bytes([p[0], p[1]]))
+                .collect()
         } else {
-            f.data[..w * H as usize].iter().map(|&v| u16::from(v)).collect()
+            f.data[..w * H as usize]
+                .iter()
+                .map(|&v| u16::from(v))
+                .collect()
         };
         // The edge for THIS display position — a frame decoded or reordered
         // into the wrong place lands on a neighbour's edge and fails here.
@@ -281,16 +356,23 @@ fn round_trip_format(codec: VideoCodec, bframes: u8, format: PixelFormat) {
             let bright = row[edge + 6];
             let inside_dark = row[4];
             let inside_bright = row[w - 5];
-            assert!(dark < dark_max && bright > bright_min,
-                "{codec:?} b={bframes}: frame {i} row {y}: edge not at x={edge} (dark={dark}, bright={bright})");
-            assert!(inside_dark < dark_max && inside_bright > bright_min,
-                "{codec:?}: frame {i} row {y}: plane sheared (left={inside_dark}, right={inside_bright})");
+            assert!(
+                dark < dark_max && bright > bright_min,
+                "{codec:?} b={bframes}: frame {i} row {y}: edge not at x={edge} (dark={dark}, bright={bright})"
+            );
+            assert!(
+                inside_dark < dark_max && inside_bright > bright_min,
+                "{codec:?}: frame {i} row {y}: plane sheared (left={inside_dark}, right={inside_bright})"
+            );
             odd_low_bits += row.iter().filter(|&&v| v & 3 != 0).count();
         }
         // A 10-bit picture coded at 8 bits and shifted up has zero low bits
         // everywhere; the source has them set on every sample.
         if ten {
-            assert!(odd_low_bits > 0, "{codec:?} b={bframes}: frame {i}: no sample carries low bits — narrowed to 8-bit?");
+            assert!(
+                odd_low_bits > 0,
+                "{codec:?} b={bframes}: frame {i}: no sample carries low bits — narrowed to 8-bit?"
+            );
         }
     }
 }
@@ -332,7 +414,14 @@ fn edge_frame_10(pts: u64) -> VideoFrame {
     for _ in 0..2 * cw * ch {
         data.extend_from_slice(&512u16.to_le_bytes());
     }
-    VideoFrame::new(data.into(), W, H, PixelFormat::Yuv420p10le, ColorSpace::Bt709, pts)
+    VideoFrame::new(
+        data.into(),
+        W,
+        H,
+        PixelFormat::Yuv420p10le,
+        ColorSpace::Bt709,
+        pts,
+    )
 }
 
 /// H.265 Main 10 through the native pair: 10-bit in, 10-bit out, the edge
@@ -341,11 +430,15 @@ fn edge_frame_10(pts: u64) -> VideoFrame {
 #[test]
 fn h265_ten_bit_round_trips_through_the_native_pair() {
     let codec = VideoCodec::H265;
-    let cfg = EncoderConfig { pixel_format: PixelFormat::Yuv420p10le, ..encoder_config(codec) };
+    let cfg = EncoderConfig {
+        pixel_format: PixelFormat::Yuv420p10le,
+        ..encoder_config(codec)
+    };
     let mut enc = H26xEncoder::new(cfg).expect("build the 10-bit software encoder");
     let mut packets = Vec::new();
     for pts in 0..FRAMES {
-        enc.send_frame(&edge_frame_10(pts)).expect("send a 10-bit frame");
+        enc.send_frame(&edge_frame_10(pts))
+            .expect("send a 10-bit frame");
         while let Some(p) = enc.receive_packet().expect("receive") {
             packets.push(p);
         }
@@ -359,23 +452,34 @@ fn h265_ten_bit_round_trips_through_the_native_pair() {
     let frames = decode(codec, &packets);
     assert_eq!(frames.len() as u64, FRAMES, "every 10-bit frame decodes");
     for (i, f) in frames.iter().enumerate() {
-        assert_eq!(f.format, PixelFormat::Yuv420p10le, "frame {i} comes back as 10-bit");
+        assert_eq!(
+            f.format,
+            PixelFormat::Yuv420p10le,
+            "frame {i} comes back as 10-bit"
+        );
         let w = W as usize;
         let luma: Vec<u16> = f.data[..w * H as usize * 2]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|p| u16::from_le_bytes([p[0], p[1]]))
             .collect();
         let edge = edge_x(i as u64);
         let mut odd_low_bits = 0usize;
         for (y, row) in luma.chunks_exact(w).enumerate() {
             let (dark, bright) = (row[edge - 6], row[edge + 6]);
-            assert!(dark < 400 && bright > 600,
-                "frame {i} row {y}: 10-bit edge not at x={edge} (dark={dark}, bright={bright})");
+            assert!(
+                dark < 400 && bright > 600,
+                "frame {i} row {y}: 10-bit edge not at x={edge} (dark={dark}, bright={bright})"
+            );
             odd_low_bits += row.iter().filter(|&&v| v & 3 != 0).count();
         }
         // A picture that had been coded at 8 bits and shifted up would have
         // zero low bits everywhere; the source has them set on every sample.
-        assert!(odd_low_bits > 0, "frame {i}: no sample carries low bits — narrowed to 8-bit?");
+        assert!(
+            odd_low_bits > 0,
+            "frame {i}: no sample carries low bits — narrowed to 8-bit?"
+        );
     }
 }
 
@@ -401,15 +505,25 @@ fn h264_ten_bit_round_trips_with_b_pictures() {
 fn a_format_the_tier_does_not_take_is_refused_by_name() {
     for codec in [VideoCodec::H264, VideoCodec::H265] {
         for format in [PixelFormat::Yuv420p12le, PixelFormat::Yuv422p10le] {
-            let cfg = EncoderConfig { pixel_format: format, ..encoder_config(codec) };
-            let err = H26xEncoder::new(cfg).err().unwrap_or_else(|| panic!("{codec:?} {format:?} must be refused"));
-            assert!(err.to_string().contains("yuv420p10le"), "{codec:?} {format:?}: {err}");
+            let cfg = EncoderConfig {
+                pixel_format: format,
+                ..encoder_config(codec)
+            };
+            let err = H26xEncoder::new(cfg)
+                .err()
+                .unwrap_or_else(|| panic!("{codec:?} {format:?} must be refused"));
+            assert!(
+                err.to_string().contains("yuv420p10le"),
+                "{codec:?} {format:?}: {err}"
+            );
         }
     }
 }
 
 #[test]
 fn av1_is_not_this_tier() {
-    let err = H26xEncoder::new(encoder_config(VideoCodec::Av1)).err().expect("AV1 refused");
+    let err = H26xEncoder::new(encoder_config(VideoCodec::Av1))
+        .err()
+        .expect("AV1 refused");
     assert!(err.to_string().contains("H.264 and H.265"), "{err}");
 }

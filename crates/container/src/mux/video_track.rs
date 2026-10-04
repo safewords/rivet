@@ -1,6 +1,6 @@
+use super::boxes::{BoxBuilder, parse_seq_header_params, write_unity_matrix};
+use super::sample_table::{build_co64, build_stco, build_stsc, build_stsz};
 use frame::ColorMetadata;
-use super::boxes::{BoxBuilder, write_unity_matrix, parse_seq_header_params};
-use super::sample_table::{build_stsc, build_stsz, build_stco, build_co64};
 
 // ---- Video trak / mdia / minf / stbl / stsd -----------------------------------
 
@@ -614,7 +614,7 @@ pub(crate) fn build_avcc(sps: &[Vec<u8>], pps: &[Vec<u8>]) -> Vec<u8> {
         profile,
         compat,
         level,
-        0xFF,                             // reserved(6)=1 | lengthSizeMinusOne = 3
+        0xFF,                            // reserved(6)=1 | lengthSizeMinusOne = 3
         0xE0 | (sps.len() as u8 & 0x1F), // reserved(3)=1 | numOfSPS
     ];
     for s in sps {
@@ -665,7 +665,12 @@ fn avc_sps_format(sps_nal: &[u8]) -> Option<(u8, u8, u8)> {
 /// `complete` is each array's `array_completeness`: every set of the kind is
 /// in the array and none in the stream. `hvc1` requires it (§8.4.1.1.1);
 /// `hev1`, whose sets may travel in band, writes 0.
-pub(crate) fn build_hvcc(vps: &[Vec<u8>], sps: &[Vec<u8>], pps: &[Vec<u8>], complete: bool) -> Vec<u8> {
+pub(crate) fn build_hvcc(
+    vps: &[Vec<u8>],
+    sps: &[Vec<u8>],
+    pps: &[Vec<u8>],
+    complete: bool,
+) -> Vec<u8> {
     let mut ptl = [0u8; 12];
     // Bit depth (minus 8) + chroma format parsed from the SPS — 0/1 for Main
     // 4:2:0 8-bit, 2/1 for Main 10 (10-bit 4:2:0). The hvcC carries these

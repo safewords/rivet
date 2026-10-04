@@ -15,7 +15,14 @@ pub(super) fn apply(frame: &VideoFrame) -> Result<VideoFrame> {
     let mut vv = v.to_vec();
     fill(&mut uu, &neutral);
     fill(&mut vv, &neutral);
-    Ok(assemble(frame, frame.width, frame.height, y.to_vec(), uu, vv))
+    Ok(assemble(
+        frame,
+        frame.width,
+        frame.height,
+        y.to_vec(),
+        uu,
+        vv,
+    ))
 }
 
 /// Overwrite `buf` with repeats of `sample` (one chroma value per sample slot).

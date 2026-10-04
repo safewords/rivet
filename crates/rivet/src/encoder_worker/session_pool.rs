@@ -116,7 +116,12 @@ impl EncoderSessionPool {
     /// A pool that builds through `builder`. For tests, and for callers
     /// that pin a backend by name.
     pub fn with_builder(builder: Box<EncoderBuilder>) -> Self {
-        Self { slot: None, builder, stats: PoolStats::default(), reuse: true }
+        Self {
+            slot: None,
+            builder,
+            stats: PoolStats::default(),
+            reuse: true,
+        }
     }
 
     /// The same pool with reuse switched off: the control path, for a
@@ -202,7 +207,10 @@ impl EncoderSessionPool {
     /// `acquire`, so nothing is lost).
     pub fn release(&mut self, config: &EncoderConfig, encoder: Box<dyn Encoder>) {
         if self.reuse {
-            self.slot = Some(Pooled { config: config.clone(), encoder });
+            self.slot = Some(Pooled {
+                config: config.clone(),
+                encoder,
+            });
         }
         // Otherwise dropped here: the control path builds every chunk.
     }
@@ -220,7 +228,10 @@ impl EncoderSessionPool {
 
 /// The parts of a configuration that tell two rungs apart, for the log.
 fn describe(c: &EncoderConfig) -> String {
-    format!("{:?} {}x{} gpu={:?}", c.codec, c.width, c.height, c.gpu_index)
+    format!(
+        "{:?} {}x{} gpu={:?}",
+        c.codec, c.width, c.height, c.gpu_index
+    )
 }
 
 #[cfg(test)]
@@ -272,13 +283,20 @@ mod tests {
         let (b, r) = (Arc::clone(&built), Arc::clone(&resets));
         let pool = EncoderSessionPool::with_builder(Box::new(move |_, _| {
             b.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::new(Fake { resets: Arc::clone(&r), reset }) as Box<dyn Encoder>)
+            Ok(Box::new(Fake {
+                resets: Arc::clone(&r),
+                reset,
+            }) as Box<dyn Encoder>)
         }));
         (pool, built, resets)
     }
 
     fn config(width: u32) -> EncoderConfig {
-        EncoderConfig { width, height: 16, ..EncoderConfig::default() }
+        EncoderConfig {
+            width,
+            height: 16,
+            ..EncoderConfig::default()
+        }
     }
 
     #[test]
@@ -289,9 +307,24 @@ mod tests {
         assert!(pool.is_empty(), "acquire hands the session out");
         pool.release(&a, enc);
         let _enc = pool.acquire(&a, None).unwrap();
-        assert_eq!(built.load(Ordering::SeqCst), 1, "one construction for two chunks");
-        assert_eq!(resets.load(Ordering::SeqCst), 1, "the reuse went through reset");
-        assert_eq!(pool.stats(), PoolStats { built: 1, reused: 1, ..Default::default() });
+        assert_eq!(
+            built.load(Ordering::SeqCst),
+            1,
+            "one construction for two chunks"
+        );
+        assert_eq!(
+            resets.load(Ordering::SeqCst),
+            1,
+            "the reuse went through reset"
+        );
+        assert_eq!(
+            pool.stats(),
+            PoolStats {
+                built: 1,
+                reused: 1,
+                ..Default::default()
+            }
+        );
     }
 
     #[test]
@@ -302,8 +335,19 @@ mod tests {
         pool.release(&a, enc);
         let _enc = pool.acquire(&b, None).unwrap();
         assert_eq!(built.load(Ordering::SeqCst), 2);
-        assert_eq!(resets.load(Ordering::SeqCst), 0, "an evicted session is not reset");
-        assert_eq!(pool.stats(), PoolStats { built: 2, evicted: 1, ..Default::default() });
+        assert_eq!(
+            resets.load(Ordering::SeqCst),
+            0,
+            "an evicted session is not reset"
+        );
+        assert_eq!(
+            pool.stats(),
+            PoolStats {
+                built: 2,
+                evicted: 1,
+                ..Default::default()
+            }
+        );
     }
 
     #[test]
@@ -314,8 +358,19 @@ mod tests {
             let enc = pool.acquire(&a, None).unwrap();
             pool.release(&a, enc);
         }
-        assert_eq!(built.load(Ordering::SeqCst), 3, "no reset path means one build per chunk");
-        assert_eq!(pool.stats(), PoolStats { built: 3, reset_unsupported: 2, ..Default::default() });
+        assert_eq!(
+            built.load(Ordering::SeqCst),
+            3,
+            "no reset path means one build per chunk"
+        );
+        assert_eq!(
+            pool.stats(),
+            PoolStats {
+                built: 3,
+                reset_unsupported: 2,
+                ..Default::default()
+            }
+        );
     }
 
     #[test]
@@ -326,7 +381,14 @@ mod tests {
         pool.release(&a, enc);
         let _enc = pool.acquire(&a, None).unwrap();
         assert_eq!(built.load(Ordering::SeqCst), 2);
-        assert_eq!(pool.stats(), PoolStats { built: 2, reset_failed: 1, ..Default::default() });
+        assert_eq!(
+            pool.stats(),
+            PoolStats {
+                built: 2,
+                reset_failed: 1,
+                ..Default::default()
+            }
+        );
     }
 
     #[test]
@@ -355,17 +417,27 @@ mod tests {
         }
         assert_eq!(built.load(Ordering::SeqCst), 3);
         assert_eq!(resets.load(Ordering::SeqCst), 0);
-        assert_eq!(pool.stats(), PoolStats { built: 3, ..Default::default() });
+        assert_eq!(
+            pool.stats(),
+            PoolStats {
+                built: 3,
+                ..Default::default()
+            }
+        );
     }
 
     #[test]
     fn the_builder_error_names_the_chunk() {
-        let mut pool = EncoderSessionPool::with_builder(Box::new(|_, _| anyhow::bail!("no silicon")));
+        let mut pool =
+            EncoderSessionPool::with_builder(Box::new(|_, _| anyhow::bail!("no silicon")));
         let err = match pool.acquire(&config(16), None) {
             Ok(_) => panic!("a builder that fails must fail the acquire"),
             Err(e) => e,
         };
-        assert!(format!("{err:#}").contains("creating encoder for chunk"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("creating encoder for chunk"),
+            "{err:#}"
+        );
         assert!(format!("{err:#}").contains("no silicon"), "{err:#}");
         assert_eq!(pool.stats().built, 0, "a failed build is not a build");
     }

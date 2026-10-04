@@ -74,7 +74,9 @@ impl Layout {
         } else if b == 6 {
             Layout::EndToEnd
         } else {
-            bail!("can't tell the layout of a {shape:?} output from a model of {classes} classes (pass the class names)")
+            bail!(
+                "can't tell the layout of a {shape:?} output from a model of {classes} classes (pass the class names)"
+            )
         })
     }
 
@@ -96,7 +98,9 @@ impl std::str::FromStr for Layout {
             "anchors-transposed" => Layout::Anchors { transposed: true },
             "anchors-objectness" | "v5" | "v7" => Layout::AnchorsObjectness,
             "end-to-end" | "v10" | "e2e" => Layout::EndToEnd,
-            other => bail!("unknown layout `{other}` (anchors, anchors-transposed, anchors-objectness, end-to-end)"),
+            other => bail!(
+                "unknown layout `{other}` (anchors, anchors-transposed, anchors-objectness, end-to-end)"
+            ),
         })
     }
 }
@@ -104,15 +108,32 @@ impl std::str::FromStr for Layout {
 /// The detections in one output tensor of `shape` (`data` row-major) at or
 /// over `min_score`, in the model's input pixels. Not yet suppressed, except
 /// what an end-to-end model suppressed itself.
-pub fn decode(layout: Layout, shape: &[i64], data: &[f32], classes: usize, min_score: f32) -> Result<Vec<Detection>> {
+pub fn decode(
+    layout: Layout,
+    shape: &[i64],
+    data: &[f32],
+    classes: usize,
+    min_score: f32,
+) -> Result<Vec<Detection>> {
     let (a, b) = match shape {
         [1, a, b] => (*a as usize, *b as usize),
         _ => bail!("a YOLO output is [1, a, b]; got {shape:?}"),
     };
     if data.len() < a * b {
-        bail!("the output holds {} values; {shape:?} is {}", data.len(), a * b);
+        bail!(
+            "the output holds {} values; {shape:?} is {}",
+            data.len(),
+            a * b
+        );
     }
-    let centred = |class, score, cx: f32, cy: f32, w: f32, h: f32| Detection { class, score, x: cx - w / 2.0, y: cy - h / 2.0, w, h };
+    let centred = |class, score, cx: f32, cy: f32, w: f32, h: f32| Detection {
+        class,
+        score,
+        x: cx - w / 2.0,
+        y: cy - h / 2.0,
+        w,
+        h,
+    };
     let mut out = Vec::new();
     match layout {
         Layout::Anchors { transposed } => {
@@ -125,7 +146,14 @@ pub fn decode(layout: Layout, shape: &[i64], data: &[f32], classes: usize, min_s
             for i in 0..anchors {
                 let (class, score) = best((0..classes).map(|c| at(i, 4 + c)));
                 if score >= min_score {
-                    out.push(centred(class, score, at(i, 0), at(i, 1), at(i, 2), at(i, 3)));
+                    out.push(centred(
+                        class,
+                        score,
+                        at(i, 0),
+                        at(i, 1),
+                        at(i, 2),
+                        at(i, 3),
+                    ));
                 }
             }
         }
@@ -147,7 +175,14 @@ pub fn decode(layout: Layout, shape: &[i64], data: &[f32], classes: usize, min_s
                 let score = row[4];
                 if score >= min_score {
                     let (x1, y1, x2, y2) = (row[0], row[1], row[2], row[3]);
-                    out.push(Detection { class: row[5].max(0.0) as usize, score, x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
+                    out.push(Detection {
+                        class: row[5].max(0.0) as usize,
+                        score,
+                        x: x1,
+                        y: y1,
+                        w: x2 - x1,
+                        h: y2 - y1,
+                    });
                 }
             }
         }
@@ -157,7 +192,10 @@ pub fn decode(layout: Layout, shape: &[i64], data: &[f32], classes: usize, min_s
 
 /// The index and value of the largest score.
 fn best(scores: impl Iterator<Item = f32>) -> (usize, f32) {
-    scores.enumerate().fold((0, f32::MIN), |acc, (i, s)| if s > acc.1 { (i, s) } else { acc })
+    scores.enumerate().fold(
+        (0, f32::MIN),
+        |acc, (i, s)| if s > acc.1 { (i, s) } else { acc },
+    )
 }
 
 /// Greedy non-maximum suppression, class by class: the highest-scoring box of
@@ -199,6 +237,7 @@ pub fn parse_names(metadata: &str) -> Option<Vec<String>> {
 }
 
 /// The 80 COCO classes every stock YOLO detector is trained on, in order.
+#[rustfmt::skip]
 pub const COCO: [&str; 80] = [
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
     "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
@@ -216,14 +255,30 @@ mod tests {
     use super::*;
 
     fn det(class: usize, score: f32, x: f32, y: f32, w: f32, h: f32) -> Detection {
-        Detection { class, score, x, y, w, h }
+        Detection {
+            class,
+            score,
+            x,
+            y,
+            w,
+            h,
+        }
     }
 
     #[test]
     fn infers_each_layout() {
-        assert_eq!(Layout::infer(&[1, 84, 8400], 80).unwrap(), Layout::Anchors { transposed: false });
-        assert_eq!(Layout::infer(&[1, 8400, 84], 80).unwrap(), Layout::Anchors { transposed: true });
-        assert_eq!(Layout::infer(&[1, 25200, 85], 80).unwrap(), Layout::AnchorsObjectness);
+        assert_eq!(
+            Layout::infer(&[1, 84, 8400], 80).unwrap(),
+            Layout::Anchors { transposed: false }
+        );
+        assert_eq!(
+            Layout::infer(&[1, 8400, 84], 80).unwrap(),
+            Layout::Anchors { transposed: true }
+        );
+        assert_eq!(
+            Layout::infer(&[1, 25200, 85], 80).unwrap(),
+            Layout::AnchorsObjectness
+        );
         assert_eq!(Layout::infer(&[1, 300, 6], 80).unwrap(), Layout::EndToEnd);
         assert!(Layout::infer(&[1, 3, 640, 640], 80).is_err());
     }
@@ -240,29 +295,62 @@ mod tests {
               0.9,  0.1,  0.2,   // class 0
               0.05, 0.2,  0.7,   // class 1
         ];
-        let got = decode(Layout::Anchors { transposed: false }, &[1, 6, 3], &data, 2, 0.25).unwrap();
-        assert_eq!(got, vec![det(0, 0.9, 90.0, 80.0, 20.0, 40.0), det(1, 0.7, 45.0, 45.0, 10.0, 10.0)]);
+        let got = decode(
+            Layout::Anchors { transposed: false },
+            &[1, 6, 3],
+            &data,
+            2,
+            0.25,
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            vec![
+                det(0, 0.9, 90.0, 80.0, 20.0, 40.0),
+                det(1, 0.7, 45.0, 45.0, 10.0, 10.0)
+            ]
+        );
     }
 
     #[test]
     fn transposed_anchors_decode_the_same() {
-        let rows = [[100.0, 100.0, 20.0, 40.0, 0.9, 0.05], [50.0, 50.0, 10.0, 10.0, 0.2, 0.7]];
+        let rows = [
+            [100.0, 100.0, 20.0, 40.0, 0.9, 0.05],
+            [50.0, 50.0, 10.0, 10.0, 0.2, 0.7],
+        ];
         let data: Vec<f32> = rows.iter().flatten().copied().collect();
-        let got = decode(Layout::Anchors { transposed: true }, &[1, 2, 6], &data, 2, 0.25).unwrap();
-        assert_eq!(got, vec![det(0, 0.9, 90.0, 80.0, 20.0, 40.0), det(1, 0.7, 45.0, 45.0, 10.0, 10.0)]);
+        let got = decode(
+            Layout::Anchors { transposed: true },
+            &[1, 2, 6],
+            &data,
+            2,
+            0.25,
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            vec![
+                det(0, 0.9, 90.0, 80.0, 20.0, 40.0),
+                det(1, 0.7, 45.0, 45.0, 10.0, 10.0)
+            ]
+        );
     }
 
     #[test]
     fn objectness_scales_class_scores() {
         // [1, 2, 7]: cx cy w h obj c0 c1
-        let data = [10.0, 10.0, 4.0, 4.0, 0.5, 0.2, 0.8, 10.0, 10.0, 4.0, 4.0, 0.1, 1.0, 0.0];
+        let data = [
+            10.0, 10.0, 4.0, 4.0, 0.5, 0.2, 0.8, 10.0, 10.0, 4.0, 4.0, 0.1, 1.0, 0.0,
+        ];
         let got = decode(Layout::AnchorsObjectness, &[1, 2, 7], &data, 2, 0.25).unwrap();
         assert_eq!(got, vec![det(1, 0.4, 8.0, 8.0, 4.0, 4.0)]);
     }
 
     #[test]
     fn end_to_end_rows_are_corners() {
-        let data = [10.0, 20.0, 30.0, 60.0, 0.8, 3.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0];
+        let data = [
+            10.0, 20.0, 30.0, 60.0, 0.8, 3.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0,
+        ];
         let got = decode(Layout::EndToEnd, &[1, 2, 6], &data, 80, 0.25).unwrap();
         assert_eq!(got, vec![det(3, 0.8, 10.0, 20.0, 20.0, 40.0)]);
     }

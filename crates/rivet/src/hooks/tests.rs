@@ -24,7 +24,10 @@ struct Counter {
 
 impl Counter {
     fn with_sampling(sampling: FrameSampling) -> Self {
-        Self { sampling: Some(sampling), ..Self::default() }
+        Self {
+            sampling: Some(sampling),
+            ..Self::default()
+        }
     }
     fn seen(&self) -> Vec<(Stage, u64)> {
         self.seen.lock().unwrap().clone()
@@ -91,7 +94,14 @@ fn yuv_frame(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         }
     }
     data.resize((w * h + 2 * (w / 2) * (h / 2)) as usize, 128);
-    VideoFrame::new(Bytes::from(data), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, 0)
+    VideoFrame::new(
+        Bytes::from(data),
+        w,
+        h,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        0,
+    )
 }
 
 fn artifact(kind: ArtifactKind, label: &str) -> ArtifactEvent {
@@ -108,7 +118,10 @@ fn artifact(kind: ArtifactKind, label: &str) -> ArtifactEvent {
 fn read_test_media(name: &str) -> Option<Bytes> {
     let dir = match std::env::var_os("RIVET_TEST_MEDIA") {
         Some(dir) => std::path::PathBuf::from(dir),
-        None => std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent()?.parent()?.join("test_media"),
+        None => std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()?
+            .parent()?
+            .join("test_media"),
     };
     std::fs::read(dir.join(name)).ok().map(Bytes::from)
 }
@@ -118,12 +131,19 @@ fn read_test_media(name: &str) -> Option<Bytes> {
 #[test]
 fn stage_lists_parse() {
     let set = StageSet::parse("source, decoded-frame+encoder_frame").unwrap();
-    assert!(set.contains(Stage::Source) && set.contains(Stage::DecodedFrame) && set.contains(Stage::EncoderFrame));
+    assert!(
+        set.contains(Stage::Source)
+            && set.contains(Stage::DecodedFrame)
+            && set.contains(Stage::EncoderFrame)
+    );
     assert!(!set.contains(Stage::Still));
     assert!(set.has_sampled());
     assert_eq!(StageSet::parse("all").unwrap(), StageSet::ALL);
     assert!(StageSet::ALL.iter().count() == Stage::ALL.len());
-    assert!(StageSet::parse("frame").is_err(), "frames are named by where they are hooked");
+    assert!(
+        StageSet::parse("frame").is_err(),
+        "frames are named by where they are hooked"
+    );
     assert!(StageSet::parse("").is_err());
 }
 
@@ -140,7 +160,10 @@ fn interval_sampling_takes_the_first_frame_of_each_interval() {
 #[test]
 fn frame_stride_and_all() {
     let s = FrameSampling::every_frames(10);
-    assert_eq!((0..35).filter(|&i| s.selects(i, 30.0)).collect::<Vec<_>>(), vec![0, 10, 20, 30]);
+    assert_eq!(
+        (0..35).filter(|&i| s.selects(i, 30.0)).collect::<Vec<_>>(),
+        vec![0, 10, 20, 30]
+    );
     assert!((0..10).all(|i| FrameSampling::all().selects(i, 30.0)));
 }
 
@@ -152,8 +175,14 @@ fn digests_match_the_standard_vectors() {
         DigestAlgorithm::Sha256.hex(b"abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
-    assert_eq!(DigestAlgorithm::Sha1.hex(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
-    assert_eq!(DigestAlgorithm::Md5.hex(b"abc"), "900150983cd24fb0d6963f7d28e17f72");
+    assert_eq!(
+        DigestAlgorithm::Sha1.hex(b"abc"),
+        "a9993e364706816aba3e25717850c26c9cd0d89d"
+    );
+    assert_eq!(
+        DigestAlgorithm::Md5.hex(b"abc"),
+        "900150983cd24fb0d6963f7d28e17f72"
+    );
 }
 
 #[test]
@@ -161,7 +190,11 @@ fn perceptual_hashes_survive_scaling_and_tell_pictures_apart() {
     let picture = |w: u32, h: u32| {
         yuv_frame(w, h, move |x, y| {
             let (fx, fy) = (x as f32 / w as f32, y as f32 / h as f32);
-            if fx > 0.6 && fy < 0.3 { 235 } else { (16.0 + 200.0 * (fx + fy) / 2.0) as u8 }
+            if fx > 0.6 && fy < 0.3 {
+                235
+            } else {
+                (16.0 + 200.0 * (fx + fy) / 2.0) as u8
+            }
         })
     };
     let mirrored = |w: u32, h: u32| {
@@ -173,8 +206,14 @@ fn perceptual_hashes_survive_scaling_and_tell_pictures_apart() {
         let big = algo.hash_frame(&picture(640, 360)).unwrap();
         let small = algo.hash_frame(&picture(160, 90)).unwrap();
         let other = algo.hash_frame(&mirrored(640, 360)).unwrap();
-        assert!(phash::hamming(big, small) <= 6, "{algo}: {big:016x} vs scaled {small:016x}");
-        assert!(phash::hamming(big, other) >= 12, "{algo}: {big:016x} vs mirrored {other:016x}");
+        assert!(
+            phash::hamming(big, small) <= 6,
+            "{algo}: {big:016x} vs scaled {small:016x}"
+        );
+        assert!(
+            phash::hamming(big, other) >= 12,
+            "{algo}: {big:016x} vs mirrored {other:016x}"
+        );
     }
 }
 
@@ -189,7 +228,10 @@ fn hash_hex_round_trips() {
 #[test]
 fn luma_and_rgb_views_of_each_layout() {
     let f = yuv_frame(4, 2, |x, _| if x < 2 { 16 } else { 235 });
-    assert_eq!(frame::luma8(&f).unwrap(), vec![16, 16, 235, 235, 16, 16, 235, 235]);
+    assert_eq!(
+        frame::luma8(&f).unwrap(),
+        vec![16, 16, 235, 235, 16, 16, 235, 235]
+    );
     let rgb = frame::rgb8(&f).unwrap();
     assert_eq!(&rgb[..3], &[0, 0, 0]);
     assert_eq!(&rgb[6..9], &[255, 255, 255]);
@@ -198,7 +240,14 @@ fn luma_and_rgb_views_of_each_layout() {
     for v in [64u16, 940, 64, 940, 512, 512] {
         data.extend_from_slice(&v.to_le_bytes());
     }
-    let f10 = VideoFrame::new(Bytes::from(data), 2, 2, PixelFormat::Yuv420p10le, ColorSpace::Bt709, 0);
+    let f10 = VideoFrame::new(
+        Bytes::from(data),
+        2,
+        2,
+        PixelFormat::Yuv420p10le,
+        ColorSpace::Bt709,
+        0,
+    );
     assert_eq!(frame::luma8(&f10).unwrap(), vec![16, 235, 16, 235]);
 
     let rgba = VideoFrame::new(
@@ -215,8 +264,22 @@ fn luma_and_rgb_views_of_each_layout() {
     let ppm = frame::encode(&f, FrameFormat::Ppm).unwrap();
     assert!(ppm.starts_with(b"P6\n4 2\n255\n"));
     assert_eq!(ppm.len(), b"P6\n4 2\n255\n".len() + 4 * 2 * 3);
-    assert!(frame::encode(&f, FrameFormat::Pgm).unwrap().starts_with(b"P5\n4 2\n255\n"));
-    assert!(frame::luma8(&VideoFrame::new(Bytes::new(), 4, 4, PixelFormat::Yuv420p, ColorSpace::Bt709, 0)).is_err());
+    assert!(
+        frame::encode(&f, FrameFormat::Pgm)
+            .unwrap()
+            .starts_with(b"P5\n4 2\n255\n")
+    );
+    assert!(
+        frame::luma8(&VideoFrame::new(
+            Bytes::new(),
+            4,
+            4,
+            PixelFormat::Yuv420p,
+            ColorSpace::Bt709,
+            0
+        ))
+        .is_err()
+    );
 }
 
 // -- kinds: each hooks in at its own point only ------------------------------
@@ -242,7 +305,9 @@ fn each_kind_is_handed_only_its_own_events() {
     hooks.emit_decoded_frame(0, 3, 30.0, &f).unwrap();
     hooks.emit_encoder_frame(0, 4, 30.0, &f).unwrap();
     hooks.emit_still(0, 5, 0.0, &f, false).unwrap();
-    hooks.emit_artifact(artifact(ArtifactKind::Video, "720p")).unwrap();
+    hooks
+        .emit_artifact(artifact(ArtifactKind::Video, "720p"))
+        .unwrap();
     hooks.emit_completed(1).unwrap();
 
     assert_eq!(src.seen(), vec![(Stage::Source, 0)]);
@@ -257,30 +322,55 @@ fn each_kind_is_handed_only_its_own_events() {
     // The report and the listing say which kind each hook is.
     let report = hooks.report();
     assert_eq!(report.by_kind(HookKind::DecodedFrame).count(), 1);
-    assert_eq!(report.by_hook("enc").next().unwrap().kind, HookKind::EncoderFrame);
+    assert_eq!(
+        report.by_hook("enc").next().unwrap().kind,
+        HookKind::EncoderFrame
+    );
     let listed = hooks.describe();
     let kinds: Vec<&str> = listed.iter().map(|h| h["kind"].as_str().unwrap()).collect();
     assert_eq!(
         kinds,
-        ["source", "probe", "decoded-frame", "encoder-frame", "still", "artifact", "completed", "failed"]
+        [
+            "source",
+            "probe",
+            "decoded-frame",
+            "encoder-frame",
+            "still",
+            "artifact",
+            "completed",
+            "failed"
+        ]
     );
     assert_eq!(listed[0]["stages"], serde_json::json!(["source"]));
     assert!(listed[0]["frames"].is_null());
-    assert_eq!(listed[2]["frames"]["every_seconds"], serde_json::Value::Null);
+    assert_eq!(
+        listed[2]["frames"]["every_seconds"],
+        serde_json::Value::Null
+    );
 }
 
 #[test]
 fn artifact_hooks_get_only_the_kinds_they_accept() {
     let hooks = Hooks::new()
-        .artifacts("video-only", ArtifactDigest::new(&[DigestAlgorithm::Md5]).kinds(&[ArtifactKind::Video]))
+        .artifacts(
+            "video-only",
+            ArtifactDigest::new(&[DigestAlgorithm::Md5]).kinds(&[ArtifactKind::Video]),
+        )
         .artifacts("everything", ArtifactDigest::new(&[DigestAlgorithm::Md5]))
         .session("j", JobKind::Transcode);
-    hooks.emit_artifact(artifact(ArtifactKind::Video, "720p")).unwrap();
-    hooks.emit_artifact(artifact(ArtifactKind::Playlist, "master")).unwrap();
+    hooks
+        .emit_artifact(artifact(ArtifactKind::Video, "720p"))
+        .unwrap();
+    hooks
+        .emit_artifact(artifact(ArtifactKind::Playlist, "master"))
+        .unwrap();
     let r = hooks.report();
     assert_eq!(r.by_hook("video-only").count(), 1);
     assert_eq!(r.by_hook("everything").count(), 2);
-    assert_eq!(hooks.describe()[0]["artifact_kinds"], serde_json::json!(["video"]));
+    assert_eq!(
+        hooks.describe()[0]["artifact_kinds"],
+        serde_json::json!(["video"])
+    );
 }
 
 // -- sessions, verdicts, policies --------------------------------------------
@@ -288,13 +378,29 @@ fn artifact_hooks_get_only_the_kinds_they_accept() {
 #[test]
 fn a_rejection_is_the_error_and_is_reported() {
     let hooks = Hooks::new()
-        .source("annotate", Src(|e: &SourceEvent| HookOutcome::proceed().annotate("bytes", e.bytes.len())))
-        .source("gate", Src(|_: &SourceEvent| HookOutcome::reject("not today")))
-        .source("after", Src(|_: &SourceEvent| -> HookOutcome { panic!("a blocking rejection stops the stage") }))
+        .source(
+            "annotate",
+            Src(|e: &SourceEvent| HookOutcome::proceed().annotate("bytes", e.bytes.len())),
+        )
+        .source(
+            "gate",
+            Src(|_: &SourceEvent| HookOutcome::reject("not today")),
+        )
+        .source(
+            "after",
+            Src(|_: &SourceEvent| -> HookOutcome {
+                panic!("a blocking rejection stops the stage")
+            }),
+        )
         .session("job-1", JobKind::Transcode);
-    let err = hooks.emit_source(0, &Bytes::from_static(b"hello")).unwrap_err();
+    let err = hooks
+        .emit_source(0, &Bytes::from_static(b"hello"))
+        .unwrap_err();
     let rejection = rejection_of(&err).expect("the error is the rejection");
-    assert_eq!((rejection.hook.as_str(), rejection.kind, rejection.stage), ("gate", HookKind::Source, Stage::Source));
+    assert_eq!(
+        (rejection.hook.as_str(), rejection.kind, rejection.stage),
+        ("gate", HookKind::Source, Stage::Source)
+    );
     assert_eq!(rejection.reason, "not today");
     assert!(err.to_string().contains("rejected by source hook `gate`"));
 
@@ -302,7 +408,10 @@ fn a_rejection_is_the_error_and_is_reported() {
     assert_eq!(report.job_id.as_deref(), Some("job-1"));
     assert!(report.is_rejected());
     assert_eq!(report.records.len(), 2);
-    assert_eq!(report.annotations("bytes").next().unwrap().1, &serde_json::json!(5));
+    assert_eq!(
+        report.annotations("bytes").next().unwrap().1,
+        &serde_json::json!(5)
+    );
     // Every later stage stops on the same rejection.
     assert!(rejection_of(&hooks.emit_probe(0, MediaSummary::default()).unwrap_err()).is_some());
     assert_eq!(report.to_json()["rejection"]["kind"], "source");
@@ -316,14 +425,25 @@ fn a_failing_hook_fails_open_or_closed_as_configured() {
             anyhow::bail!("unreachable service")
         }
     }
-    let open = Hooks::new().source("broken", Broken).session("j", JobKind::Transcode);
+    let open = Hooks::new()
+        .source("broken", Broken)
+        .session("j", JobKind::Transcode);
     open.emit_source(0, &Bytes::from_static(b"x")).unwrap();
     assert_eq!(open.report().errors().count(), 1);
     assert!(!open.report().is_rejected());
 
-    let closed = Hooks::new().source_with("broken", Broken, HookPolicy::default().fail_closed()).session("j", JobKind::Transcode);
-    let err = closed.emit_source(0, &Bytes::from_static(b"x")).unwrap_err();
-    assert!(rejection_of(&err).unwrap().reason.contains("unreachable service"));
+    let closed = Hooks::new()
+        .source_with("broken", Broken, HookPolicy::default().fail_closed())
+        .session("j", JobKind::Transcode);
+    let err = closed
+        .emit_source(0, &Bytes::from_static(b"x"))
+        .unwrap_err();
+    assert!(
+        rejection_of(&err)
+            .unwrap()
+            .reason
+            .contains("unreachable service")
+    );
 }
 
 #[test]
@@ -332,7 +452,9 @@ fn a_background_rejection_stops_the_job_by_completion() {
         std::thread::sleep(std::time::Duration::from_millis(50));
         HookOutcome::reject("found later")
     });
-    let hooks = Hooks::new().source_with("slow", slow, HookPolicy::background()).session("j", JobKind::Transcode);
+    let hooks = Hooks::new()
+        .source_with("slow", slow, HookPolicy::background())
+        .session("j", JobKind::Transcode);
     // The source stage does not wait for it ...
     hooks.emit_source(0, &Bytes::from_static(b"x")).unwrap();
     // ... completion does, and fails on it.
@@ -375,18 +497,34 @@ fn frame_kinds_sample_and_cap_independently() {
         hooks.emit_decoded_frame(0, i, 30.0, &f).unwrap();
         hooks.emit_encoder_frame(0, i, 30.0, &f).unwrap();
     }
-    assert_eq!(dec.seen().iter().map(|s| s.1).collect::<Vec<_>>(), vec![0, 1, 2]);
-    assert_eq!(enc.seen().iter().map(|s| s.1).collect::<Vec<_>>(), vec![0, 5, 10, 15]);
-    assert!(!hooks.frames_exhausted(), "the encoder-frame hook has no cap");
+    assert_eq!(
+        dec.seen().iter().map(|s| s.1).collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert_eq!(
+        enc.seen().iter().map(|s| s.1).collect::<Vec<_>>(),
+        vec![0, 5, 10, 15]
+    );
+    assert!(
+        !hooks.frames_exhausted(),
+        "the encoder-frame hook has no cap"
+    );
 }
 
 #[test]
 fn select_runs_required_hooks_and_named_optional_ones() {
     let all = Hooks::new()
         .source("always", Src(|_: &SourceEvent| HookOutcome::proceed()))
-        .source_with("extra", Src(|_: &SourceEvent| HookOutcome::proceed()), HookPolicy::default().optional());
+        .source_with(
+            "extra",
+            Src(|_: &SourceEvent| HookOutcome::proceed()),
+            HookPolicy::default().optional(),
+        );
     assert_eq!(all.select(&[]).unwrap().names(), vec!["always"]);
-    assert_eq!(all.select(&["extra".into()]).unwrap().names(), vec!["always", "extra"]);
+    assert_eq!(
+        all.select(&["extra".into()]).unwrap().names(),
+        vec!["always", "extra"]
+    );
     assert!(all.select(&["typo".into()]).is_err());
     assert_eq!(all.describe()[1]["required"], false);
 }
@@ -398,12 +536,15 @@ fn no_hooks_and_no_session_cost_nothing() {
     none.emit_completed(0).unwrap();
     assert!(none.report().is_empty());
     let unsessioned = Hooks::new().source("gate", Src(|_: &SourceEvent| HookOutcome::reject("no")));
-    unsessioned.emit_source(0, &Bytes::from_static(b"x")).unwrap();
+    unsessioned
+        .emit_source(0, &Bytes::from_static(b"x"))
+        .unwrap();
 }
 
 #[test]
 fn builtin_hooks_record_digests_and_fingerprints_where_registered() {
-    let fp = || PerceptualFingerprint::new(&PerceptualAlgorithm::ALL).sampling(FrameSampling::all());
+    let fp =
+        || PerceptualFingerprint::new(&PerceptualAlgorithm::ALL).sampling(FrameSampling::all());
     let hooks = Hooks::new()
         .source("source-digest", SourceDigest::new(&DigestAlgorithm::ALL))
         .decoded_frames("decoded-fp", fp())
@@ -420,7 +561,11 @@ fn builtin_hooks_record_digests_and_fingerprints_where_registered() {
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
     let stages: Vec<Stage> = r.annotations("phash").map(|(rec, _)| rec.stage).collect();
-    assert_eq!(stages, vec![Stage::DecodedFrame, Stage::Still], "no encoder-frame fingerprint was registered");
+    assert_eq!(
+        stages,
+        vec![Stage::DecodedFrame, Stage::Still],
+        "no encoder-frame fingerprint was registered"
+    );
     let (_, v) = r.annotations("dhash").next().unwrap();
     assert_eq!(v.as_str().unwrap().len(), 16);
 }
@@ -430,12 +575,20 @@ fn builtin_hooks_record_digests_and_fingerprints_where_registered() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_source_rejection_stops_run_job_before_anything_is_parsed() {
     let hooks = Hooks::new()
-        .source("gate", Src(|_: &SourceEvent| HookOutcome::reject("refused")))
+        .source(
+            "gate",
+            Src(|_: &SourceEvent| HookOutcome::reject("refused")),
+        )
         .session("j", JobKind::Transcode);
     let spec = crate::OutputSpec::default().with_hooks(hooks.clone());
-    let err = crate::job::run_job(Bytes::from_static(b"not media"), &spec, None, Arc::new(crate::progress::NullSink))
-        .await
-        .unwrap_err();
+    let err = crate::job::run_job(
+        Bytes::from_static(b"not media"),
+        &spec,
+        None,
+        Arc::new(crate::progress::NullSink),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(rejection_of(&err).unwrap().reason, "refused");
     assert!(hooks.report().is_rejected());
 }
@@ -450,12 +603,22 @@ async fn probe_hooks_see_the_demuxed_source() {
     impl ProbeHook for Gate {
         fn on_probe(&self, _: &HookContext, p: &ProbeEvent) -> Result<HookOutcome> {
             let m = &p.media;
-            Ok(HookOutcome::reject(format!("{} {}x{}", m.video_codec.as_deref().unwrap_or("?"), m.width, m.height)))
+            Ok(HookOutcome::reject(format!(
+                "{} {}x{}",
+                m.video_codec.as_deref().unwrap_or("?"),
+                m.width,
+                m.height
+            )))
         }
     }
-    let hooks = Hooks::new().probe("probe-gate", Gate).session("j", JobKind::Transcode);
-    let spec = crate::OutputSpec::single_file(vec![crate::Rung::new(640, 360)]).with_hooks(hooks.clone());
-    let err = crate::job::run_job(input, &spec, None, Arc::new(crate::progress::NullSink)).await.unwrap_err();
+    let hooks = Hooks::new()
+        .probe("probe-gate", Gate)
+        .session("j", JobKind::Transcode);
+    let spec =
+        crate::OutputSpec::single_file(vec![crate::Rung::new(640, 360)]).with_hooks(hooks.clone());
+    let err = crate::job::run_job(input, &spec, None, Arc::new(crate::progress::NullSink))
+        .await
+        .unwrap_err();
     let r = rejection_of(&err).unwrap_or_else(|| panic!("not a rejection: {err:#}"));
     assert_eq!(r.kind, HookKind::Probe);
     assert!(r.reason.starts_with("h264 "), "{}", r.reason);
@@ -478,7 +641,10 @@ fn the_decode_pump_feeds_decoded_and_encoder_frame_hooks_separately() {
         }
     }
     let hooks = Hooks::new()
-        .decoded_frames("source-fp", PerceptualFingerprint::new(&[PerceptualAlgorithm::PHash]))
+        .decoded_frames(
+            "source-fp",
+            PerceptualFingerprint::new(&[PerceptualAlgorithm::PHash]),
+        )
         .encoder_frames("encoder-format", EncoderFormat)
         .session("j", JobKind::Transcode);
     let demuxer = container::streaming::demux_streaming_shared(input.clone()).unwrap();
@@ -490,16 +656,32 @@ fn the_decode_pump_feeds_decoded_and_encoder_frame_hooks_separately() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let drain = rt.spawn(async move { while rx.recv().await.is_some() {} });
-    let frames = crate::decode_pump::run_shared_decode_pump_blocking(cfg, input, vec![tx], rt.handle().clone()).unwrap();
+    let frames = crate::decode_pump::run_shared_decode_pump_blocking(
+        cfg,
+        input,
+        vec![tx],
+        rt.handle().clone(),
+    )
+    .unwrap();
     rt.block_on(drain).unwrap();
 
     let report = hooks.report();
     let fps = header.info.frame_rate;
-    let expected = (0..frames).filter(|&i| FrameSampling::default().selects(i, fps)).count();
+    let expected = (0..frames)
+        .filter(|&i| FrameSampling::default().selects(i, fps))
+        .count();
     let hashed: Vec<&HookRecord> = report.by_hook("source-fp").collect();
     assert!(!hashed.is_empty());
-    assert_eq!(hashed.len(), expected, "one hash a second of {frames} frames at {fps}");
-    assert!(hashed.iter().all(|r| r.stage == Stage::DecodedFrame && r.annotation("phash").is_some()));
+    assert_eq!(
+        hashed.len(),
+        expected,
+        "one hash a second of {frames} frames at {fps}"
+    );
+    assert!(
+        hashed
+            .iter()
+            .all(|r| r.stage == Stage::DecodedFrame && r.annotation("phash").is_some())
+    );
     assert_eq!(report.by_hook("encoder-format").count(), 5);
     assert!(report.errors().next().is_none());
 }
@@ -507,7 +689,9 @@ fn the_decode_pump_feeds_decoded_and_encoder_frame_hooks_separately() {
 #[cfg(feature = "image")]
 #[test]
 fn the_image_job_runs_its_kinds() {
-    let rgba: Vec<u8> = (0..32u32).flat_map(|y| (0..48u32).flat_map(move |x| [(x * 5) as u8, (y * 7) as u8, 90, 255])).collect();
+    let rgba: Vec<u8> = (0..32u32)
+        .flat_map(|y| (0..48u32).flat_map(move |x| [(x * 5) as u8, (y * 7) as u8, 90, 255]))
+        .collect();
     let png = rpng::encode(&rpng::Image::from_rgba8(48, 32, rgba).unwrap()).unwrap();
     let all = Counter::default();
     let hooks = Hooks::new()
@@ -517,14 +701,36 @@ fn the_image_job_runs_its_kinds() {
         .stills("still", all.clone())
         .artifacts("art", all.clone())
         .completed("done", all.clone())
-        .source("source-digest", SourceDigest::new(&[DigestAlgorithm::Sha256]))
-        .artifacts("artifact-digest", ArtifactDigest::new(&[DigestAlgorithm::Sha256]).kinds(&[ArtifactKind::Image]));
-    let spec = crate::image::ImageSpec { formats: vec![crate::image::ImageFormat::Png], ..Default::default() };
+        .source(
+            "source-digest",
+            SourceDigest::new(&[DigestAlgorithm::Sha256]),
+        )
+        .artifacts(
+            "artifact-digest",
+            ArtifactDigest::new(&[DigestAlgorithm::Sha256]).kinds(&[ArtifactKind::Image]),
+        );
+    let spec = crate::image::ImageSpec {
+        formats: vec![crate::image::ImageFormat::Png],
+        ..Default::default()
+    };
     let out = crate::image::run_image_job_with_hooks(&Bytes::from(png), &spec, &hooks).unwrap();
     let stages: Vec<Stage> = all.seen().into_iter().map(|s| s.0).collect();
     // An image is a still, not a decoded video frame.
-    assert_eq!(stages, vec![Stage::Source, Stage::Probe, Stage::Still, Stage::Artifact, Stage::Completed]);
-    assert_eq!(out.hooks.annotations("sha256").count(), 2, "the source and the one image");
+    assert_eq!(
+        stages,
+        vec![
+            Stage::Source,
+            Stage::Probe,
+            Stage::Still,
+            Stage::Artifact,
+            Stage::Completed
+        ]
+    );
+    assert_eq!(
+        out.hooks.annotations("sha256").count(),
+        2,
+        "the source and the one image"
+    );
 }
 
 // -- model input helpers ------------------------------------------------------
@@ -561,9 +767,15 @@ fn resized_and_planar_layouts() {
 /// chroma two crossing ramps.
 fn graded_planes(w: u32, h: u32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let (cw, ch) = (w / 2, h / 2);
-    let y = (0..h).flat_map(|r| (0..w).map(move |c| (16 + (c + r) * 200 / (w + h)) as u8)).collect();
-    let u = (0..ch).flat_map(|r| (0..cw).map(move |_| (64 + r * 128 / ch) as u8)).collect();
-    let v = (0..ch).flat_map(|_| (0..cw).map(move |c| (64 + c * 128 / cw) as u8)).collect();
+    let y = (0..h)
+        .flat_map(|r| (0..w).map(move |c| (16 + (c + r) * 200 / (w + h)) as u8))
+        .collect();
+    let u = (0..ch)
+        .flat_map(|r| (0..cw).map(move |_| (64 + r * 128 / ch) as u8))
+        .collect();
+    let v = (0..ch)
+        .flat_map(|_| (0..cw).map(move |c| (64 + c * 128 / cw) as u8))
+        .collect();
     (y, u, v)
 }
 
@@ -584,7 +796,8 @@ fn convert_then_resize(frame: &VideoFrame, dw: u32, dh: u32) -> Vec<u8> {
             let x1 = (x0 + 1).min(sw - 1);
             for c in 0..3 {
                 let p = |xx: usize, yy: usize| rgb[(yy * sw + xx) * 3 + c] as f32;
-                let v = (p(x0, y0) * (1.0 - tx) + p(x1, y0) * tx) * (1.0 - ty) + (p(x0, y1) * (1.0 - tx) + p(x1, y1) * tx) * ty;
+                let v = (p(x0, y0) * (1.0 - tx) + p(x1, y0) * tx) * (1.0 - ty)
+                    + (p(x0, y1) * (1.0 - tx) + p(x1, y1) * tx) * ty;
                 out.push(v.round() as u8);
             }
         }
@@ -594,7 +807,11 @@ fn convert_then_resize(frame: &VideoFrame, dw: u32, dh: u32) -> Vec<u8> {
 
 fn max_difference(a: &[u8], b: &[u8]) -> u8 {
     assert_eq!(a.len(), b.len());
-    a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0)
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| x.abs_diff(*y))
+        .max()
+        .unwrap_or(0)
 }
 
 /// Scaling straight from the planes gives what converting the whole frame and
@@ -605,24 +822,82 @@ fn max_difference(a: &[u8], b: &[u8]) -> u8 {
 fn scaling_from_the_planes_matches_converting_first() {
     let (w, h) = (96u32, 64u32);
     let (y, u, v) = graded_planes(w, h);
-    let i420 = VideoFrame::new(Bytes::from([&y[..], &u[..], &v[..]].concat()), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, 0);
+    let i420 = VideoFrame::new(
+        Bytes::from([&y[..], &u[..], &v[..]].concat()),
+        w,
+        h,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        0,
+    );
     let reference = convert_then_resize(&i420, 40, 30);
     let ours = frame::rgb8_resized(&i420, 40, 30).unwrap();
-    assert!(max_difference(&ours, &reference) <= 3, "8-bit 4:2:0 differs by {}", max_difference(&ours, &reference));
+    assert!(
+        max_difference(&ours, &reference) <= 3,
+        "8-bit 4:2:0 differs by {}",
+        max_difference(&ours, &reference)
+    );
 
     // The same picture as 10-bit, NV12, NV21 and RGBA reads the same.
-    let ten = |p: &[u8]| p.iter().flat_map(|&s| (u16::from(s) << 2).to_le_bytes()).collect::<Vec<u8>>();
-    let i010 = VideoFrame::new(Bytes::from([ten(&y), ten(&u), ten(&v)].concat()), w, h, PixelFormat::Yuv420p10le, ColorSpace::Bt709, 0);
-    let interleave = |a: &[u8], b: &[u8]| a.iter().zip(b).flat_map(|(p, q)| [*p, *q]).collect::<Vec<u8>>();
-    let nv12 = VideoFrame::new(Bytes::from([y.clone(), interleave(&u, &v)].concat()), w, h, PixelFormat::Nv12, ColorSpace::Bt709, 0);
-    let nv21 = VideoFrame::new(Bytes::from([y.clone(), interleave(&v, &u)].concat()), w, h, PixelFormat::Nv21, ColorSpace::Bt709, 0);
+    let ten = |p: &[u8]| {
+        p.iter()
+            .flat_map(|&s| (u16::from(s) << 2).to_le_bytes())
+            .collect::<Vec<u8>>()
+    };
+    let i010 = VideoFrame::new(
+        Bytes::from([ten(&y), ten(&u), ten(&v)].concat()),
+        w,
+        h,
+        PixelFormat::Yuv420p10le,
+        ColorSpace::Bt709,
+        0,
+    );
+    let interleave = |a: &[u8], b: &[u8]| {
+        a.iter()
+            .zip(b)
+            .flat_map(|(p, q)| [*p, *q])
+            .collect::<Vec<u8>>()
+    };
+    let nv12 = VideoFrame::new(
+        Bytes::from([y.clone(), interleave(&u, &v)].concat()),
+        w,
+        h,
+        PixelFormat::Nv12,
+        ColorSpace::Bt709,
+        0,
+    );
+    let nv21 = VideoFrame::new(
+        Bytes::from([y.clone(), interleave(&v, &u)].concat()),
+        w,
+        h,
+        PixelFormat::Nv21,
+        ColorSpace::Bt709,
+        0,
+    );
     for (name, f) in [("10-bit", &i010), ("nv12", &nv12), ("nv21", &nv21)] {
         assert_eq!(frame::rgb8_resized(f, 40, 30).unwrap(), ours, "{name}");
     }
-    let rgba: Vec<u8> = frame::rgb8(&i420).unwrap().chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect();
-    let rgba = VideoFrame::new(Bytes::from(rgba), w, h, PixelFormat::Rgba32, ColorSpace::Bt709, 0);
+    let rgba: Vec<u8> = frame::rgb8(&i420)
+        .unwrap()
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .flat_map(|p| [p[0], p[1], p[2], 255])
+        .collect();
+    let rgba = VideoFrame::new(
+        Bytes::from(rgba),
+        w,
+        h,
+        PixelFormat::Rgba32,
+        ColorSpace::Bt709,
+        0,
+    );
     let from_rgba = frame::rgb8_resized(&rgba, 40, 30).unwrap();
-    assert_eq!(from_rgba, convert_then_resize(&rgba, 40, 30), "RGB is the same either way");
+    assert_eq!(
+        from_rgba,
+        convert_then_resize(&rgba, 40, 30),
+        "RGB is the same either way"
+    );
 
     // And the letterbox is the scaled picture, placed.
     let (boxed, lb) = frame::rgb8_letterboxed(&i420, 64, 64, [114, 114, 114]).unwrap();

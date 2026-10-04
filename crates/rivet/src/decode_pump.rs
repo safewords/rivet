@@ -25,7 +25,7 @@
 
 use std::time::Instant;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 
 use codec::frame::{ColorMetadata, ColorSpace, PixelFormat, TransferFn, VideoFrame};
@@ -216,24 +216,42 @@ impl DecodeRange {
     /// before range-parallel decode existed, and the fallback whenever a
     /// source cannot be split safely.
     pub fn whole_source() -> Self {
-        Self { start_sample: 0, end_sample: None, start_frame: 0, decode_from_sample: 0, lead_in: 0 }
+        Self {
+            start_sample: 0,
+            end_sample: None,
+            start_frame: 0,
+            decode_from_sample: 0,
+            lead_in: 0,
+        }
     }
 
     /// A range that starts decoding at its own first sample, with no lead-in.
     pub fn new(start_sample: u64, end_sample: Option<u64>, start_frame: u64) -> Self {
-        Self { start_sample, end_sample, start_frame, decode_from_sample: start_sample, lead_in: 0 }
+        Self {
+            start_sample,
+            end_sample,
+            start_frame,
+            decode_from_sample: start_sample,
+            lead_in: 0,
+        }
     }
 
     /// The `sample_range` a pump config takes for this range: `None` for the
     /// whole source (nothing to skip), the range otherwise.
     pub fn sample_range(&self) -> Option<DecodeRange> {
-        if *self == Self::whole_source() { None } else { Some(*self) }
+        if *self == Self::whole_source() {
+            None
+        } else {
+            Some(*self)
+        }
     }
 
     /// The frames this range contributes (lead-in excluded), given the
     /// frames in the whole source and where the next range starts.
     pub fn frames(&self, next_start_frame: Option<u64>, total_frames: u64) -> u64 {
-        next_start_frame.unwrap_or(total_frames).saturating_sub(self.start_frame)
+        next_start_frame
+            .unwrap_or(total_frames)
+            .saturating_sub(self.start_frame)
     }
 }
 
@@ -331,7 +349,10 @@ pub fn plan_decode_ranges(
     let mut splits: Vec<(u64, u64)> = Vec::new();
     for n in 1..want {
         let target = total * n as u64 / want as u64;
-        if let Some(best) = candidates.iter().copied().min_by_key(|(k, _)| k.abs_diff(target))
+        if let Some(best) = candidates
+            .iter()
+            .copied()
+            .min_by_key(|(k, _)| k.abs_diff(target))
             && !splits.contains(&best)
         {
             splits.push(best);
@@ -356,7 +377,10 @@ pub fn plan_decode_ranges(
         let mut range = DecodeRange::new(start, end, start_frame);
         if lead_in > 0
             && start_frame >= lead_in
-            && let Some(&(from, _)) = starts.iter().rev().find(|&&(_, f)| f + lead_in <= start_frame)
+            && let Some(&(from, _)) = starts
+                .iter()
+                .rev()
+                .find(|&&(_, f)| f + lead_in <= start_frame)
         {
             range.decode_from_sample = from;
             range.lead_in = lead_in;
@@ -367,7 +391,11 @@ pub fn plan_decode_ranges(
     let mut ranges = Vec::with_capacity(splits.len() + 1);
     ranges.push(DecodeRange::new(0, splits.first().map(|&(s, _)| s), 0));
     for (i, &(split, split_frame)) in splits.iter().enumerate() {
-        ranges.push(with_lead_in(split, splits.get(i + 1).map(|&(s, _)| s), split_frame));
+        ranges.push(with_lead_in(
+            split,
+            splits.get(i + 1).map(|&(s, _)| s),
+            split_frame,
+        ));
     }
 
     Some(ranges)
@@ -400,7 +428,12 @@ pub struct ClipSource {
 impl ClipSource {
     /// A whole clip, no trim.
     pub fn whole(cfg: DecodePumpConfig, input: Bytes) -> Self {
-        Self { cfg, input, start_frame: 0, end_frame: None }
+        Self {
+            cfg,
+            input,
+            start_frame: 0,
+            end_frame: None,
+        }
     }
 }
 
@@ -436,7 +469,9 @@ pub fn run_spliced_decode_pump_blocking(
     // pool, the filters' bands, the colour conversions' rows — stays within
     // the job's share of the machine (a range pump's caller may narrow it
     // further), so jobs running at once fit the machine together.
-    codec::threads::with_budget(crate::thread_budget::per_job(), || run_clips(clips, senders, rt))
+    codec::threads::with_budget(crate::thread_budget::per_job(), || {
+        run_clips(clips, senders, rt)
+    })
 }
 
 fn run_clips(
@@ -484,12 +519,15 @@ fn decode_clip(
     // never blends into the next clip and two pumps (ranges, GPUs) never see
     // each other's.
     let mut normalizer = FrameNormalizer::new(cfg)?;
-    let mut demuxer =
-        streaming::demux_streaming_shared(clip.input.clone())
-            .context("demuxing clip for decode pump")?;
-    let decoder =
-        decode::create_decoder_shared(&cfg.codec_name, cfg.info_for_decoder.clone(), cfg.gpu_index, cfg.software_share)
-            .context("creating decoder for decode pump")?;
+    let mut demuxer = streaming::demux_streaming_shared(clip.input.clone())
+        .context("demuxing clip for decode pump")?;
+    let decoder = decode::create_decoder_shared(
+        &cfg.codec_name,
+        cfg.info_for_decoder.clone(),
+        cfg.gpu_index,
+        cfg.software_share,
+    )
+    .context("creating decoder for decode pump")?;
     // Wrapped here rather than at each consumer: every rung fed by this pump
     // wants the picture the right way up. A rotation of 0 returns the decoder
     // itself, so the common case pays nothing.
@@ -535,7 +573,11 @@ fn decode_clip(
     // the timeline at every boundary — the timestamps of the whole decode are
     // the decoded index, which a range starting at `start_sample` reaches by
     // adding it.
-    let lead = RangeLead { emit_from, own_from: range.start_frame, pts_offset: start_sample };
+    let lead = RangeLead {
+        emit_from,
+        own_from: range.start_frame,
+        pts_offset: start_sample,
+    };
 
     // Parameter sets seen while skipping to the start of the range.
     //
@@ -550,16 +592,30 @@ fn decode_clip(
 
     // Drain the decoder after `finish()`, at the end of the range or the clip.
     let drain = |decoder: &mut Box<dyn decode::Decoder>,
-                     normalizer: &mut FrameNormalizer,
-                     src_idx: &mut u64,
-                     total: &mut u64,
-                     joined: &mut JoinedPts|
+                 normalizer: &mut FrameNormalizer,
+                 src_idx: &mut u64,
+                 total: &mut u64,
+                 joined: &mut JoinedPts|
      -> Result<Flow> {
         decoder.finish().context("decoder finish in decode pump")?;
-        while let Some(frame) =
-            decoder.decode_next().context("decoding frame after finish in decode pump")?
+        while let Some(frame) = decoder
+            .decode_next()
+            .context("decoding frame after finish in decode pump")?
         {
-            match handle_frame(clip_idx, clip, presentation.as_ref(), slots.as_ref(), normalizer, frame, senders, rt, src_idx, total, joined, lead)? {
+            match handle_frame(
+                clip_idx,
+                clip,
+                presentation.as_ref(),
+                slots.as_ref(),
+                normalizer,
+                frame,
+                senders,
+                rt,
+                src_idx,
+                total,
+                joined,
+                lead,
+            )? {
                 FrameAction::Continue => {}
                 FrameAction::ClipDone => return Ok(Flow::Continue),
                 FrameAction::StopAll => return Ok(Flow::AllReceiversClosed),
@@ -617,10 +673,24 @@ fn decode_clip(
                 decoder
                     .push_sample(&sample.data)
                     .context("pushing sample to decode pump decoder")?;
-                while let Some(frame) =
-                    decoder.decode_next().context("decoding frame in decode pump")?
+                while let Some(frame) = decoder
+                    .decode_next()
+                    .context("decoding frame in decode pump")?
                 {
-                    match handle_frame(clip_idx, clip, presentation.as_ref(), slots.as_ref(), &mut normalizer, frame, senders, rt, &mut src_idx, total, joined, lead)? {
+                    match handle_frame(
+                        clip_idx,
+                        clip,
+                        presentation.as_ref(),
+                        slots.as_ref(),
+                        &mut normalizer,
+                        frame,
+                        senders,
+                        rt,
+                        &mut src_idx,
+                        total,
+                        joined,
+                        lead,
+                    )? {
                         FrameAction::Continue => {}
                         FrameAction::ClipDone => return Ok(Flow::Continue),
                         FrameAction::StopAll => return Ok(Flow::AllReceiversClosed),
@@ -795,7 +865,10 @@ fn handle_frame(
     if clip.end_frame.is_some_and(|end| first >= end) {
         return Ok(FrameAction::ClipDone); // reached the out-point
     }
-    let kept = first.max(clip.start_frame)..clip.end_frame.map_or(first + count, |end| end.min(first + count));
+    let kept = first.max(clip.start_frame)
+        ..clip
+            .end_frame
+            .map_or(first + count, |end| end.min(first + count));
     // Under a frame-rate cap, the source periods kept become the output
     // periods that start within them; each copy is timestamped with the
     // source period it starts in, so the copies still rank in order.
@@ -1005,7 +1078,9 @@ fn normalize_frame(
     if filters.is_empty() {
         Ok(depth_matched)
     } else {
-        filters.apply(depth_matched).context("shared decode pump video filters")
+        filters
+            .apply(depth_matched)
+            .context("shared decode pump video filters")
     }
 }
 
@@ -1026,9 +1101,9 @@ fn match_output_bit_depth(frame: &VideoFrame, output: PixelFormat) -> Result<Vid
             colorspace::convert_bit_depth_frame(frame, 10)
                 .context("shared decode pump 8 → 10-bit widening for the 10-bit output")
         }
-        (have, want) => bail!(
-            "decode pump produced {have:?} but the encoder was configured for {want:?}"
-        ),
+        (have, want) => {
+            bail!("decode pump produced {have:?} but the encoder was configured for {want:?}")
+        }
     }
 }
 
@@ -1068,7 +1143,10 @@ pub fn fastest_decode_gpu(
                 }
             }
             Ok(None) => {
-                tracing::warn!(gpu_index = gpu, "decode-with-fastest: no frames; skipping candidate")
+                tracing::warn!(
+                    gpu_index = gpu,
+                    "decode-with-fastest: no frames; skipping candidate"
+                )
             }
             Err(e) => tracing::warn!(
                 gpu_index = gpu,
@@ -1168,7 +1246,10 @@ fn fan_out(
         match accepted {
             Ok(()) => any_alive = true,
             Err(_) => {
-                tracing::warn!(rung_idx = idx, "shared decode pump: rung dropped its receiver");
+                tracing::warn!(
+                    rung_idx = idx,
+                    "shared decode pump: rung dropped its receiver"
+                );
             }
         }
     }
@@ -1201,7 +1282,14 @@ mod tests {
             .map(|i| i * 17 % 1024)
             .flat_map(|v| v.to_le_bytes())
             .collect();
-        let f10 = VideoFrame::new(Bytes::from(ten.clone()), 8, 4, PixelFormat::Yuv420p10le, ColorSpace::Bt709, 0);
+        let f10 = VideoFrame::new(
+            Bytes::from(ten.clone()),
+            8,
+            4,
+            PixelFormat::Yuv420p10le,
+            ColorSpace::Bt709,
+            0,
+        );
         let f8 = super::match_output_bit_depth(&f10, PixelFormat::Yuv420p).expect("narrow");
         assert_eq!(f8.format, PixelFormat::Yuv420p);
         assert_eq!(f8.data.len(), 8 * 4 * 3 / 2);
@@ -1211,8 +1299,16 @@ mod tests {
         assert_eq!(back.data.len(), ten.len());
         let same = super::match_output_bit_depth(&f10, PixelFormat::Yuv420p10le).expect("same");
         assert_eq!(same.data, f10.data);
-        let f422 = VideoFrame::new(Bytes::from(vec![0u8; 8 * 4 * 2]), 8, 4, PixelFormat::Yuv422p, ColorSpace::Bt709, 0);
-        let err = super::match_output_bit_depth(&f422, PixelFormat::Yuv420p).expect_err("layout mismatch");
+        let f422 = VideoFrame::new(
+            Bytes::from(vec![0u8; 8 * 4 * 2]),
+            8,
+            4,
+            PixelFormat::Yuv422p,
+            ColorSpace::Bt709,
+            0,
+        );
+        let err = super::match_output_bit_depth(&f422, PixelFormat::Yuv420p)
+            .expect_err("layout mismatch");
         assert!(format!("{err:#}").contains("Yuv422p"), "{err:#}");
     }
 
@@ -1444,9 +1540,18 @@ mod tests {
     #[test]
     fn a_single_range_or_an_unfamiliar_codec_is_not_split() {
         let input = Bytes::from_static(b"not a video");
-        assert!(plan_decode_ranges(&input, "h264", 60, 1, 0).is_none(), "want=1 is no split");
-        assert!(plan_decode_ranges(&input, "av1", 60, 4, 0).is_none(), "no keyframe test for av1");
-        assert!(plan_decode_ranges(&input, "h264", 0, 4, 0).is_none(), "a zero chunk is no grid");
+        assert!(
+            plan_decode_ranges(&input, "h264", 60, 1, 0).is_none(),
+            "want=1 is no split"
+        );
+        assert!(
+            plan_decode_ranges(&input, "av1", 60, 4, 0).is_none(),
+            "no keyframe test for av1"
+        );
+        assert!(
+            plan_decode_ranges(&input, "h264", 0, 4, 0).is_none(),
+            "a zero chunk is no grid"
+        );
     }
 
     #[test]
@@ -1459,7 +1564,10 @@ mod tests {
             return;
         };
         let (keyframes, total) = h264_keyframes(&input);
-        assert!(keyframes.len() > 1, "the sample needs several keyframes to split on");
+        assert!(
+            keyframes.len() > 1,
+            "the sample needs several keyframes to split on"
+        );
 
         // Pick a chunk length that divides at least one keyframe past the
         // first, so the planner has a boundary to use.
@@ -1479,11 +1587,22 @@ mod tests {
         assert_eq!(ranges[0].start_sample, 0);
         assert!(ranges.last().unwrap().end_sample.is_none());
         for pair in ranges.windows(2) {
-            assert_eq!(pair[0].end_sample, Some(pair[1].start_sample), "gap or overlap: {ranges:?}");
+            assert_eq!(
+                pair[0].end_sample,
+                Some(pair[1].start_sample),
+                "gap or overlap: {ranges:?}"
+            );
         }
         for r in &ranges {
-            assert!(keyframes.contains(&r.start_sample), "{r:?} does not start on a keyframe");
-            assert_eq!(r.start_sample % u64::from(per_chunk), 0, "{r:?} is off the segment grid");
+            assert!(
+                keyframes.contains(&r.start_sample),
+                "{r:?} does not start on a keyframe"
+            );
+            assert_eq!(
+                r.start_sample % u64::from(per_chunk),
+                0,
+                "{r:?} is off the segment grid"
+            );
             assert_eq!(r.start_frame, r.start_sample, "one frame per sample");
             assert!(r.start_sample < total);
         }
@@ -1494,7 +1613,9 @@ mod tests {
         // 60 → 24: two frames of every five, evenly — the first frame of
         // each output period.
         let r = decimation(60.0, Some(24.0)).expect("a cap below the source");
-        let kept: Vec<u64> = (0..10).filter(|&k| out_index(k + 1, r) > out_index(k, r)).collect();
+        let kept: Vec<u64> = (0..10)
+            .filter(|&k| out_index(k + 1, r) > out_index(k, r))
+            .collect();
         assert_eq!(kept, vec![0, 2, 5, 7]);
         assert_eq!(output_frames(10, Some(r)), 4);
         // A cap at or above the source's rate, no cap, or an unknown source
@@ -1511,7 +1632,10 @@ mod tests {
         assert_eq!(n, 88);
         assert!(((n as f64 / 5.0) - 17.5).abs() < 0.2);
         // Exact on an integer ratio across a long run: no drift.
-        assert_eq!(output_frames(3_600_000, decimation(60.0, Some(30.0))), 1_800_000);
+        assert_eq!(
+            output_frames(3_600_000, decimation(60.0, Some(30.0))),
+            1_800_000
+        );
     }
 
     #[test]
@@ -1524,7 +1648,10 @@ mod tests {
             eprintln!("SKIP: test_media/bbb_h264_360p_short.mp4 not present");
             return;
         };
-        let header = streaming::demux_streaming(&input).expect("demux").header().clone();
+        let header = streaming::demux_streaming(&input)
+            .expect("demux")
+            .header()
+            .clone();
         let base = DecodePumpConfig {
             codec_name: header.codec.clone(),
             info_for_decoder: header.info.clone(),
@@ -1539,7 +1666,9 @@ mod tests {
             sample_range: None,
             software_share: 1,
             rotation_degrees: header.rotation_degrees,
-            filters: std::sync::Arc::new(codec::filter::FilterChain::prepare(&[]).expect("empty chain")),
+            filters: std::sync::Arc::new(
+                codec::filter::FilterChain::prepare(&[]).expect("empty chain"),
+            ),
             decimate: None,
             hooks: crate::hooks::Hooks::default(),
         };
@@ -1551,15 +1680,31 @@ mod tests {
             }
         };
         let capped = pump_frames(
-            DecodePumpConfig { decimate: decimation(header.info.frame_rate, Some(header.info.frame_rate / 2.0)), ..base },
+            DecodePumpConfig {
+                decimate: decimation(header.info.frame_rate, Some(header.info.frame_rate / 2.0)),
+                ..base
+            },
             input,
         )
         .expect("capped decode");
-        assert_eq!(capped.len() as u64, output_frames(whole.len() as u64, Some(0.5)));
+        assert_eq!(
+            capped.len() as u64,
+            output_frames(whole.len() as u64, Some(0.5))
+        );
         for (i, frame) in capped.iter().enumerate() {
             let source = &whole[i * 2];
-            assert_eq!(frame.pts, source.pts, "output frame {i} is not source frame {}", i * 2);
-            assert_eq!(frame.data, source.data, "output frame {i}'s picture differs from source frame {}", i * 2);
+            assert_eq!(
+                frame.pts,
+                source.pts,
+                "output frame {i} is not source frame {}",
+                i * 2
+            );
+            assert_eq!(
+                frame.data,
+                source.data,
+                "output frame {i}'s picture differs from source frame {}",
+                i * 2
+            );
         }
     }
 
@@ -1572,8 +1717,9 @@ mod tests {
             .expect("runtime");
         let (tx, mut rx) = tokio::sync::mpsc::channel::<VideoFrame>(4);
         let handle = rt.handle().clone();
-        let pump =
-            std::thread::spawn(move || run_shared_decode_pump_blocking(cfg, input, vec![tx], handle));
+        let pump = std::thread::spawn(move || {
+            run_shared_decode_pump_blocking(cfg, input, vec![tx], handle)
+        });
         let frames = rt.block_on(async move {
             let mut out = Vec::new();
             while let Some(f) = rx.recv().await {
@@ -1596,7 +1742,10 @@ mod tests {
             eprintln!("SKIP: test_media/bbb_h264_360p_short.mp4 not present");
             return;
         };
-        let header = streaming::demux_streaming(&input).expect("demux").header().clone();
+        let header = streaming::demux_streaming(&input)
+            .expect("demux")
+            .header()
+            .clone();
         let base = DecodePumpConfig {
             codec_name: header.codec.clone(),
             info_for_decoder: header.info.clone(),
@@ -1611,7 +1760,9 @@ mod tests {
             sample_range: None,
             software_share: 1,
             rotation_degrees: header.rotation_degrees,
-            filters: std::sync::Arc::new(codec::filter::FilterChain::prepare(&[]).expect("empty chain")),
+            filters: std::sync::Arc::new(
+                codec::filter::FilterChain::prepare(&[]).expect("empty chain"),
+            ),
             decimate: None,
             hooks: crate::hooks::Hooks::default(),
         };
@@ -1626,14 +1777,20 @@ mod tests {
         assert!(!whole.is_empty());
 
         let (keyframes, _) = h264_keyframes(&input);
-        let per_chunk =
-            keyframes.iter().copied().find(|&k| k > 0).expect("a second keyframe") as u32;
+        let per_chunk = keyframes
+            .iter()
+            .copied()
+            .find(|&k| k > 0)
+            .expect("a second keyframe") as u32;
         let ranges = plan_decode_ranges(&input, "h264", per_chunk, 2, 0).expect("splits in two");
         assert_eq!(ranges.len(), 2, "{ranges:?}");
 
         let mut joined = Vec::new();
         for range in &ranges {
-            let cfg = DecodePumpConfig { sample_range: range.sample_range(), ..base.clone() };
+            let cfg = DecodePumpConfig {
+                sample_range: range.sample_range(),
+                ..base.clone()
+            };
             let frames = pump_frames(cfg, input.clone()).expect("range decodes");
             assert!(
                 !frames.is_empty(),
@@ -1642,15 +1799,25 @@ mod tests {
             joined.extend(frames);
         }
 
-        assert_eq!(joined.len(), whole.len(), "frame count differs between whole and ranged decode");
+        assert_eq!(
+            joined.len(),
+            whole.len(),
+            "frame count differs between whole and ranged decode"
+        );
         for (i, (a, b)) in whole.iter().zip(joined.iter()).enumerate() {
             assert_eq!(
                 (a.width, a.height, a.format),
                 (b.width, b.height, b.format),
                 "frame {i} shape"
             );
-            assert_eq!(a.data, b.data, "frame {i} pixels differ between whole and ranged decode");
-            assert_eq!(a.pts, b.pts, "frame {i} timestamp differs between whole and ranged decode");
+            assert_eq!(
+                a.data, b.data,
+                "frame {i} pixels differ between whole and ranged decode"
+            );
+            assert_eq!(
+                a.pts, b.pts,
+                "frame {i} timestamp differs between whole and ranged decode"
+            );
         }
     }
 }

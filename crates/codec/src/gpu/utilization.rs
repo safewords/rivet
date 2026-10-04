@@ -1,6 +1,6 @@
 //! `GpuUtilizationReader` — live per-GPU utilisation snapshots via NVML / sysfs.
 
-use super::types::{GpuDevice, GpuVendor, GpuUtilization};
+use super::types::{GpuDevice, GpuUtilization, GpuVendor};
 
 /// One-shot accumulator that opens NVML once and reads per-GPU
 /// utilisation for every NVIDIA device on each load tick. Holding
@@ -119,11 +119,10 @@ impl GpuUtilizationReader {
                         out.util_percent = ((cur as u64 * 100 / max as u64).min(100)) as u8;
                     }
                 }
-                let used = std::fs::read_to_string(
-                    entry.path().join("device").join("mem_info_vram_used"),
-                )
-                .ok()
-                .and_then(|s| s.trim().parse::<u64>().ok());
+                let used =
+                    std::fs::read_to_string(entry.path().join("device").join("mem_info_vram_used"))
+                        .ok()
+                        .and_then(|s| s.trim().parse::<u64>().ok());
                 let total = std::fs::read_to_string(
                     entry.path().join("device").join("mem_info_vram_total"),
                 )

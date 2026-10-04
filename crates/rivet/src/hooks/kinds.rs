@@ -8,8 +8,9 @@ use std::sync::Arc;
 use anyhow::{Result, bail};
 
 use super::{
-    ArtifactEvent, CompletedEvent, FailedEvent, FrameEvent, FrameSampling, Hook, HookContext, HookEvent, HookOutcome,
-    HookPolicy, Hooks, ProbeEvent, SourceEvent, Stage, StageSet, StillEvent,
+    ArtifactEvent, CompletedEvent, FailedEvent, FrameEvent, FrameSampling, Hook, HookContext,
+    HookEvent, HookOutcome, HookPolicy, Hooks, ProbeEvent, SourceEvent, Stage, StageSet,
+    StillEvent,
 };
 
 /// Which kind of hook an entry is.
@@ -65,8 +66,13 @@ pub enum ArtifactKind {
 }
 
 impl ArtifactKind {
-    pub const ALL: [ArtifactKind; 5] =
-        [ArtifactKind::Video, ArtifactKind::Audio, ArtifactKind::Image, ArtifactKind::Rendition, ArtifactKind::Playlist];
+    pub const ALL: [ArtifactKind; 5] = [
+        ArtifactKind::Video,
+        ArtifactKind::Audio,
+        ArtifactKind::Image,
+        ArtifactKind::Rendition,
+        ArtifactKind::Playlist,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -94,7 +100,9 @@ impl std::str::FromStr for ArtifactKind {
             "image" => ArtifactKind::Image,
             "rendition" => ArtifactKind::Rendition,
             "playlist" => ArtifactKind::Playlist,
-            other => bail!("unknown artifact kind `{other}` (video, audio, image, rendition, playlist)"),
+            other => {
+                bail!("unknown artifact kind `{other}` (video, audio, image, rendition, playlist)")
+            }
         })
     }
 }

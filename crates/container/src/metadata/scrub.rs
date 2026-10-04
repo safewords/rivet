@@ -41,10 +41,14 @@ pub fn aac_frame(frame: &mut [u8]) -> bool {
     if bits(frame, base, 3) != Some(ID_FIL) {
         return false;
     }
-    let Some(mut count) = bits(frame, base + 3, 4) else { return false };
+    let Some(mut count) = bits(frame, base + 3, 4) else {
+        return false;
+    };
     let mut at = base + 7;
     if count == 15 {
-        let Some(esc) = bits(frame, at, 8) else { return false };
+        let Some(esc) = bits(frame, at, 8) else {
+            return false;
+        };
         count += esc - 1;
         at += 8;
     }
@@ -57,7 +61,7 @@ pub fn aac_frame(frame: &mut [u8]) -> bool {
     }
     // Only fill: an SBR, dynamic-range or other extension payload is audio.
     match bits(frame, at, 4) {
-        Some(0 | 1 | 2) => {}
+        Some(0..=2) => {}
         _ => return false,
     }
     let before = frame.to_vec();
@@ -85,7 +89,12 @@ fn layer3_main_data(frame: &[u8], h: &FrameHeader) -> Option<(usize, usize, usiz
     let s = frame.get(side_at..side_at + side)?;
     let (begin, mut at, granules, per) = if mpeg1 {
         // main_data_begin 9, private 5 / 3, scfsi 4 per channel.
-        (bits(s, 0, 9)? as usize, 9 + if mono { 5 } else { 3 } + 4 * channels, 2, 59)
+        (
+            bits(s, 0, 9)? as usize,
+            9 + if mono { 5 } else { 3 } + 4 * channels,
+            2,
+            59,
+        )
     } else {
         (bits(s, 0, 8)? as usize, 8 + if mono { 1 } else { 2 }, 1, 63)
     };
@@ -107,10 +116,16 @@ pub fn mp3_frames(frames: &mut [Vec<u8>]) -> usize {
     let mut used: Vec<(usize, usize)> = Vec::with_capacity(frames.len());
     let mut stream = 0usize;
     for (i, f) in frames.iter().enumerate() {
-        let Some(h) = FrameHeader::parse(f) else { return 0 };
-        let Some((area_at, begin, main_bits)) = layer3_main_data(f, &h) else { return 0 };
+        let Some(h) = FrameHeader::parse(f) else {
+            return 0;
+        };
+        let Some((area_at, begin, main_bits)) = layer3_main_data(f, &h) else {
+            return 0;
+        };
         let len = f.len().saturating_sub(area_at);
-        let Some(start) = stream.checked_sub(begin) else { return 0 };
+        let Some(start) = stream.checked_sub(begin) else {
+            return 0;
+        };
         used.push((start, start + main_bits.div_ceil(8)));
         areas.push((i, area_at, stream, len));
         stream += len;
@@ -135,8 +150,18 @@ pub fn mp3_frames(frames: &mut [Vec<u8>]) -> usize {
 }
 
 /// The names encoders leave in files, as the prefixes they start with.
-const ENCODER_PREFIXES: [&[u8]; 10] =
-    [b"Lavc", b"Lavf", b"LAME", b"libfaac", b"FAAC", b"Nero", b"FhG", b"iTunes", b"GPAC", b"libvorbis"];
+const ENCODER_PREFIXES: [&[u8]; 10] = [
+    b"Lavc",
+    b"Lavf",
+    b"LAME",
+    b"libfaac",
+    b"FAAC",
+    b"Nero",
+    b"FhG",
+    b"iTunes",
+    b"GPAC",
+    b"libvorbis",
+];
 
 /// Encoder names in `data`: each known prefix with the version that follows
 /// it (`Lavc62.28.101`, `LAME3.100`; `LAME` alone counts too). What an
@@ -152,7 +177,8 @@ pub fn encoder_idents(data: &[u8]) -> Vec<String> {
                 .take(16)
                 .take_while(|b| b.is_ascii_digit() || **b == b'.')
                 .count();
-            let ident = String::from_utf8_lossy(&data[at..at + prefix.len() + version]).into_owned();
+            let ident =
+                String::from_utf8_lossy(&data[at..at + prefix.len() + version]).into_owned();
             if !out.contains(&ident) {
                 out.push(ident);
             }
@@ -179,7 +205,11 @@ mod tests {
         let before = frame.clone();
         assert!(aac_frame(&mut frame));
         assert!(encoder_idents(&frame).is_empty(), "{frame:?}");
-        assert_eq!(frame[frame.len() - 2..], before[before.len() - 2..], "the element after is untouched");
+        assert_eq!(
+            frame[frame.len() - 2..],
+            before[before.len() - 2..],
+            "the element after is untouched"
+        );
         assert!(!aac_frame(&mut frame), "cleared once");
 
         let mut cpe = vec![0x21, 0x10, 0x05, 0x00];
@@ -189,7 +219,10 @@ mod tests {
     #[test]
     fn idents_are_found() {
         let found = encoder_idents(b"\x00\x01Lavc62.28.101\x00junk LAME3.100UUUU");
-        assert_eq!(found, vec!["Lavc62.28.101".to_string(), "LAME3.100".to_string()]);
+        assert_eq!(
+            found,
+            vec!["Lavc62.28.101".to_string(), "LAME3.100".to_string()]
+        );
         assert!(encoder_idents(b"nothing here").is_empty());
     }
 }

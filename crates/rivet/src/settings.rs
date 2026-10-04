@@ -20,8 +20,9 @@
 use anyhow::{Context, Result, bail};
 
 use crate::spec::{
-    AudioBitDepth, AudioChannels, AudioCodecPolicy, AudioDecodeDeny, HeAacPolicy, BitDepth, ChunkSeamMode, ColorPolicy, Container, DecodePolicy,
-    EncodePolicy, FlacLevel, GpuFamily, OutputSpec, Quality, Rung,
+    AudioBitDepth, AudioChannels, AudioCodecPolicy, AudioDecodeDeny, BitDepth, ChunkSeamMode,
+    ColorPolicy, Container, DecodePolicy, EncodePolicy, FlacLevel, GpuFamily, HeAacPolicy,
+    OutputSpec, Quality, Rung,
 };
 
 // ── on the absence of a `speed` knob ────────────────────────────────────────
@@ -260,7 +261,9 @@ impl TranscodeSettings {
             return self.into_audio_only_spec(true);
         }
         if self.mode == Some(Mode::Image) {
-            bail!("mode=image makes still images: build it with into_image_spec and run it with rivet::image::run_image_job");
+            bail!(
+                "mode=image makes still images: build it with into_image_spec and run it with rivet::image::run_image_job"
+            );
         }
         self.refuse_image_knobs()?;
 
@@ -301,7 +304,9 @@ impl TranscodeSettings {
             let w = self.width.unwrap_or(src_w) & !1;
             let h = self.height.unwrap_or(src_h) & !1;
             if w == 0 || h == 0 {
-                bail!("source resolution unknown ({src_w}x{src_h}); set explicit rungs or width/height");
+                bail!(
+                    "source resolution unknown ({src_w}x{src_h}); set explicit rungs or width/height"
+                );
             }
             vec![Rung::new(w, h).with_quality(quality.clone())]
         };
@@ -426,8 +431,12 @@ impl TranscodeSettings {
             return match self.mode.unwrap_or(Mode::Single) {
                 Mode::Single => self.into_audio_only_spec(false),
                 Mode::Audio => self.into_audio_only_spec(true),
-                Mode::Hls => bail!("the input has no video, and an HLS package needs a video variant: use mode=audio"),
-                Mode::Image => bail!("mode=image makes still images: build it with into_image_spec"),
+                Mode::Hls => bail!(
+                    "the input has no video, and an HLS package needs a video variant: use mode=audio"
+                ),
+                Mode::Image => {
+                    bail!("mode=image makes still images: build it with into_image_spec")
+                }
             };
         }
         let (width, height) = source.display_dims();
@@ -445,14 +454,19 @@ impl TranscodeSettings {
         {
             let knobs = [
                 ("image-format", !self.image_formats.is_empty()),
-                ("image-quality", self.image_quality.is_some() || !self.image_format_quality.is_empty()),
+                (
+                    "image-quality",
+                    self.image_quality.is_some() || !self.image_format_quality.is_empty(),
+                ),
                 ("image-lossless", self.image_lossless),
                 ("image-keep-icc", self.image_keep_icc),
                 ("image-speed", self.image_speed.is_some()),
                 ("frames-at/frames-count", self.frames.is_some()),
             ];
             if let Some((knob, _)) = knobs.iter().find(|(_, set)| *set) {
-                bail!("invalid output spec: `{knob}` applies to mode=image, and this job makes video or audio");
+                bail!(
+                    "invalid output spec: `{knob}` applies to mode=image, and this job makes video or audio"
+                );
             }
         }
         Ok(())
@@ -484,7 +498,10 @@ impl TranscodeSettings {
             ("prores-profile", self.prores_profile.is_some()),
             ("container", self.container.is_some()),
             ("filter", !self.filters.is_empty()),
-            ("width/height", self.width.is_some() || self.height.is_some()),
+            (
+                "width/height",
+                self.width.is_some() || self.height.is_some(),
+            ),
             ("color", self.color.is_some()),
             ("bit-depth", self.bit_depth.is_some()),
             ("max-fps", self.max_fps.is_some()),
@@ -497,10 +514,20 @@ impl TranscodeSettings {
             ("trim", self.trim_start.is_some() || self.trim_end.is_some()),
         ];
         if let Some((knob, _)) = video_knobs.iter().find(|(_, set)| *set) {
-            bail!("invalid output spec: mode=image makes still images, so `{knob}` has nothing to apply to");
+            bail!(
+                "invalid output spec: mode=image makes still images, so `{knob}` has nothing to apply to"
+            );
         }
-        if let Some(r) = self.rungs.iter().find(|r| r.bitrate.is_some() || r.standard_rate) {
-            bail!("invalid output spec: an image rendition has no bitrate ({}x{}@...)", r.width, r.height);
+        if let Some(r) = self
+            .rungs
+            .iter()
+            .find(|r| r.bitrate.is_some() || r.standard_rate)
+        {
+            bail!(
+                "invalid output spec: an image rendition has no bitrate ({}x{}@...)",
+                r.width,
+                r.height
+            );
         }
         let spec = crate::image::ImageSpec {
             formats: if self.image_formats.is_empty() {
@@ -549,17 +576,25 @@ impl TranscodeSettings {
             ("prores-profile", self.prores_profile.is_some()),
             ("container", self.container.is_some()),
             ("filter", !self.filters.is_empty()),
-            ("width/height", self.width.is_some() || self.height.is_some()),
+            (
+                "width/height",
+                self.width.is_some() || self.height.is_some(),
+            ),
         ];
         if let Some((knob, _)) = video_knobs.iter().find(|(_, set)| *set) {
             if strict {
                 bail!("mode=audio writes no video, so `{knob}` has nothing to apply to");
             }
-            tracing::info!(knob, "the input has no video; the video settings do not apply");
+            tracing::info!(
+                knob,
+                "the input has no video; the video settings do not apply"
+            );
         }
         self.refuse_image_knobs()?;
         let audio = self.audio.unwrap_or_default();
-        let container = self.audio_container.unwrap_or(OutputSpec::audio_only_container(audio));
+        let container = self
+            .audio_container
+            .unwrap_or(OutputSpec::audio_only_container(audio));
         let mut spec = OutputSpec::audio_only_in(container);
         spec.audio = audio;
         spec.audio_bitrate = self.audio_bitrate;
@@ -592,7 +627,9 @@ impl TranscodeSettings {
             "upscale" => self.upscale = parse_bool(val),
             "ladder" => self.ladder = parse_bool(val),
             "max-short-side" => self.max_short_side = parse_max_short_side(val)?,
-            "segment-seconds" => self.segment_seconds = Some(val.parse().context("segment-seconds")?),
+            "segment-seconds" => {
+                self.segment_seconds = Some(val.parse().context("segment-seconds")?)
+            }
             "crf" => self.crf = Some(val.parse().context("crf")?),
             "target" | "quality" => self.target = Some(parse_quality_target(val)?),
             "gop" | "keyframe-interval" => self.apply_gop(val)?,
@@ -607,7 +644,9 @@ impl TranscodeSettings {
             ),
             "audio" => self.audio = Some(parse_audio(val)?),
             "subtitles" | "subs" => self.subtitles = Some(parse_subtitles(val)?),
-            "audio-bitrate" | "ab" => self.audio_bitrate = parse_bitrate_or_standard(val).context("audio-bitrate")?,
+            "audio-bitrate" | "ab" => {
+                self.audio_bitrate = parse_bitrate_or_standard(val).context("audio-bitrate")?
+            }
             "audio-quality" | "aq" => self.audio_quality = Some(parse_audio_quality(val)?),
             "audio-channels" | "ac" => self.audio_channels = Some(parse_audio_channels(val)?),
             "audio-stereo-fallback" => self.audio_stereo_fallback = parse_bool(val),
@@ -617,7 +656,9 @@ impl TranscodeSettings {
             "metadata-keep" => self.metadata_keep = Some(parse_metadata_keep(val)?),
             "flac-compression" => self.flac_level = Some(parse_flac_level(val)?),
             "audio-container" => self.audio_container = parse_audio_container(val)?,
-            "video-bitrate" | "vb" => self.video_bitrate = parse_bitrate_or_standard(val).context("video-bitrate")?,
+            "video-bitrate" | "vb" => {
+                self.video_bitrate = parse_bitrate_or_standard(val).context("video-bitrate")?
+            }
             "video-buffer" => self.video_buffer_ms = Some(parse_buffer(val)?),
             "rate-mode" => self.rate_mode = Some(parse_rate_mode(val)?),
             "video-speed" => self.video_speed = Some(parse_video_speed(val)?),
@@ -648,7 +689,8 @@ impl TranscodeSettings {
             "image-format" | "image-formats" => {
                 self.image_formats.clear();
                 for f in val.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                    self.image_formats.push(crate::image::ImageFormat::parse(f)?);
+                    self.image_formats
+                        .push(crate::image::ImageFormat::parse(f)?);
                 }
             }
             #[cfg(feature = "image")]
@@ -669,7 +711,10 @@ impl TranscodeSettings {
                     .split(',')
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
-                    .map(|t| t.parse::<f64>().with_context(|| format!("frames-at: '{t}' is not a number of seconds")))
+                    .map(|t| {
+                        t.parse::<f64>()
+                            .with_context(|| format!("frames-at: '{t}' is not a number of seconds"))
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 self.refuse_frames_beside_poster("frames-at")?;
                 self.frames = Some(crate::image::FrameSelection::At(times));
@@ -694,7 +739,9 @@ impl TranscodeSettings {
                 o => bail!("frames must be poster (or use frames-at / frames-count), got '{o}'"),
             },
             #[cfg(feature = "image")]
-            "image-decode-deny" => self.image_decode_deny = Some(crate::image::ImageDecodeDeny::parse(val)?),
+            "image-decode-deny" => {
+                self.image_decode_deny = Some(crate::image::ImageDecodeDeny::parse(val)?)
+            }
             o => bail!(
                 "unknown setting '{o}' (mode/rung/fit/orientation/upscale/ladder/max-short-side/segment-seconds/crf/\
                  target/gop/video-bitrate/video-buffer/rate-mode/video-speed/audio/audio-bitrate/audio-quality/audio-filter/\
@@ -853,16 +900,28 @@ impl<'de> serde::Deserialize<'de> for SettingValue {
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str("a number or a word")
             }
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<SettingValue, E> {
+            fn visit_str<E: serde::de::Error>(
+                self,
+                v: &str,
+            ) -> std::result::Result<SettingValue, E> {
                 Ok(SettingValue(v.to_string()))
             }
-            fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<SettingValue, E> {
+            fn visit_u64<E: serde::de::Error>(
+                self,
+                v: u64,
+            ) -> std::result::Result<SettingValue, E> {
                 Ok(SettingValue(v.to_string()))
             }
-            fn visit_i64<E: serde::de::Error>(self, v: i64) -> std::result::Result<SettingValue, E> {
+            fn visit_i64<E: serde::de::Error>(
+                self,
+                v: i64,
+            ) -> std::result::Result<SettingValue, E> {
                 Ok(SettingValue(v.to_string()))
             }
-            fn visit_f64<E: serde::de::Error>(self, v: f64) -> std::result::Result<SettingValue, E> {
+            fn visit_f64<E: serde::de::Error>(
+                self,
+                v: f64,
+            ) -> std::result::Result<SettingValue, E> {
                 Ok(SettingValue(v.to_string()))
             }
         }
@@ -898,11 +957,16 @@ pub fn parse_audio(s: &str) -> Result<AudioCodecPolicy> {
         "dca" => "dts",
         w => w,
     };
-    match AudioCodecPolicy::ALL.into_iter().find(|p| p.as_str() == word) {
+    match AudioCodecPolicy::ALL
+        .into_iter()
+        .find(|p| p.as_str() == word)
+    {
         Some(p) => Ok(p),
         None => bail!(
             "audio must be {}, got '{s}'",
-            AudioCodecPolicy::ALL.map(AudioCodecPolicy::as_str).join("|")
+            AudioCodecPolicy::ALL
+                .map(AudioCodecPolicy::as_str)
+                .join("|")
         ),
     }
 }
@@ -1007,7 +1071,9 @@ pub fn parse_encode_policy(s: &str) -> Result<codec::encode::tuning::RungPolicy>
     match s.trim().to_ascii_lowercase().as_str() {
         "recommended" | "default" => Ok(RungPolicy::recommended()),
         "off" | "none" => Ok(RungPolicy::new()),
-        _ => RungPolicy::parse(s).map_err(anyhow::Error::msg).context("encode-policy"),
+        _ => RungPolicy::parse(s)
+            .map_err(anyhow::Error::msg)
+            .context("encode-policy"),
     }
 }
 
@@ -1064,12 +1130,17 @@ pub fn parse_max_fps(s: &str) -> Result<Option<f64>> {
     if s.trim().eq_ignore_ascii_case("source") {
         return Ok(None);
     }
-    Ok(Some(s.trim().parse().with_context(|| format!("max-fps must be a frame rate or source, got '{s}'"))?))
+    Ok(Some(s.trim().parse().with_context(|| {
+        format!("max-fps must be a frame rate or source, got '{s}'")
+    })?))
 }
 
 /// Parse `input-fps`: a frame rate, positive and at most 1000.
 pub fn parse_input_fps(s: &str) -> Result<f64> {
-    let fps: f64 = s.trim().parse().with_context(|| format!("input-fps must be a frame rate, got '{s}'"))?;
+    let fps: f64 = s
+        .trim()
+        .parse()
+        .with_context(|| format!("input-fps must be a frame rate, got '{s}'"))?;
     if !fps.is_finite() || fps <= 0.0 || fps > 1000.0 {
         bail!("input-fps must be a frame rate above 0 and at most 1000, got '{s}'");
     }
@@ -1084,11 +1155,9 @@ pub fn parse_max_short_side(s: &str) -> Result<Option<u32>> {
     if s.trim().eq_ignore_ascii_case("standard") {
         return Ok(None);
     }
-    Ok(Some(
-        s.trim()
-            .parse()
-            .with_context(|| format!("max-short-side must be a number of pixels or standard, got '{s}'"))?,
-    ))
+    Ok(Some(s.trim().parse().with_context(|| {
+        format!("max-short-side must be a number of pixels or standard, got '{s}'")
+    })?))
 }
 
 /// Parse a coded picture buffer duration (`--video-buffer`): `500ms`, `1s`,
@@ -1131,7 +1200,9 @@ pub fn parse_subtitles(s: &str) -> Result<crate::spec::SubtitlePolicy> {
                 .filter(|l| !l.is_empty())
                 .map(String::from)
                 .collect();
-            let is_code = |l: &String| (2..=3).contains(&l.len()) && l.bytes().all(|b| b.is_ascii_lowercase());
+            let is_code = |l: &String| {
+                (2..=3).contains(&l.len()) && l.bytes().all(|b| b.is_ascii_lowercase())
+            };
             if langs.is_empty() || !langs.iter().all(is_code) {
                 bail!(
                     "subtitles must be all|none|<lang,lang,...> (ISO 639 codes such as eng,deu \
@@ -1182,9 +1253,13 @@ pub enum SeamValue {
 pub fn parse_seam(s: &str) -> Result<SeamValue> {
     match s.trim().to_ascii_lowercase().as_str() {
         "parallel" => Ok(SeamValue::Mode(ChunkSeamMode::Parallel)),
-        "constqp" | "const-qp" | "constant-qp" => Ok(SeamValue::Mode(ChunkSeamMode::ParallelConstQp)),
+        "constqp" | "const-qp" | "constant-qp" => {
+            Ok(SeamValue::Mode(ChunkSeamMode::ParallelConstQp))
+        }
         "serial" => Ok(SeamValue::EncodeSingle),
-        o => bail!("seam must be parallel|constqp (or the legacy serial = encode single), got '{o}'"),
+        o => {
+            bail!("seam must be parallel|constqp (or the legacy serial = encode single), got '{o}'")
+        }
     }
 }
 
@@ -1216,10 +1291,15 @@ pub fn parse_encode_plan(s: &str) -> Result<EncodePolicy> {
 pub fn parse_video_codec(s: &str) -> Result<crate::spec::VideoCodecPolicy> {
     use crate::spec::{ProresProfile, VideoCodecPolicy};
     let lower = s.trim().to_ascii_lowercase();
-    if let Some(profile) = lower.strip_prefix("prores-").or_else(|| lower.strip_prefix("prores_")) {
+    if let Some(profile) = lower
+        .strip_prefix("prores-")
+        .or_else(|| lower.strip_prefix("prores_"))
+    {
         return ProresProfile::parse(profile)
             .map(VideoCodecPolicy::ProRes)
-            .with_context(|| format!("unknown ProRes profile '{profile}' (proxy, lt, 422, hq, 4444, 4444xq)"));
+            .with_context(|| {
+                format!("unknown ProRes profile '{profile}' (proxy, lt, 422, hq, 4444, 4444xq)")
+            });
     }
     if let Some(p) = ProresProfile::ALL.into_iter().find(|p| p.fourcc() == lower) {
         return Ok(VideoCodecPolicy::ProRes(p));
@@ -1233,7 +1313,9 @@ pub fn parse_video_codec(s: &str) -> Result<crate::spec::VideoCodecPolicy> {
         "mpeg2" | "mpeg2video" | "m2v" | "h262" => Ok(VideoCodecPolicy::Mpeg2),
         "mpeg4" | "mp4v" | "mpeg4part2" | "xvid" | "divx" => Ok(VideoCodecPolicy::Mpeg4),
         "prores" => Ok(VideoCodecPolicy::ProRes(ProresProfile::Standard)),
-        o => bail!("codec must be av1|h264|h265|vp9|vp8|mpeg2|mpeg4|prores[-proxy|-lt|-422|-hq|-4444|-4444xq], got '{o}'"),
+        o => bail!(
+            "codec must be av1|h264|h265|vp9|vp8|mpeg2|mpeg4|prores[-proxy|-lt|-422|-hq|-4444|-4444xq], got '{o}'"
+        ),
     }
 }
 
@@ -1287,7 +1369,15 @@ pub struct RungArg {
 
 impl From<(u32, u32)> for RungArg {
     fn from((width, height): (u32, u32)) -> Self {
-        Self { width, height, bitrate: None, fit: None, orientation: None, upscale: None, standard_rate: false }
+        Self {
+            width,
+            height,
+            bitrate: None,
+            fit: None,
+            orientation: None,
+            upscale: None,
+            standard_rate: false,
+        }
     }
 }
 
@@ -1299,7 +1389,8 @@ pub fn split_rung_rate(s: &str) -> Result<(&str, Option<u32>)> {
     match s.split_once('@') {
         None => Ok((s, None)),
         Some((size, rate)) => {
-            let bps = parse_bitrate(rate).with_context(|| format!("rung '{s}': the rate after `@`"))?;
+            let bps =
+                parse_bitrate(rate).with_context(|| format!("rung '{s}': the rate after `@`"))?;
             Ok((size, Some(bps)))
         }
     }
@@ -1348,7 +1439,10 @@ pub fn parse_rung(s: &str) -> Result<RungArg> {
 }
 
 fn parse_bool(s: &str) -> bool {
-    matches!(s.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on" | "y" | "t")
+    matches!(
+        s.to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on" | "y" | "t"
+    )
 }
 
 #[cfg(test)]
@@ -1367,10 +1461,16 @@ mod tests {
     fn target_and_gop_reach_every_rung_from_any_surface() {
         // `target=vmaf=93 gop=48` as the IPC socket / API / manifest would say
         // it, resolved by the one vocabulary into every rung's Quality.
-        let s = TranscodeSettings::parse_kv_line("mode=hls rung=1280x720,640x360 target=vmaf=93 gop=48").unwrap();
+        let s = TranscodeSettings::parse_kv_line(
+            "mode=hls rung=1280x720,640x360 target=vmaf=93 gop=48",
+        )
+        .unwrap();
         let spec = s.into_spec(1280, 720).unwrap().with_rung_policy_resolved();
         for r in &spec.rungs {
-            assert_eq!(r.quality.target, codec::encode::tuning::QualityTarget::Vmaf(93));
+            assert_eq!(
+                r.quality.target,
+                codec::encode::tuning::QualityTarget::Vmaf(93)
+            );
             assert_eq!(r.quality.keyframe_interval, Some(48));
             assert_eq!(r.quality.overrides.keyframe_interval, Some(48));
         }
@@ -1473,7 +1573,9 @@ mod tests {
 
     #[test]
     fn mp3_channels_and_the_audio_mode_are_in_the_vocabulary() {
-        let s = TranscodeSettings::parse_kv_line("audio=mp3 audio-channels=stereo audio-bitrate=192k").unwrap();
+        let s =
+            TranscodeSettings::parse_kv_line("audio=mp3 audio-channels=stereo audio-bitrate=192k")
+                .unwrap();
         assert_eq!(s.audio, Some(AudioCodecPolicy::ForceMp3));
         assert_eq!(s.audio_channels, Some(AudioChannels::Stereo));
         for (word, want) in [
@@ -1485,34 +1587,66 @@ mod tests {
         ] {
             assert_eq!(parse_audio_channels(word).unwrap(), want, "{word}");
         }
-        assert!(parse_audio_channels("quad").is_err(), "a layout rivet does not produce");
-        let hls = TranscodeSettings::parse_kv_line("mode=hls audio-channels=5.1 audio-stereo-fallback=true")
-            .unwrap()
-            .into_spec(1280, 720)
-            .unwrap();
-        assert_eq!((hls.audio_channels, hls.audio_stereo_fallback), (AudioChannels::Surround51, true));
+        assert!(
+            parse_audio_channels("quad").is_err(),
+            "a layout rivet does not produce"
+        );
+        let hls = TranscodeSettings::parse_kv_line(
+            "mode=hls audio-channels=5.1 audio-stereo-fallback=true",
+        )
+        .unwrap()
+        .into_spec(1280, 720)
+        .unwrap();
+        assert_eq!(
+            (hls.audio_channels, hls.audio_stereo_fallback),
+            (AudioChannels::Surround51, true)
+        );
 
-        let audio = TranscodeSettings::parse_kv_line("mode=audio").unwrap().into_spec(0, 0).unwrap();
-        assert_eq!((audio.mode, audio.rungs.len()), (crate::spec::OutputMode::AudioOnly, 0));
-        let err = TranscodeSettings::parse_kv_line("mode=audio crf=28").unwrap().into_spec(0, 0).unwrap_err();
+        let audio = TranscodeSettings::parse_kv_line("mode=audio")
+            .unwrap()
+            .into_spec(0, 0)
+            .unwrap();
+        assert_eq!(
+            (audio.mode, audio.rungs.len()),
+            (crate::spec::OutputMode::AudioOnly, 0)
+        );
+        let err = TranscodeSettings::parse_kv_line("mode=audio crf=28")
+            .unwrap()
+            .into_spec(0, 0)
+            .unwrap_err();
         assert!(format!("{err:#}").contains("writes no video"), "{err:#}");
     }
 
     #[test]
     fn he_aac_is_in_the_vocabulary() {
-        for (word, want) in
-            [("auto", HeAacPolicy::Auto), ("passthrough", HeAacPolicy::Passthrough), ("core", HeAacPolicy::Core)]
-        {
+        for (word, want) in [
+            ("auto", HeAacPolicy::Auto),
+            ("passthrough", HeAacPolicy::Passthrough),
+            ("core", HeAacPolicy::Core),
+        ] {
             assert_eq!(parse_he_aac(word).unwrap(), want, "{word}");
             assert_eq!(want.as_str(), word);
-            let spec = TranscodeSettings::parse_kv_line(&format!("he-aac={word}")).unwrap().into_spec(1280, 720).unwrap();
+            let spec = TranscodeSettings::parse_kv_line(&format!("he-aac={word}"))
+                .unwrap()
+                .into_spec(1280, 720)
+                .unwrap();
             assert_eq!(spec.he_aac, want);
         }
         assert!(parse_he_aac("sbr").is_err());
-        let spec = TranscodeSettings::parse_kv_line("audio=opus").unwrap().into_spec(1280, 720).unwrap();
+        let spec = TranscodeSettings::parse_kv_line("audio=opus")
+            .unwrap()
+            .into_spec(1280, 720)
+            .unwrap();
         assert_eq!(spec.he_aac, HeAacPolicy::Auto, "the default");
-        let audio = TranscodeSettings::parse_kv_line("mode=audio he-aac=core").unwrap().into_spec(0, 0).unwrap();
-        assert_eq!(audio.he_aac, HeAacPolicy::Core, "the audio-only path keeps it too");
+        let audio = TranscodeSettings::parse_kv_line("mode=audio he-aac=core")
+            .unwrap()
+            .into_spec(0, 0)
+            .unwrap();
+        assert_eq!(
+            audio.he_aac,
+            HeAacPolicy::Core,
+            "the audio-only path keeps it too"
+        );
     }
 
     #[test]
@@ -1521,49 +1655,84 @@ mod tests {
         assert_eq!(deny.as_string(), "aac");
         assert!(deny.denies("aac") && deny.denies("mp4a") && !deny.denies("opus"));
         let deny = parse_audio_decode_deny(" mp3 , aac,pcm ").unwrap();
-        assert_eq!(deny.as_string(), "aac,mp3,pcm", "the names, in canonical order");
+        assert_eq!(
+            deny.as_string(),
+            "aac,mp3,pcm",
+            "the names, in canonical order"
+        );
         assert!(deny.denies("pcm_s16le") && deny.denies("mp3") && !deny.denies("mp2"));
         for word in ["", "none", ","] {
-            assert!(parse_audio_decode_deny(word).unwrap().is_empty(), "'{word}' denies nothing");
+            assert!(
+                parse_audio_decode_deny(word).unwrap().is_empty(),
+                "'{word}' denies nothing"
+            );
         }
         for name in AudioDecodeDeny::CODECS {
             assert_eq!(parse_audio_decode_deny(name).unwrap().as_string(), name);
         }
         let err = parse_audio_decode_deny("aac,wma").unwrap_err();
         assert!(format!("{err:#}").contains("got 'wma'"), "{err:#}");
-        assert!(parse_audio_decode_deny("AAC").is_err(), "names are lower case, as every other word");
+        assert!(
+            parse_audio_decode_deny("AAC").is_err(),
+            "names are lower case, as every other word"
+        );
         assert!(TranscodeSettings::parse_kv_line("audio-decode-deny=aac,bogus").is_err());
 
         let s = TranscodeSettings::parse_kv_line("audio-decode-deny=aac").unwrap();
         assert!(!s.is_empty());
         let spec = s.into_spec(1280, 720).unwrap();
         assert_eq!(spec.audio_decode_deny.as_string(), "aac");
-        let spec = TranscodeSettings::parse_kv_line("audio=opus").unwrap().into_spec(1280, 720).unwrap();
-        assert!(spec.audio_decode_deny.is_empty(), "the default denies nothing");
+        let spec = TranscodeSettings::parse_kv_line("audio=opus")
+            .unwrap()
+            .into_spec(1280, 720)
+            .unwrap();
+        assert!(
+            spec.audio_decode_deny.is_empty(),
+            "the default denies nothing"
+        );
         let audio = TranscodeSettings::parse_kv_line("mode=audio audio-decode-deny=aac,opus")
             .unwrap()
             .into_spec(0, 0)
             .unwrap();
-        assert_eq!(audio.audio_decode_deny.as_string(), "aac,opus", "the audio-only path keeps it too");
+        assert_eq!(
+            audio.audio_decode_deny.as_string(),
+            "aac,opus",
+            "the audio-only path keeps it too"
+        );
     }
 
     /// Every refusal the audio knobs have, at the spec, before any work.
     #[test]
     fn audio_knobs_that_cannot_be_honoured_are_refused_up_front() {
         let refused = |line: &str, needle: &str| {
-            let err = TranscodeSettings::parse_kv_line(line).unwrap().into_spec(1280, 720).unwrap_err();
+            let err = TranscodeSettings::parse_kv_line(line)
+                .unwrap()
+                .into_spec(1280, 720)
+                .unwrap_err();
             assert!(format!("{err:#}").contains(needle), "{line}: {err:#}");
         };
         refused("mode=hls audio=mp3", "not available for HLS");
-        refused("audio=opus audio-channels=5.1 mode=audio audio-container=mp3", "holds MP3 only");
-        refused("audio=aac mode=audio audio-container=ogg", "holds Opus or Vorbis");
+        refused(
+            "audio=opus audio-channels=5.1 mode=audio audio-container=mp3",
+            "holds MP3 only",
+        );
+        refused(
+            "audio=aac mode=audio audio-container=ogg",
+            "holds Opus or Vorbis",
+        );
         refused("audio=drop mode=audio", "nothing to write");
         refused("audio=drop audio-channels=stereo", "audio policy is `drop`");
         refused("audio-stereo-fallback=true", "for HLS output");
-        refused("mode=hls audio-channels=stereo audio-stereo-fallback=true", "nothing to fall back from");
+        refused(
+            "mode=hls audio-channels=stereo audio-stereo-fallback=true",
+            "nothing to fall back from",
+        );
         refused("audio=mp3 audio-channels=5.1", "two channels at most");
         refused("audio=mp3 audio-bitrate=100k", "not an MP3 bitrate");
-        TranscodeSettings::parse_kv_line("audio=mp3 audio-bitrate=320k").unwrap().into_spec(1280, 720).unwrap();
+        TranscodeSettings::parse_kv_line("audio=mp3 audio-bitrate=320k")
+            .unwrap()
+            .into_spec(1280, 720)
+            .unwrap();
         // The codecs added with rivet's own encoders, against their files,
         // layouts and rates.
         refused("audio=vorbis", "goes in a WebM file");
@@ -1576,9 +1745,15 @@ mod tests {
         refused("audio=eac3 audio-bitrate=10k", "not an E-AC-3 bitrate");
         refused("audio=dts audio-bitrate=1000k", "not a DTS bitrate");
         refused("audio=he-aac audio-bitrate=600k", "outside HE-AAC's range");
-        refused("audio=vorbis container=webm codec=vp9 audio-bitrate=128k", "audio-quality");
+        refused(
+            "audio=vorbis container=webm codec=vp9 audio-bitrate=128k",
+            "audio-quality",
+        );
         refused("audio=opus audio-quality=4", "applies to Vorbis output");
-        assert!(TranscodeSettings::parse_kv_line("audio=vorbis audio-quality=11").is_err(), "outside -1..=10");
+        assert!(
+            TranscodeSettings::parse_kv_line("audio=vorbis audio-quality=11").is_err(),
+            "outside -1..=10"
+        );
         for ok in [
             "audio=ac3 audio-bitrate=448k",
             "audio=eac3 audio-bitrate=100k",
@@ -1589,10 +1764,16 @@ mod tests {
             "mode=hls audio=eac3",
             "mode=hls audio=he-aac",
         ] {
-            TranscodeSettings::parse_kv_line(ok).unwrap().into_spec(1280, 720).unwrap_or_else(|e| panic!("{ok}: {e:#}"));
+            TranscodeSettings::parse_kv_line(ok)
+                .unwrap()
+                .into_spec(1280, 720)
+                .unwrap_or_else(|e| panic!("{ok}: {e:#}"));
         }
         // Opus bitrates stay free-form.
-        TranscodeSettings::parse_kv_line("audio=opus audio-bitrate=100k").unwrap().into_spec(1280, 720).unwrap();
+        TranscodeSettings::parse_kv_line("audio=opus audio-bitrate=100k")
+            .unwrap()
+            .into_spec(1280, 720)
+            .unwrap();
     }
 
     /// Every codec word, and the file an audio-only output of it is.
@@ -1601,9 +1782,24 @@ mod tests {
         use crate::spec::Container;
         for (word, policy, file, ext) in [
             ("opus", AudioCodecPolicy::ForceOpus, Container::Ogg, "opus"),
-            ("vorbis", AudioCodecPolicy::ForceVorbis, Container::Ogg, "ogg"),
-            ("he-aac", AudioCodecPolicy::ForceHeAac, Container::M4a, "m4a"),
-            ("he-aacv2", AudioCodecPolicy::ForceHeAacV2, Container::M4a, "m4a"),
+            (
+                "vorbis",
+                AudioCodecPolicy::ForceVorbis,
+                Container::Ogg,
+                "ogg",
+            ),
+            (
+                "he-aac",
+                AudioCodecPolicy::ForceHeAac,
+                Container::M4a,
+                "m4a",
+            ),
+            (
+                "he-aacv2",
+                AudioCodecPolicy::ForceHeAacV2,
+                Container::M4a,
+                "m4a",
+            ),
             ("ac3", AudioCodecPolicy::ForceAc3, Container::M4a, "m4a"),
             ("eac3", AudioCodecPolicy::ForceEac3, Container::M4a, "m4a"),
             ("dts", AudioCodecPolicy::ForceDts, Container::M4a, "m4a"),
@@ -1612,8 +1808,15 @@ mod tests {
         ] {
             assert_eq!(parse_audio(word).unwrap(), policy, "{word}");
             assert_eq!(policy.as_str(), word);
-            let spec = TranscodeSettings::parse_kv_line(&format!("mode=audio audio={word}")).unwrap().into_spec(0, 0).unwrap();
-            assert_eq!((spec.container, spec.file_extension()), (file, ext), "{word}");
+            let spec = TranscodeSettings::parse_kv_line(&format!("mode=audio audio={word}"))
+                .unwrap()
+                .into_spec(0, 0)
+                .unwrap();
+            assert_eq!(
+                (spec.container, spec.file_extension()),
+                (file, ext),
+                "{word}"
+            );
         }
         assert_eq!(parse_audio("e-ac-3").unwrap(), AudioCodecPolicy::ForceEac3);
         assert_eq!(parse_audio_container("ogg").unwrap(), Some(Container::Ogg));
@@ -1623,9 +1826,15 @@ mod tests {
 
     #[test]
     fn absurd_audio_bitrates_are_rejected() {
-        let s = TranscodeSettings { audio_bitrate: Some(240_000_000), ..Default::default() };
+        let s = TranscodeSettings {
+            audio_bitrate: Some(240_000_000),
+            ..Default::default()
+        };
         assert!(s.into_spec(1280, 720).is_err());
-        let s = TranscodeSettings { audio_bitrate: Some(1), ..Default::default() };
+        let s = TranscodeSettings {
+            audio_bitrate: Some(1),
+            ..Default::default()
+        };
         assert!(s.into_spec(1280, 720).is_err());
     }
 
@@ -1636,7 +1845,10 @@ mod tests {
         assert_eq!(plain.chroma_downsample, ChromaDownsample::Box);
         let s = TranscodeSettings::parse_kv_line("chroma-downsample=lanczos").unwrap();
         assert_eq!(s.chroma_downsample, Some(ChromaDownsample::Lanczos));
-        assert_eq!(s.into_spec(1280, 720).unwrap().chroma_downsample, ChromaDownsample::Lanczos);
+        assert_eq!(
+            s.into_spec(1280, 720).unwrap().chroma_downsample,
+            ChromaDownsample::Lanczos
+        );
         let s = TranscodeSettings::parse_kv_line("chroma-filter=box").unwrap();
         assert_eq!(s.chroma_downsample, Some(ChromaDownsample::Box));
         assert!(TranscodeSettings::parse_kv_line("chroma-downsample=bicubic").is_err());
@@ -1650,7 +1862,10 @@ mod tests {
             "codec=h264 rungs=1920x1080,1080x1920@4M:cover:fixed:upscale,640x360:no-upscale fit=pad orientation=fixed upscale=1",
         )
         .unwrap();
-        assert_eq!((s.fit, s.orientation, s.upscale), (Some(Fit::Pad), Some(Orientation::Fixed), true));
+        assert_eq!(
+            (s.fit, s.orientation, s.upscale),
+            (Some(Fit::Pad), Some(Orientation::Fixed), true)
+        );
         assert_eq!(
             s.rungs[1],
             RungArg {
@@ -1663,13 +1878,25 @@ mod tests {
         );
         assert_eq!(s.rungs[2].upscale, Some(false));
         let spec = s.into_spec(1920, 1080).unwrap();
-        assert_eq!((spec.fit, spec.orientation, spec.upscale), (Fit::Pad, Orientation::Fixed, true));
-        assert_eq!((spec.rungs[0].fit, spec.rungs[1].fit), (None, Some(Fit::Cover)));
+        assert_eq!(
+            (spec.fit, spec.orientation, spec.upscale),
+            (Fit::Pad, Orientation::Fixed, true)
+        );
+        assert_eq!(
+            (spec.rungs[0].fit, spec.rungs[1].fit),
+            (None, Some(Fit::Cover))
+        );
         assert_eq!(spec.rungs[1].quality.overrides.bitrate, Some(4_000_000));
 
         // Absent, the defaults: contain, auto, no upscale.
-        let spec = TranscodeSettings::parse_kv_line("rungs=1280x720").unwrap().into_spec(1920, 1080).unwrap();
-        assert_eq!((spec.fit, spec.orientation, spec.upscale), (Fit::Contain, Orientation::Auto, false));
+        let spec = TranscodeSettings::parse_kv_line("rungs=1280x720")
+            .unwrap()
+            .into_spec(1920, 1080)
+            .unwrap();
+        assert_eq!(
+            (spec.fit, spec.orientation, spec.upscale),
+            (Fit::Contain, Orientation::Auto, false)
+        );
     }
 
     #[test]
@@ -1682,7 +1909,10 @@ mod tests {
             assert_eq!(crate::fit::Fit::parse(fit.as_str()).unwrap(), fit);
         }
         // mode=audio refuses them by name, as it does every video knob.
-        let e = TranscodeSettings::parse_kv_line("mode=audio fit=cover").unwrap().into_spec(0, 0).unwrap_err();
+        let e = TranscodeSettings::parse_kv_line("mode=audio fit=cover")
+            .unwrap()
+            .into_spec(0, 0)
+            .unwrap_err();
         assert!(format!("{e:#}").contains("fit"), "{e:#}");
     }
 
@@ -1696,9 +1926,14 @@ mod tests {
     fn speed_is_refused_with_a_reason() {
         // The knob was removed rather than reinterpreted, so an old `speed=6`
         // should explain itself instead of reading as a typo.
-        let err = TranscodeSettings::parse_kv_line("speed=6").unwrap_err().to_string();
+        let err = TranscodeSettings::parse_kv_line("speed=6")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("tuning tables"), "unhelpful error: {err}");
-        assert!(err.contains("crf"), "should point at the knob that remains: {err}");
+        assert!(
+            err.contains("crf"),
+            "should point at the knob that remains: {err}"
+        );
     }
 
     #[test]
@@ -1721,26 +1956,53 @@ mod tests {
              encode-policy=step=1:bitrate=3M",
         )
         .unwrap();
-        assert_eq!(s.rungs[0], RungArg { bitrate: Some(5_000_000), ..(1920, 1080).into() });
-        assert_eq!((s.video_bitrate, s.video_buffer_ms), (Some(1_500_000), Some(1000)));
+        assert_eq!(
+            s.rungs[0],
+            RungArg {
+                bitrate: Some(5_000_000),
+                ..(1920, 1080).into()
+            }
+        );
+        assert_eq!(
+            (s.video_bitrate, s.video_buffer_ms),
+            (Some(1_500_000), Some(1000))
+        );
         let spec = s.into_spec(1920, 1080).unwrap().with_rung_policy_resolved();
-        let rates: Vec<_> = spec.rungs.iter().map(|r| (r.quality.overrides.bitrate, r.quality.overrides.buffer_ms)).collect();
+        let rates: Vec<_> = spec
+            .rungs
+            .iter()
+            .map(|r| (r.quality.overrides.bitrate, r.quality.overrides.buffer_ms))
+            .collect();
         assert_eq!(
             rates,
-            vec![(Some(5_000_000), Some(1000)), (Some(3_000_000), Some(1000)), (Some(1_500_000), Some(1000))]
+            vec![
+                (Some(5_000_000), Some(1000)),
+                (Some(3_000_000), Some(1000)),
+                (Some(1_500_000), Some(1000))
+            ]
         );
         // The policy's own every-rung set wins over `video-bitrate` too.
-        let s = TranscodeSettings::parse_kv_line("codec=h264 rung=1280x720 video-bitrate=1.5M encode-policy=any:bitrate=2M")
-            .unwrap();
+        let s = TranscodeSettings::parse_kv_line(
+            "codec=h264 rung=1280x720 video-bitrate=1.5M encode-policy=any:bitrate=2M",
+        )
+        .unwrap();
         let spec = s.into_spec(1280, 720).unwrap().with_rung_policy_resolved();
         assert_eq!(spec.rungs[0].quality.overrides.bitrate, Some(2_000_000));
         // Nothing named: no rate anywhere, the spec as it always was.
         let plain = TranscodeSettings::parse_kv_line("codec=h264 rung=1280x720").unwrap();
         let spec = plain.into_spec(1280, 720).unwrap();
         assert!(spec.rung_policy.global.is_empty() && spec.rung_policy.rules.is_empty());
-        assert_eq!(spec.with_rung_policy_resolved().rungs[0].quality.overrides, Default::default());
+        assert_eq!(
+            spec.with_rung_policy_resolved().rungs[0].quality.overrides,
+            Default::default()
+        );
         // `vb` is the short key, as `ab` is for audio; a buffer needs a unit.
-        assert_eq!(TranscodeSettings::parse_kv_line("vb=800k").unwrap().video_bitrate, Some(800_000));
+        assert_eq!(
+            TranscodeSettings::parse_kv_line("vb=800k")
+                .unwrap()
+                .video_bitrate,
+            Some(800_000)
+        );
         assert!(TranscodeSettings::parse_kv_line("video-buffer=1000").is_err());
     }
 
@@ -1749,13 +2011,25 @@ mod tests {
     #[test]
     fn video_speed_reaches_the_rungs_with_the_policy_winning() {
         use codec::encode::tuning::SpeedTier;
-        let s = TranscodeSettings::parse_kv_line("codec=vp9 rung=1280x720,640x360 video-speed=archive").unwrap();
+        let s =
+            TranscodeSettings::parse_kv_line("codec=vp9 rung=1280x720,640x360 video-speed=archive")
+                .unwrap();
         assert_eq!(s.video_speed, Some(SpeedTier::Archive));
         let spec = s.into_spec(1280, 720).unwrap().with_rung_policy_resolved();
-        assert!(spec.rungs.iter().all(|r| r.quality.overrides.speed_tier == Some(SpeedTier::Archive)));
-        let s = TranscodeSettings::parse_kv_line("rung=1280x720 video-speed=draft encode-policy=any:speed=standard").unwrap();
+        assert!(
+            spec.rungs
+                .iter()
+                .all(|r| r.quality.overrides.speed_tier == Some(SpeedTier::Archive))
+        );
+        let s = TranscodeSettings::parse_kv_line(
+            "rung=1280x720 video-speed=draft encode-policy=any:speed=standard",
+        )
+        .unwrap();
         let spec = s.into_spec(1280, 720).unwrap().with_rung_policy_resolved();
-        assert_eq!(spec.rungs[0].quality.overrides.speed_tier, Some(SpeedTier::Standard));
+        assert_eq!(
+            spec.rungs[0].quality.overrides.speed_tier,
+            Some(SpeedTier::Standard)
+        );
         for bad in ["video-speed=6", "video-speed=fast", "video-speed="] {
             assert!(TranscodeSettings::parse_kv_line(bad).is_err(), "{bad}");
         }
@@ -1768,33 +2042,76 @@ mod tests {
     #[test]
     fn a_rate_mode_reaches_the_rungs_and_defaults_their_rate() {
         use codec::encode::tuning::{RateMode, default_cbr_bitrate};
-        for (word, mode) in [("cbr", RateMode::Constant), ("constant", RateMode::Constant), ("average", RateMode::Average), ("abr", RateMode::Average)] {
-            assert_eq!(TranscodeSettings::parse_kv_line(&format!("rate-mode={word}")).unwrap().rate_mode, Some(mode));
+        for (word, mode) in [
+            ("cbr", RateMode::Constant),
+            ("constant", RateMode::Constant),
+            ("average", RateMode::Average),
+            ("abr", RateMode::Average),
+        ] {
+            assert_eq!(
+                TranscodeSettings::parse_kv_line(&format!("rate-mode={word}"))
+                    .unwrap()
+                    .rate_mode,
+                Some(mode)
+            );
         }
         let err = TranscodeSettings::parse_kv_line("rate-mode=vbr").unwrap_err();
-        assert!(format!("{err:#}").contains("cbr|constant|average|abr"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("cbr|constant|average|abr"),
+            "{err:#}"
+        );
 
         let s = TranscodeSettings::parse_kv_line("codec=h264 rung=1920x1080@6M,1280x720,640x360 rate-mode=cbr encode-policy=short<=360:rate=abr,bitrate=500k").unwrap();
-        let spec = s.into_spec(1920, 1080).unwrap().with_constant_rates_resolved(60.0);
-        let got: Vec<_> = spec.rungs.iter().map(|r| (r.quality.overrides.rate_mode, r.quality.overrides.bitrate)).collect();
+        let spec = s
+            .into_spec(1920, 1080)
+            .unwrap()
+            .with_constant_rates_resolved(60.0);
+        let got: Vec<_> = spec
+            .rungs
+            .iter()
+            .map(|r| (r.quality.overrides.rate_mode, r.quality.overrides.bitrate))
+            .collect();
         assert_eq!(
             got,
             vec![
                 (Some(RateMode::Constant), Some(6_000_000)),
-                (Some(RateMode::Constant), Some(default_cbr_bitrate(codec::frame::VideoCodec::H264, 720, 60.0))),
+                (
+                    Some(RateMode::Constant),
+                    Some(default_cbr_bitrate(
+                        codec::frame::VideoCodec::H264,
+                        720,
+                        60.0
+                    ))
+                ),
                 (Some(RateMode::Average), Some(500_000)),
             ]
         );
         assert_eq!(got[1].1, Some(4_500_000), "720p60 H.264: 3 Mb/s x 1.5");
         // `video-bitrate` is the rate of every rung without its own.
-        let s = TranscodeSettings::parse_kv_line("codec=av1 rung=1280x720 rate-mode=cbr video-bitrate=2M").unwrap();
-        let spec = s.into_spec(1280, 720).unwrap().with_constant_rates_resolved(30.0);
+        let s = TranscodeSettings::parse_kv_line(
+            "codec=av1 rung=1280x720 rate-mode=cbr video-bitrate=2M",
+        )
+        .unwrap();
+        let spec = s
+            .into_spec(1280, 720)
+            .unwrap()
+            .with_constant_rates_resolved(30.0);
         assert_eq!(spec.rungs[0].quality.overrides.bitrate, Some(2_000_000));
         // A ladder rung takes the default too; AV1 is half of H.264.
-        let s = TranscodeSettings::parse_kv_line("codec=av1 ladder=true max-short-side=1080 rate-mode=cbr").unwrap();
-        let spec = s.into_spec(1920, 1080).unwrap().with_constant_rates_resolved(30.0);
+        let s = TranscodeSettings::parse_kv_line(
+            "codec=av1 ladder=true max-short-side=1080 rate-mode=cbr",
+        )
+        .unwrap();
+        let spec = s
+            .into_spec(1920, 1080)
+            .unwrap()
+            .with_constant_rates_resolved(30.0);
         assert_eq!(spec.rungs[0].quality.overrides.bitrate, Some(2_500_000));
-        assert!(spec.rungs.iter().all(|r| r.quality.overrides.bitrate.is_some()));
+        assert!(
+            spec.rungs
+                .iter()
+                .all(|r| r.quality.overrides.bitrate.is_some())
+        );
     }
 
     /// A constant-rate request that cannot be coded is refused while the
@@ -1802,16 +2119,33 @@ mod tests {
     #[test]
     fn an_impossible_constant_rate_is_refused_by_name() {
         for (line, words) in [
-            ("codec=h264 rung=1280x720 rate-mode=cbr crf=23", &["crf=23", "rate=cbr"][..]),
-            ("codec=h264 rung=1280x720 rate-mode=cbr video-buffer=0", &["buffer=0", "rate=cbr"][..]),
-            ("mode=single codec=h264 rung=1280x720 rate-mode=cbr seam=constqp", &["constqp", "rate=cbr"][..]),
+            (
+                "codec=h264 rung=1280x720 rate-mode=cbr crf=23",
+                &["crf=23", "rate=cbr"][..],
+            ),
+            (
+                "codec=h264 rung=1280x720 rate-mode=cbr video-buffer=0",
+                &["buffer=0", "rate=cbr"][..],
+            ),
+            (
+                "mode=single codec=h264 rung=1280x720 rate-mode=cbr seam=constqp",
+                &["constqp", "rate=cbr"][..],
+            ),
         ] {
-            let err = TranscodeSettings::parse_kv_line(line).unwrap().into_spec(1280, 720).unwrap_err();
+            let err = TranscodeSettings::parse_kv_line(line)
+                .unwrap()
+                .into_spec(1280, 720)
+                .unwrap_err();
             let msg = format!("{err:#}");
             assert!(words.iter().all(|w| msg.contains(w)), "{line}: {msg}");
         }
         // AV1 at a constant rate is a job for the cards, not refused here.
-        assert!(TranscodeSettings::parse_kv_line("codec=av1 rung=1280x720 rate-mode=cbr").unwrap().into_spec(1280, 720).is_ok());
+        assert!(
+            TranscodeSettings::parse_kv_line("codec=av1 rung=1280x720 rate-mode=cbr")
+                .unwrap()
+                .into_spec(1280, 720)
+                .is_ok()
+        );
     }
 
     // ── every omitted-key default has a word that states it ─────────────────
@@ -1833,9 +2167,17 @@ mod tests {
         let with = format!("{base} {word}");
         let a = TranscodeSettings::parse_kv_line(base).unwrap();
         let b = TranscodeSettings::parse_kv_line(&with).unwrap();
-        assert_eq!(a.is_empty(), b.is_empty(), "'{word}' changes which engine path runs");
+        assert_eq!(
+            a.is_empty(),
+            b.is_empty(),
+            "'{word}' changes which engine path runs"
+        );
         for fps in [23.976, 25.0, 29.97, 30.0, 50.0, 59.94, 60.0] {
-            assert_eq!(built(base, fps), built(&with, fps), "'{word}' beside '{base}' at {fps} fps");
+            assert_eq!(
+                built(base, fps),
+                built(&with, fps),
+                "'{word}' beside '{base}' at {fps} fps"
+            );
         }
     }
 
@@ -1860,11 +2202,26 @@ mod tests {
             states_the_default(base, "audio-bitrate=standard");
             states_the_default(base, "ab=standard");
         }
-        assert_eq!(TranscodeSettings::parse_kv_line("audio-bitrate=Standard").unwrap().audio_bitrate, None);
+        assert_eq!(
+            TranscodeSettings::parse_kv_line("audio-bitrate=Standard")
+                .unwrap()
+                .audio_bitrate,
+            None
+        );
         // It clears a rate given before it, as any later value does.
-        assert_eq!(TranscodeSettings::parse_kv_line("audio-bitrate=96k audio-bitrate=standard").unwrap().audio_bitrate, None);
+        assert_eq!(
+            TranscodeSettings::parse_kv_line("audio-bitrate=96k audio-bitrate=standard")
+                .unwrap()
+                .audio_bitrate,
+            None
+        );
         assert!(TranscodeSettings::parse_kv_line("").unwrap().is_empty());
-        assert!(TranscodeSettings::parse_kv_line("audio-bitrate=standard").unwrap().is_empty(), "the default path");
+        assert!(
+            TranscodeSettings::parse_kv_line("audio-bitrate=standard")
+                .unwrap()
+                .is_empty(),
+            "the default path"
+        );
         assert!(TranscodeSettings::parse_kv_line("audio-bitrate=standardish").is_err());
         assert_eq!(parse_bitrate_or_standard("240k").unwrap(), Some(240_000));
     }
@@ -1884,22 +2241,43 @@ mod tests {
             states_the_default(base, "vb=standard");
         }
         // With cbr each rung takes the default for its codec, size and rate.
-        let spec = TranscodeSettings::parse_kv_line("codec=h264 rung=1920x1080,1280x720 rate-mode=cbr video-bitrate=standard")
-            .unwrap()
-            .into_spec(1920, 1080)
-            .unwrap()
-            .with_constant_rates_resolved(30.0);
-        let rates: Vec<_> = spec.rungs.iter().map(|r| r.quality.overrides.bitrate).collect();
+        let spec = TranscodeSettings::parse_kv_line(
+            "codec=h264 rung=1920x1080,1280x720 rate-mode=cbr video-bitrate=standard",
+        )
+        .unwrap()
+        .into_spec(1920, 1080)
+        .unwrap()
+        .with_constant_rates_resolved(30.0);
+        let rates: Vec<_> = spec
+            .rungs
+            .iter()
+            .map(|r| r.quality.overrides.bitrate)
+            .collect();
         assert_eq!(
             rates,
             vec![
-                Some(default_cbr_bitrate(codec::frame::VideoCodec::H264, 1080, 30.0)),
-                Some(default_cbr_bitrate(codec::frame::VideoCodec::H264, 720, 30.0)),
+                Some(default_cbr_bitrate(
+                    codec::frame::VideoCodec::H264,
+                    1080,
+                    30.0
+                )),
+                Some(default_cbr_bitrate(
+                    codec::frame::VideoCodec::H264,
+                    720,
+                    30.0
+                )),
             ]
         );
-        assert!(TranscodeSettings::parse_kv_line("video-bitrate=standard").unwrap().is_empty());
+        assert!(
+            TranscodeSettings::parse_kv_line("video-bitrate=standard")
+                .unwrap()
+                .is_empty()
+        );
         // mode=audio refuses a video rate by name; the default, stated, is none.
-        TranscodeSettings::parse_kv_line("mode=audio video-bitrate=standard").unwrap().into_spec(0, 0).unwrap();
+        TranscodeSettings::parse_kv_line("mode=audio video-bitrate=standard")
+            .unwrap()
+            .into_spec(0, 0)
+            .unwrap();
     }
 
     /// `WxH@standard`: the rung's rate is the one it would have with none
@@ -1910,7 +2288,13 @@ mod tests {
         use codec::encode::tuning::{RateMode, default_cbr_bitrate};
         use codec::frame::VideoCodec::H264;
         let r = parse_rung("1920x1080@standard").unwrap();
-        assert_eq!(r, RungArg { standard_rate: true, ..(1920, 1080).into() });
+        assert_eq!(
+            r,
+            RungArg {
+                standard_rate: true,
+                ..(1920, 1080).into()
+            }
+        );
         let r = parse_rung("1080x1920@Standard:cover:fixed").unwrap();
         assert!(r.standard_rate && r.bitrate.is_none() && r.fit == Some(crate::fit::Fit::Cover));
         assert!(!parse_rung("1920x1080@3M").unwrap().standard_rate);
@@ -1931,26 +2315,48 @@ mod tests {
         for fps in [25.0, 30.0, 60.0] {
             // Beside `video-bitrate`: the default for its size, the others the rate.
             assert_eq!(
-                rates("codec=h264 rung=1920x1080@standard,1280x720,640x360@500k rate-mode=cbr video-bitrate=2M", fps),
-                vec![(cbr, Some(default_cbr_bitrate(H264, 1080, fps))), (cbr, Some(2_000_000)), (cbr, Some(500_000))],
+                rates(
+                    "codec=h264 rung=1920x1080@standard,1280x720,640x360@500k rate-mode=cbr video-bitrate=2M",
+                    fps
+                ),
+                vec![
+                    (cbr, Some(default_cbr_bitrate(H264, 1080, fps))),
+                    (cbr, Some(2_000_000)),
+                    (cbr, Some(500_000))
+                ],
                 "{fps} fps"
             );
             // Beside a policy `bitrate=` for every rung, too.
             assert_eq!(
-                rates("codec=h264 rung=1920x1080@standard,1280x720 rate-mode=cbr encode-policy=any:bitrate=3M", fps),
-                vec![(cbr, Some(default_cbr_bitrate(H264, 1080, fps))), (cbr, Some(3_000_000))],
+                rates(
+                    "codec=h264 rung=1920x1080@standard,1280x720 rate-mode=cbr encode-policy=any:bitrate=3M",
+                    fps
+                ),
+                vec![
+                    (cbr, Some(default_cbr_bitrate(H264, 1080, fps))),
+                    (cbr, Some(3_000_000))
+                ],
             );
             // With no rate named anywhere it is the rung with no `@` at all.
-            assert_eq!(built("codec=h264 rung=1920x1080@standard rate-mode=cbr", fps).replace("standard_rate: true", "standard_rate: false"),
-                built("codec=h264 rung=1920x1080 rate-mode=cbr", fps));
+            assert_eq!(
+                built("codec=h264 rung=1920x1080@standard rate-mode=cbr", fps)
+                    .replace("standard_rate: true", "standard_rate: false"),
+                built("codec=h264 rung=1920x1080 rate-mode=cbr", fps)
+            );
         }
         // An average-rate rung at standard has no rate: its quality target.
         assert_eq!(
-            rates("codec=h264 rung=1280x720@standard,640x360 video-bitrate=1M", 30.0),
+            rates(
+                "codec=h264 rung=1280x720@standard,640x360 video-bitrate=1M",
+                30.0
+            ),
             vec![(None, None), (None, Some(1_000_000))]
         );
         // A mode with no video rate refuses it by name, as it does `@RATE`.
-        let err = TranscodeSettings::parse_kv_line("mode=audio rung=1280x720@standard").unwrap().into_spec(0, 0).unwrap_err();
+        let err = TranscodeSettings::parse_kv_line("mode=audio rung=1280x720@standard")
+            .unwrap()
+            .into_spec(0, 0)
+            .unwrap_err();
         assert!(format!("{err:#}").contains("rung"), "{err:#}");
     }
 
@@ -1958,7 +2364,13 @@ mod tests {
     fn gop_in_seconds_is_frames_at_the_output_rate_and_2s_is_the_default() {
         use crate::spec::{DEFAULT_GOP_SECONDS, gop_frames_for_seconds};
         // `gop=2s` is no `gop` at all: the settings, the spec, the engine.
-        for base in ["", "mode=hls", "mode=hls rung=1280x720,640x360 segment-seconds=6", "codec=h264 rung=1280x720 max-fps=24", "ladder=true"] {
+        for base in [
+            "",
+            "mode=hls",
+            "mode=hls rung=1280x720,640x360 segment-seconds=6",
+            "codec=h264 rung=1280x720 max-fps=24",
+            "ladder=true",
+        ] {
             states_the_default(base, "gop=2s");
             states_the_default(base, "gop=2.0s");
             states_the_default(base, "keyframe-interval=2s");
@@ -1971,11 +2383,16 @@ mod tests {
         let plain = TranscodeSettings::default().into_spec(1280, 720).unwrap();
         for fps in [23.976, 25.0, 29.97, 30.0, 59.94, 60.0, 0.1] {
             assert_eq!(plain.gop_frames(fps), gop_frames_for_seconds(2.0, fps));
-            assert_eq!(plain.gop_frames(fps), ((fps * 2.0).round() as u32).max(1), "{fps}");
+            assert_eq!(
+                plain.gop_frames(fps),
+                ((fps * 2.0).round() as u32).max(1),
+                "{fps}"
+            );
         }
 
         // Any other length is frames at the output rate, rounded as the default is.
-        let s = TranscodeSettings::parse_kv_line("mode=hls rung=1280x720,640x360 gop=1.5s").unwrap();
+        let s =
+            TranscodeSettings::parse_kv_line("mode=hls rung=1280x720,640x360 gop=1.5s").unwrap();
         assert_eq!((s.gop, s.gop_seconds), (None, Some(1.5)));
         assert!(!s.is_empty());
         let spec = s.into_spec(1280, 720).unwrap();
@@ -1985,7 +2402,13 @@ mod tests {
             let run = spec.with_constant_rates_resolved(fps);
             assert_eq!((run.gop, run.gop_seconds), (Some(frames), None));
             for r in &run.rungs {
-                assert_eq!((r.quality.keyframe_interval, r.quality.overrides.keyframe_interval), (Some(frames), Some(frames)));
+                assert_eq!(
+                    (
+                        r.quality.keyframe_interval,
+                        r.quality.overrides.keyframe_interval
+                    ),
+                    (Some(frames), Some(frames))
+                );
             }
             // …which is what the same GOP in frames builds.
             assert_eq!(
@@ -1994,7 +2417,10 @@ mod tests {
             );
         }
         // Frames stay frames; the later value wins either way.
-        assert_eq!(TranscodeSettings::parse_kv_line("gop=48").unwrap().gop, Some(48));
+        assert_eq!(
+            TranscodeSettings::parse_kv_line("gop=48").unwrap().gop,
+            Some(48)
+        );
         let s = TranscodeSettings::parse_kv_line("gop=48 gop=0.5s").unwrap();
         assert_eq!((s.gop, s.gop_seconds), (None, Some(0.5)));
         let s = TranscodeSettings::parse_kv_line("gop=0.5s gop=48").unwrap();
@@ -2004,8 +2430,23 @@ mod tests {
         assert_eq!(parse_gop("1.5S").unwrap(), GopArg::Seconds(1.5));
         assert_eq!(parse_gop(" 48 ").unwrap(), GopArg::Frames(48));
 
-        for bad in ["0s", "-1s", "-0.5s", "s", "NaNs", "infs", "twos", "1.5", "2 seconds", "-4", ""] {
-            assert!(TranscodeSettings::parse_kv_line(&format!("gop={bad}")).is_err(), "gop={bad}");
+        for bad in [
+            "0s",
+            "-1s",
+            "-0.5s",
+            "s",
+            "NaNs",
+            "infs",
+            "twos",
+            "1.5",
+            "2 seconds",
+            "-4",
+            "",
+        ] {
+            assert!(
+                TranscodeSettings::parse_kv_line(&format!("gop={bad}")).is_err(),
+                "gop={bad}"
+            );
         }
         let err = TranscodeSettings::parse_kv_line("gop=0s").unwrap_err();
         assert!(format!("{err:#}").contains("more than zero"), "{err:#}");
@@ -2022,9 +2463,19 @@ mod tests {
         let spec = s.into_spec(1280, 720).unwrap();
         assert_eq!(spec.input_frame_rate, Some(29.97));
         for bad in ["0", "-5", "fast", "1001", "NaN"] {
-            assert!(TranscodeSettings::parse_kv_line(&format!("input-fps={bad}")).is_err(), "{bad}");
+            assert!(
+                TranscodeSettings::parse_kv_line(&format!("input-fps={bad}")).is_err(),
+                "{bad}"
+            );
         }
-        assert_eq!(TranscodeSettings::parse_kv_line("").unwrap().into_spec(1280, 720).unwrap().input_frame_rate, None);
+        assert_eq!(
+            TranscodeSettings::parse_kv_line("")
+                .unwrap()
+                .into_spec(1280, 720)
+                .unwrap()
+                .input_frame_rate,
+            None
+        );
     }
 
     #[test]
@@ -2041,11 +2492,28 @@ mod tests {
             built("ladder=true", 30.0)
         );
         assert_eq!(crate::ladder::DEFAULT_MAX_SHORT_SIDE, 1080);
-        assert_eq!(TranscodeSettings::parse_kv_line("max-fps=30").unwrap().max_fps, Some(30.0));
-        assert_eq!(TranscodeSettings::parse_kv_line("max-fps=30 max-fps=source").unwrap().max_fps, None);
+        assert_eq!(
+            TranscodeSettings::parse_kv_line("max-fps=30")
+                .unwrap()
+                .max_fps,
+            Some(30.0)
+        );
+        assert_eq!(
+            TranscodeSettings::parse_kv_line("max-fps=30 max-fps=source")
+                .unwrap()
+                .max_fps,
+            None
+        );
         assert!(TranscodeSettings::parse_kv_line("max-fps=fast").is_err());
-        assert!(TranscodeSettings::parse_kv_line("max-short-side=none").is_err(), "no uncapped ladder");
-        assert!(TranscodeSettings::parse_kv_line("max-fps=source max-short-side=standard").unwrap().is_empty());
+        assert!(
+            TranscodeSettings::parse_kv_line("max-short-side=none").is_err(),
+            "no uncapped ladder"
+        );
+        assert!(
+            TranscodeSettings::parse_kv_line("max-fps=source max-short-side=standard")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// The words that stated a default already: each builds what leaving
@@ -2087,11 +2555,15 @@ mod tests {
     #[test]
     fn image_quality_per_format_and_frames_poster_state_the_defaults() {
         use crate::image::{FrameSelection, ImageFormat, ImageSpec};
-        let image = |line: &str| -> Result<ImageSpec> { TranscodeSettings::parse_kv_line(line)?.into_image_spec() };
+        let image = |line: &str| -> Result<ImageSpec> {
+            TranscodeSettings::parse_kv_line(line)?.into_image_spec()
+        };
 
         // The defaults, read from the formats themselves.
-        let defaults: Vec<String> =
-            [ImageFormat::Avif, ImageFormat::Webp, ImageFormat::Jpeg].iter().map(|f| format!("{f}:{}", f.default_quality())).collect();
+        let defaults: Vec<String> = [ImageFormat::Avif, ImageFormat::Webp, ImageFormat::Jpeg]
+            .iter()
+            .map(|f| format!("{f}:{}", f.default_quality()))
+            .collect();
         assert_eq!(defaults, ["avif:60", "webp:80", "jpeg:82"]);
         let base = "mode=image image-format=avif,webp,jpeg,png rung=640x640";
         let plain = image(base).unwrap();
@@ -2100,16 +2572,41 @@ mod tests {
             assert_eq!(stated.quality_for(f), plain.quality_for(f), "{f}");
         }
         assert_eq!(stated.format_quality.len(), 3);
-        assert_eq!(ImageSpec { format_quality: Vec::new(), ..stated.clone() }, plain);
+        assert_eq!(
+            ImageSpec {
+                format_quality: Vec::new(),
+                ..stated.clone()
+            },
+            plain
+        );
 
         // A format named takes its own; one not named its default; a bare
         // number is every lossy format, and a named one wins over it.
-        let s = image("mode=image image-format=avif,jpeg,webp image-quality=avif:50,jpeg:90").unwrap();
-        assert_eq!((s.quality_for(ImageFormat::Avif), s.quality_for(ImageFormat::Jpeg), s.quality_for(ImageFormat::Webp)), (50, 90, 80));
+        let s =
+            image("mode=image image-format=avif,jpeg,webp image-quality=avif:50,jpeg:90").unwrap();
+        assert_eq!(
+            (
+                s.quality_for(ImageFormat::Avif),
+                s.quality_for(ImageFormat::Jpeg),
+                s.quality_for(ImageFormat::Webp)
+            ),
+            (50, 90, 80)
+        );
         let s = image("mode=image image-format=avif,jpeg image-quality=70,jpeg:82").unwrap();
-        assert_eq!((s.quality, s.quality_for(ImageFormat::Avif), s.quality_for(ImageFormat::Jpeg)), (Some(70), 70, 82));
+        assert_eq!(
+            (
+                s.quality,
+                s.quality_for(ImageFormat::Avif),
+                s.quality_for(ImageFormat::Jpeg)
+            ),
+            (Some(70), 70, 82)
+        );
         let s = image("mode=image image-quality=70").unwrap();
-        assert_eq!((s.quality, s.format_quality.clone()), (Some(70), Vec::new()), "a bare number as before");
+        assert_eq!(
+            (s.quality, s.format_quality.clone()),
+            (Some(70), Vec::new()),
+            "a bare number as before"
+        );
         // A format this job does not make is allowed and does nothing.
         let s = image("mode=image image-format=avif image-quality=avif:60,jpeg:82").unwrap();
         assert_eq!(s.quality_for(ImageFormat::Avif), 60);
@@ -2117,23 +2614,54 @@ mod tests {
         let s = image("mode=image image-quality=jpeg:50 image-quality=avif:40").unwrap();
         assert_eq!(s.format_quality, vec![(ImageFormat::Avif, 40)]);
 
-        for bad in ["gif:50", "png:50", "avif:0", "avif:101", "avif:high", "avif:60,avif:70", "jpg:60,jpeg:70", "70,80", "", ",", "tiff:5"] {
-            assert!(TranscodeSettings::parse_kv_line(&format!("mode=image image-quality={bad}")).is_err(), "image-quality={bad}");
+        for bad in [
+            "gif:50",
+            "png:50",
+            "avif:0",
+            "avif:101",
+            "avif:high",
+            "avif:60,avif:70",
+            "jpg:60,jpeg:70",
+            "70,80",
+            "",
+            ",",
+            "tiff:5",
+        ] {
+            assert!(
+                TranscodeSettings::parse_kv_line(&format!("mode=image image-quality={bad}"))
+                    .is_err(),
+                "image-quality={bad}"
+            );
         }
         let err = TranscodeSettings::parse_kv_line("image-quality=gif:50").unwrap_err();
         assert!(format!("{err:#}").contains("gif"), "{err:#}");
         // An image knob in a video job, per format as bare.
-        let err = TranscodeSettings::parse_kv_line("image-quality=avif:60").unwrap().into_spec(1280, 720).unwrap_err();
+        let err = TranscodeSettings::parse_kv_line("image-quality=avif:60")
+            .unwrap()
+            .into_spec(1280, 720)
+            .unwrap_err();
         assert!(err.to_string().contains("image-quality"), "{err}");
         // The spec checks a library caller's list too.
-        let bad = ImageSpec { format_quality: vec![(ImageFormat::Png, 50)], ..ImageSpec::default() };
+        let bad = ImageSpec {
+            format_quality: vec![(ImageFormat::Png, 50)],
+            ..ImageSpec::default()
+        };
         assert!(bad.validate().is_err());
-        let bad = ImageSpec { format_quality: vec![(ImageFormat::Avif, 0)], ..ImageSpec::default() };
+        let bad = ImageSpec {
+            format_quality: vec![(ImageFormat::Avif, 0)],
+            ..ImageSpec::default()
+        };
         assert!(bad.validate().is_err());
 
         // `frames=poster` is no frames key at all.
-        assert_eq!(image("mode=image frames=poster").unwrap(), image("mode=image").unwrap());
-        assert_eq!(image("mode=image rung=320x320 frames=Poster").unwrap(), image("mode=image rung=320x320").unwrap());
+        assert_eq!(
+            image("mode=image frames=poster").unwrap(),
+            image("mode=image").unwrap()
+        );
+        assert_eq!(
+            image("mode=image rung=320x320 frames=Poster").unwrap(),
+            image("mode=image rung=320x320").unwrap()
+        );
         assert_eq!(image("mode=image frames=poster").unwrap().frames, None);
         for bad in [
             "frames=poster frames-count=3",
@@ -2143,25 +2671,59 @@ mod tests {
             "frames=first",
             "frames=",
         ] {
-            assert!(TranscodeSettings::parse_kv_line(&format!("mode=image {bad}")).is_err(), "{bad}");
+            assert!(
+                TranscodeSettings::parse_kv_line(&format!("mode=image {bad}")).is_err(),
+                "{bad}"
+            );
         }
-        let err = TranscodeSettings::parse_kv_line("mode=image frames=poster frames-count=3").unwrap_err();
+        let err = TranscodeSettings::parse_kv_line("mode=image frames=poster frames-count=3")
+            .unwrap_err();
         assert!(format!("{err:#}").contains("frames-count"), "{err:#}");
-        assert_eq!(image("mode=image frames-count=3").unwrap().frames, Some(FrameSelection::Count(3)));
+        assert_eq!(
+            image("mode=image frames-count=3").unwrap().frames,
+            Some(FrameSelection::Count(3))
+        );
         // Outside an image job it is the default too: nothing to refuse.
-        TranscodeSettings::parse_kv_line("frames=poster").unwrap().into_spec(1280, 720).unwrap();
+        TranscodeSettings::parse_kv_line("frames=poster")
+            .unwrap()
+            .into_spec(1280, 720)
+            .unwrap();
 
         // The other image defaults, stated.
-        for word in ["image-lossless=false", "image-keep-icc=false", "image-speed=6", "image-format=avif"] {
-            assert_eq!(image(&format!("mode=image {word}")).unwrap(), image("mode=image").unwrap(), "{word}");
+        for word in [
+            "image-lossless=false",
+            "image-keep-icc=false",
+            "image-speed=6",
+            "image-format=avif",
+        ] {
+            assert_eq!(
+                image(&format!("mode=image {word}")).unwrap(),
+                image("mode=image").unwrap(),
+                "{word}"
+            );
         }
         // An image rendition has no rate, standard or otherwise.
         assert!(image("mode=image rung=640x640@standard").is_err());
         // The video words that state a default carry nothing into an image job.
-        for word in ["gop=2s", "max-fps=source", "audio-bitrate=standard", "video-bitrate=standard", "max-short-side=standard"] {
-            assert_eq!(image(&format!("mode=image {word}")).unwrap(), image("mode=image").unwrap(), "{word}");
+        for word in [
+            "gop=2s",
+            "max-fps=source",
+            "audio-bitrate=standard",
+            "video-bitrate=standard",
+            "max-short-side=standard",
+        ] {
+            assert_eq!(
+                image(&format!("mode=image {word}")).unwrap(),
+                image("mode=image").unwrap(),
+                "{word}"
+            );
         }
-        assert!(image("mode=image gop=1s").unwrap_err().to_string().contains("`gop`"));
+        assert!(
+            image("mode=image gop=1s")
+                .unwrap_err()
+                .to_string()
+                .contains("`gop`")
+        );
     }
 
     /// `codec`, `prores-profile` and `container` reach the spec on every
@@ -2170,7 +2732,8 @@ mod tests {
     #[test]
     fn the_new_codecs_and_their_files_are_in_the_vocabulary() {
         use crate::spec::{ProresProfile, VideoCodecPolicy};
-        let spec = |line: &str| TranscodeSettings::parse_kv_line(line).and_then(|s| s.into_spec(640, 360));
+        let spec =
+            |line: &str| TranscodeSettings::parse_kv_line(line).and_then(|s| s.into_spec(640, 360));
         for (word, want) in [
             ("vp9", VideoCodecPolicy::Vp9),
             ("vp08", VideoCodecPolicy::Vp8),
@@ -2178,24 +2741,50 @@ mod tests {
             ("xvid", VideoCodecPolicy::Mpeg4),
             ("prores", VideoCodecPolicy::ProRes(ProresProfile::Standard)),
             ("prores-hq", VideoCodecPolicy::ProRes(ProresProfile::Hq)),
-            ("prores_4444xq", VideoCodecPolicy::ProRes(ProresProfile::P4444Xq)),
+            (
+                "prores_4444xq",
+                VideoCodecPolicy::ProRes(ProresProfile::P4444Xq),
+            ),
             ("apco", VideoCodecPolicy::ProRes(ProresProfile::Proxy)),
         ] {
             assert_eq!(parse_video_codec(word).unwrap(), want, "{word}");
         }
         assert!(parse_video_codec("prores-ultra").is_err());
         let s = spec("codec=prores prores-profile=lt").unwrap();
-        assert_eq!((s.video_codec, s.container), (VideoCodecPolicy::ProRes(ProresProfile::Lt), Container::Mov));
+        assert_eq!(
+            (s.video_codec, s.container),
+            (VideoCodecPolicy::ProRes(ProresProfile::Lt), Container::Mov)
+        );
         let s = spec("codec=vp9").unwrap();
-        assert_eq!((s.container, s.muxer), (Container::WebM, crate::spec::Muxer::WebmFile));
+        assert_eq!(
+            (s.container, s.muxer),
+            (Container::WebM, crate::spec::Muxer::WebmFile)
+        );
         let s = spec("codec=vp9 container=mp4").unwrap();
-        assert_eq!((s.container, s.muxer), (Container::Mp4, crate::spec::Muxer::Mp4File));
+        assert_eq!(
+            (s.container, s.muxer),
+            (Container::Mp4, crate::spec::Muxer::Mp4File)
+        );
         let s = spec("codec=h264 container=mov").unwrap();
         assert_eq!(s.container, Container::Mov);
-        assert!(format!("{:#}", spec("codec=h264 prores-profile=hq").unwrap_err()).contains("prores-profile"));
-        assert!(format!("{:#}", spec("codec=prores container=mp4").unwrap_err()).contains("container=mov"));
-        assert!(format!("{:#}", spec("mode=hls codec=vp9 container=webm").unwrap_err()).contains("single-file"));
-        assert!(format!("{:#}", spec("mode=hls codec=prores").unwrap_err()).contains("no CMAF binding"));
+        assert!(
+            format!("{:#}", spec("codec=h264 prores-profile=hq").unwrap_err())
+                .contains("prores-profile")
+        );
+        assert!(
+            format!("{:#}", spec("codec=prores container=mp4").unwrap_err())
+                .contains("container=mov")
+        );
+        assert!(
+            format!(
+                "{:#}",
+                spec("mode=hls codec=vp9 container=webm").unwrap_err()
+            )
+            .contains("single-file")
+        );
+        assert!(
+            format!("{:#}", spec("mode=hls codec=prores").unwrap_err()).contains("no CMAF binding")
+        );
         assert!(spec("mode=hls codec=vp9").is_ok());
         assert!(parse_container("mkv").is_err());
     }

@@ -9,8 +9,8 @@ use crate::qsv_ffi::{MfxFrameInfo, MfxInfoMfx, MfxVideoParam};
 
 use super::ffi::{
     MFX_CODEC_AV1, MFX_CODEC_AVC, MFX_CODEC_HEVC, MFX_CODEC_VP9, MFX_FOURCC_NV12, MFX_FOURCC_P010,
-    MFX_PROFILE_AV1_MAIN, MFX_PROFILE_AVC_HIGH, MFX_PROFILE_HEVC_MAIN,
-    MFX_PROFILE_HEVC_MAIN10, MFX_PROFILE_VP9_0, MFX_PROFILE_VP9_2, MFX_TARGET_CHROMAFORMAT_YUV420_PLUS1,
+    MFX_PROFILE_AV1_MAIN, MFX_PROFILE_AVC_HIGH, MFX_PROFILE_HEVC_MAIN, MFX_PROFILE_HEVC_MAIN10,
+    MFX_PROFILE_VP9_0, MFX_PROFILE_VP9_2, MFX_TARGET_CHROMAFORMAT_YUV420_PLUS1,
 };
 
 // ─── Codec-id mapping ─────────────────────────────────────────────────────────
@@ -18,22 +18,20 @@ use super::ffi::{
 /// Map our `VideoCodec` + pixel format to the QSV `(codec_id, codec_profile)`
 /// pair. 10-bit H.265 selects Main 10; 10-bit H.264 stays High (QSV rejects
 /// it at Query/Init).
-pub(super) fn qsv_codec_ids(
-    codec: crate::frame::VideoCodec,
-    fmt: PixelFormat,
-) -> (u32, u16) {
+pub(super) fn qsv_codec_ids(codec: crate::frame::VideoCodec, fmt: PixelFormat) -> (u32, u16) {
     let ten_bit = fmt == PixelFormat::Yuv420p10le;
     match codec {
-        crate::frame::VideoCodec::Av1  => (MFX_CODEC_AV1, MFX_PROFILE_AV1_MAIN),
+        crate::frame::VideoCodec::Av1 => (MFX_CODEC_AV1, MFX_PROFILE_AV1_MAIN),
         crate::frame::VideoCodec::H264 => (MFX_CODEC_AVC, MFX_PROFILE_AVC_HIGH),
-        crate::frame::VideoCodec::H265 if ten_bit => {
-            (MFX_CODEC_HEVC, MFX_PROFILE_HEVC_MAIN10)
-        }
+        crate::frame::VideoCodec::H265 if ten_bit => (MFX_CODEC_HEVC, MFX_PROFILE_HEVC_MAIN10),
         crate::frame::VideoCodec::H265 => (MFX_CODEC_HEVC, MFX_PROFILE_HEVC_MAIN),
         // VP9 profile 2 is 10-bit 4:2:0, profile 0 8-bit 4:2:0.
         crate::frame::VideoCodec::Vp9 if ten_bit => (MFX_CODEC_VP9, MFX_PROFILE_VP9_2),
         crate::frame::VideoCodec::Vp9 => (MFX_CODEC_VP9, MFX_PROFILE_VP9_0),
-        codec => unreachable!("{} is refused by the constructor (refuse_unencoded_codec)", codec.label()),
+        codec => unreachable!(
+            "{} is refused by the constructor (refuse_unencoded_codec)",
+            codec.label()
+        ),
     }
 }
 
@@ -48,11 +46,9 @@ pub(super) fn qsv_codec_ids(
 /// (this encoder is AV1 4:2:0 only).
 pub(super) fn qsv_fourcc_for(fmt: PixelFormat) -> Result<u32> {
     match fmt {
-        PixelFormat::Yuv420p    => Ok(MFX_FOURCC_NV12),
+        PixelFormat::Yuv420p => Ok(MFX_FOURCC_NV12),
         PixelFormat::Yuv420p10le => Ok(MFX_FOURCC_P010),
-        other => bail!(
-            "QSV AV1 expects Yuv420p or Yuv420p10le, got {other:?}"
-        ),
+        other => bail!("QSV AV1 expects Yuv420p or Yuv420p10le, got {other:?}"),
     }
 }
 
@@ -93,11 +89,11 @@ const _: () = assert!(MFX_TARGET_CHROMAFORMAT_YUV420_PLUS1 == 2);
 /// backends and the container.
 pub(super) fn transfer_to_h273(tf: TransferFn) -> u16 {
     match tf {
-        TransferFn::Bt709       => 1,
-        TransferFn::Bt470Bg     => 4,
-        TransferFn::Linear      => 8,
-        TransferFn::St2084      => 16,
-        TransferFn::AribStdB67  => 18,
+        TransferFn::Bt709 => 1,
+        TransferFn::Bt470Bg => 4,
+        TransferFn::Linear => 8,
+        TransferFn::St2084 => 16,
+        TransferFn::AribStdB67 => 18,
         TransferFn::Unspecified => 1,
     }
 }

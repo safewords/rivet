@@ -19,7 +19,7 @@ pub mod serve;
 
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rivet::progress::RungProgress;
 use rivet::{RungArtifact, TranscodeSettings};
 
@@ -56,7 +56,9 @@ impl FitArgs {
             settings.apply_kv("fit", f).context("parsing --fit")?;
         }
         if let Some(o) = &self.orientation {
-            settings.apply_kv("orientation", o).context("parsing --orientation")?;
+            settings
+                .apply_kv("orientation", o)
+                .context("parsing --orientation")?;
         }
         settings.upscale = self.upscale;
         Ok(())
@@ -82,10 +84,14 @@ pub(crate) struct FileArgs {
 impl FileArgs {
     pub(crate) fn apply(&self, settings: &mut TranscodeSettings) -> Result<()> {
         if let Some(c) = &self.container {
-            settings.apply_kv("container", c).context("parsing --container")?;
+            settings
+                .apply_kv("container", c)
+                .context("parsing --container")?;
         }
         if let Some(p) = &self.prores_profile {
-            settings.apply_kv("prores-profile", p).context("parsing --prores-profile")?;
+            settings
+                .apply_kv("prores-profile", p)
+                .context("parsing --prores-profile")?;
         }
         Ok(())
     }
@@ -106,7 +112,11 @@ pub(crate) struct OutputShaping {
     pub target: Option<rivet::codec::encode::tuning::QualityTarget>,
     /// GOP length: frames (`48`) or seconds of output (`2s`, `1.5s`);
     /// default two seconds at the output frame rate, which `2s` states.
-    #[arg(long, visible_alias = "keyframe-interval", value_name = "FRAMES|SECONDSs")]
+    #[arg(
+        long,
+        visible_alias = "keyframe-interval",
+        value_name = "FRAMES|SECONDSs"
+    )]
     pub gop: Option<String>,
     /// Video bitrate, e.g. `3M`: code every rung without its own
     /// (`--rung WxH@RATE`) to a rate rather than to `--target`. An average
@@ -180,10 +190,14 @@ impl OutputShaping {
         };
         settings.audio_bitrate = None;
         if let Some(b) = &self.audio_bitrate {
-            settings.apply_kv("audio-bitrate", b).context("parsing --audio-bitrate")?;
+            settings
+                .apply_kv("audio-bitrate", b)
+                .context("parsing --audio-bitrate")?;
         }
         if let Some(c) = &self.audio_channels {
-            settings.apply_kv("audio-channels", c).context("parsing --audio-channels")?;
+            settings
+                .apply_kv("audio-channels", c)
+                .context("parsing --audio-channels")?;
         }
         settings.target = self.target;
         settings.gop = None;
@@ -192,16 +206,24 @@ impl OutputShaping {
             settings.apply_kv("gop", g).context("parsing --gop")?;
         }
         if let Some(v) = &self.video_bitrate {
-            settings.apply_kv("video-bitrate", v).context("parsing --video-bitrate")?;
+            settings
+                .apply_kv("video-bitrate", v)
+                .context("parsing --video-bitrate")?;
         }
         if let Some(v) = &self.video_buffer {
-            settings.apply_kv("video-buffer", v).context("parsing --video-buffer")?;
+            settings
+                .apply_kv("video-buffer", v)
+                .context("parsing --video-buffer")?;
         }
         if let Some(v) = &self.rate_mode {
-            settings.apply_kv("rate-mode", v).context("parsing --rate-mode")?;
+            settings
+                .apply_kv("rate-mode", v)
+                .context("parsing --rate-mode")?;
         }
         if let Some(v) = &self.video_speed {
-            settings.apply_kv("video-speed", v).context("parsing --video-speed")?;
+            settings
+                .apply_kv("video-speed", v)
+                .context("parsing --video-speed")?;
         }
         settings.apply_kv("color", &value_name(self.color))?;
         settings.apply_kv("chroma-downsample", &value_name(self.chroma_downsample))?;

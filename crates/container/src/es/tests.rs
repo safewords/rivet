@@ -25,7 +25,14 @@ fn picture(n: u64) -> VideoFrame {
         }
     }
     data.extend(std::iter::repeat_n(128u8, w * h / 2));
-    VideoFrame::new(data.into(), W, H, PixelFormat::Yuv420p, ColorSpace::Bt709, n)
+    VideoFrame::new(
+        data.into(),
+        W,
+        H,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        n,
+    )
 }
 
 /// `FRAMES` pictures through rivet's own software encoder for `codec`, as
@@ -50,7 +57,9 @@ fn encode(codec: VideoCodec) -> Vec<Vec<u8>> {
         overrides: Default::default(),
     };
     let mut enc: Box<dyn Encoder> = match codec {
-        VideoCodec::H264 | VideoCodec::H265 => Box::new(codec::encode::h26x_sw::H26xEncoder::new(cfg).unwrap()),
+        VideoCodec::H264 | VideoCodec::H265 => {
+            Box::new(codec::encode::h26x_sw::H26xEncoder::new(cfg).unwrap())
+        }
         VideoCodec::Vp8 => Box::new(codec::encode::vp8_sw::Vp8Encoder::new(cfg).unwrap()),
         VideoCodec::Vp9 => Box::new(codec::encode::vp9_sw::Vp9Encoder::new(cfg).unwrap()),
         VideoCodec::Av1 => Box::new(codec::encode::av1_sw::Av1Encoder::new(cfg).unwrap()),
@@ -70,12 +79,20 @@ fn encode(codec: VideoCodec) -> Vec<Vec<u8>> {
 }
 
 /// Demux `file`, check the header, decode every sample; the frames made.
-fn demux_and_decode(file: Vec<u8>, kind: ContainerKind, codec: &str) -> (crate::streaming::DemuxHeader, u64) {
+fn demux_and_decode(
+    file: Vec<u8>,
+    kind: ContainerKind,
+    codec: &str,
+) -> (crate::streaming::DemuxHeader, u64) {
     assert_eq!(sniff_container(&file), kind);
     let mut d = demux_streaming(&file).expect("demux");
     let header = d.header().clone();
     assert_eq!(header.codec, codec);
-    assert_eq!((header.info.width, header.info.height), (W, H), "{codec}: dimensions");
+    assert_eq!(
+        (header.info.width, header.info.height),
+        (W, H),
+        "{codec}: dimensions"
+    );
     assert_eq!(header.info.pixel_format, PixelFormat::Yuv420p);
     assert!(d.audio().is_none());
     let mut dec = codec::decode::create_decoder(codec, header.info.clone()).expect("decoder");
@@ -85,7 +102,8 @@ fn demux_and_decode(file: Vec<u8>, kind: ContainerKind, codec: &str) -> (crate::
         assert!(s.pts_ticks > last_pts, "timestamps ascend");
         last_pts = s.pts_ticks;
         samples += 1;
-        dec.push_sample(&s.data).unwrap_or_else(|e| panic!("{codec}: sample {samples}: {e:#}"));
+        dec.push_sample(&s.data)
+            .unwrap_or_else(|e| panic!("{codec}: sample {samples}: {e:#}"));
         while let Some(f) = dec.decode_next().unwrap() {
             assert_eq!((f.width, f.height), (W, H));
             frames += 1;
@@ -95,7 +113,10 @@ fn demux_and_decode(file: Vec<u8>, kind: ContainerKind, codec: &str) -> (crate::
     while dec.decode_next().unwrap().is_some() {
         frames += 1;
     }
-    assert_eq!(samples, header.info.total_frames, "{codec}: one sample a frame");
+    assert_eq!(
+        samples, header.info.total_frames,
+        "{codec}: one sample a frame"
+    );
     (header, frames)
 }
 
@@ -104,7 +125,11 @@ fn annex_b_h264_is_read_access_unit_by_access_unit() {
     let file: Vec<u8> = encode(VideoCodec::H264).concat();
     let (header, frames) = demux_and_decode(file, ContainerKind::H264Es, "h264");
     assert_eq!(frames, FRAMES);
-    assert!((header.info.frame_rate - 30.0).abs() < 1e-6, "the VUI's rate: {}", header.info.frame_rate);
+    assert!(
+        (header.info.frame_rate - 30.0).abs() < 1e-6,
+        "the VUI's rate: {}",
+        header.info.frame_rate
+    );
 }
 
 #[test]
@@ -112,7 +137,11 @@ fn annex_b_hevc_is_read_access_unit_by_access_unit() {
     let file: Vec<u8> = encode(VideoCodec::H265).concat();
     let (header, frames) = demux_and_decode(file, ContainerKind::HevcEs, "h265");
     assert_eq!(frames, FRAMES);
-    assert!((header.info.frame_rate - 30.0).abs() < 1e-6, "the VUI's rate: {}", header.info.frame_rate);
+    assert!(
+        (header.info.frame_rate - 30.0).abs() < 1e-6,
+        "the VUI's rate: {}",
+        header.info.frame_rate
+    );
 }
 
 /// An IVF file (the WebM project's layout): `DKIF`, version 0, header length
@@ -139,14 +168,20 @@ fn ivf(fourcc: &[u8; 4], frames: &[Vec<u8>], rate: u32, scale: u32, step: u64) -
 
 #[test]
 fn ivf_carries_vp8_vp9_and_av1() {
-    for (codec, fourcc, label) in
-        [(VideoCodec::Vp8, b"VP80", "vp8"), (VideoCodec::Vp9, b"VP90", "vp9"), (VideoCodec::Av1, b"AV01", "av1")]
-    {
+    for (codec, fourcc, label) in [
+        (VideoCodec::Vp8, b"VP80", "vp8"),
+        (VideoCodec::Vp9, b"VP90", "vp9"),
+        (VideoCodec::Av1, b"AV01", "av1"),
+    ] {
         // A millisecond time base, 40 ms a frame: 25 fps from the timestamps.
         let file = ivf(fourcc, &encode(codec), 1000, 1, 40);
         let (header, frames) = demux_and_decode(file, ContainerKind::Ivf, label);
         assert_eq!(frames, FRAMES, "{label}");
-        assert!((header.info.frame_rate - 25.0).abs() < 1e-6, "{label}: {}", header.info.frame_rate);
+        assert!(
+            (header.info.frame_rate - 25.0).abs() < 1e-6,
+            "{label}: {}",
+            header.info.frame_rate
+        );
         assert_eq!(header.timescale, 1000);
     }
 }
@@ -161,7 +196,10 @@ fn obus(tu: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
         assert!(h & 0x02 != 0, "the encoder writes sized OBUs");
         let (size, n) = leb128(&tu[pos + hlen..]).unwrap();
         let body = pos + hlen + n;
-        out.push((tu[pos..pos + hlen].to_vec(), tu[body..body + size as usize].to_vec()));
+        out.push((
+            tu[pos..pos + hlen].to_vec(),
+            tu[body..body + size as usize].to_vec(),
+        ));
         pos = body + size as usize;
     }
     out
@@ -174,12 +212,17 @@ fn av1_obu_streams_in_both_formats() {
     let mut section5 = Vec::new();
     for p in &packets {
         section5.extend([0x12, 0x00]);
-        section5.extend(obus(p).into_iter().filter(|(h, _)| (h[0] >> 3) & 0xf != 2).flat_map(|(h, b)| {
-            let mut o = h;
-            write_leb128(b.len() as u64, &mut o);
-            o.extend(b);
-            o
-        }));
+        section5.extend(
+            obus(p)
+                .into_iter()
+                .filter(|(h, _)| (h[0] >> 3) & 0xf != 2)
+                .flat_map(|(h, b)| {
+                    let mut o = h;
+                    write_leb128(b.len() as u64, &mut o);
+                    o.extend(b);
+                    o
+                }),
+        );
     }
     // Annex B: temporal_unit(size) { frame_unit(size) { obu_length obu } },
     // the OBUs without size fields — here one frame unit per temporal unit.
@@ -218,7 +261,11 @@ fn mpeg2_video_elementary_stream() {
     let (header, frames) = demux_and_decode(file, ContainerKind::MpegVideoEs, "mpeg2");
     assert_eq!(frames, FRAMES);
     // frame_rate_code 5 (30) in the sequence header.
-    assert!((header.info.frame_rate - 30.0).abs() < 1e-6, "{}", header.info.frame_rate);
+    assert!(
+        (header.info.frame_rate - 30.0).abs() < 1e-6,
+        "{}",
+        header.info.frame_rate
+    );
 }
 
 #[test]
@@ -227,7 +274,11 @@ fn a_stream_stating_no_rate_is_given_the_default() {
     let mut file = Vec::new();
     for p in encode(VideoCodec::Av1) {
         file.extend([0x12, 0x00]);
-        file.extend(p.iter().copied().skip(super::obu::leading_temporal_delimiter(&p)));
+        file.extend(
+            p.iter()
+                .copied()
+                .skip(super::obu::leading_temporal_delimiter(&p)),
+        );
     }
     let d = demux_streaming(&file).unwrap();
     assert_eq!(d.header().info.frame_rate, super::DEFAULT_FRAME_RATE);
@@ -249,7 +300,10 @@ fn h264_and_hevc_do_not_read_as_each_other_and_noise_is_neither() {
     assert_eq!(super::annexb::sniff(&h264[..20]), None);
     // A text file, zeros.
     assert_eq!(sniff_container(&[0u8; 400]), ContainerKind::Unknown);
-    assert_eq!(super::sniff(b"0000 0001 is not a start code, it is text"), None);
+    assert_eq!(
+        super::sniff(b"0000 0001 is not a start code, it is text"),
+        None
+    );
 }
 
 #[test]
@@ -270,10 +324,19 @@ fn the_elementary_stream_labels() {
         (ContainerKind::MpegVideoEs, "m2v"),
     ] {
         assert_eq!(kind.label(), label);
-        assert_eq!(kind.is_video_elementary_stream(), kind != ContainerKind::Ivf);
+        assert_eq!(
+            kind.is_video_elementary_stream(),
+            kind != ContainerKind::Ivf
+        );
     }
     assert!(!ContainerKind::IsoBmff.is_video_elementary_stream());
     // The shared buffer path reads the same.
     let file = Bytes::from(encode(VideoCodec::Mpeg2).concat());
-    assert_eq!(crate::streaming::demux_streaming_shared(file).unwrap().header().codec, "mpeg2");
+    assert_eq!(
+        crate::streaming::demux_streaming_shared(file)
+            .unwrap()
+            .header()
+            .codec,
+        "mpeg2"
+    );
 }

@@ -88,7 +88,7 @@ fn planar_sample_count(format: PixelFormat, w: usize, h: usize) -> usize {
 /// to `max_out`. `src` is the raw byte buffer (pairs of bytes per sample).
 pub fn narrow_u16_to_u16_scalar(src: &[u8], shift: u32, max_out: u16, out: &mut Vec<u8>) {
     let half = 1u32 << (shift - 1);
-    for pair in src.chunks_exact(2) {
+    for pair in src.as_chunks::<2>().0 {
         let v = u16::from_le_bytes([pair[0], pair[1]]) as u32;
         let n = ((v + half) >> shift).min(max_out as u32) as u16;
         out.extend_from_slice(&n.to_le_bytes());
@@ -99,7 +99,7 @@ pub fn narrow_u16_to_u16_scalar(src: &[u8], shift: u32, max_out: u16, out: &mut 
 /// 255.
 pub fn narrow_u16_to_u8_scalar(src: &[u8], shift: u32, out: &mut Vec<u8>) {
     let half = 1u32 << (shift - 1);
-    for pair in src.chunks_exact(2) {
+    for pair in src.as_chunks::<2>().0 {
         let v = u16::from_le_bytes([pair[0], pair[1]]) as u32;
         out.push(((v + half) >> shift).min(255) as u8);
     }
@@ -267,7 +267,7 @@ pub fn convert_bit_depth_frame(frame: &VideoFrame, target_bits: u8) -> Result<Vi
         (s, t) => {
             // 10 → 12: exact left shift on u16.
             let sh = (t - s) as u32;
-            for pair in src.chunks_exact(2) {
+            for pair in src.as_chunks::<2>().0 {
                 let v = u16::from_le_bytes([pair[0], pair[1]]) << sh;
                 out.extend_from_slice(&v.to_le_bytes());
             }

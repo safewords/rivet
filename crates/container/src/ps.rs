@@ -71,7 +71,9 @@ fn pes_packets(data: &[u8]) -> Vec<Pes<'_>> {
                 // plus its stuffing; MPEG-1 ('0010') is 12.
                 let Some(&b) = data.get(pos + 4) else { break };
                 if b >> 6 == 0b01 {
-                    let Some(&stuff) = data.get(pos + 13) else { break };
+                    let Some(&stuff) = data.get(pos + 13) else {
+                        break;
+                    };
                     pos += 14 + usize::from(stuff & 0x7);
                 } else {
                     pos += 12;
@@ -79,7 +81,9 @@ fn pes_packets(data: &[u8]) -> Vec<Pes<'_>> {
             }
             0xB9 => pos += 4, // MPEG_program_end_code
             0xBB..=0xFF => {
-                let Some(len) = data.get(pos + 4..pos + 6) else { break };
+                let Some(len) = data.get(pos + 4..pos + 6) else {
+                    break;
+                };
                 let len = usize::from(u16::from_be_bytes([len[0], len[1]]));
                 let end = pos + 6 + len;
                 if end > data.len() {
@@ -90,7 +94,11 @@ fn pes_packets(data: &[u8]) -> Vec<Pes<'_>> {
                 if !matches!(code, 0xBB | 0xBC | 0xBE | 0xBF)
                     && let Some((offset, pts)) = pes_header(&data[pos..end])
                 {
-                    out.push(Pes { stream_id: code, pts, payload: &data[pos + offset..end] });
+                    out.push(Pes {
+                        stream_id: code,
+                        pts,
+                        payload: &data[pos + offset..end],
+                    });
                 }
                 pos = end;
             }
@@ -120,7 +128,9 @@ fn pes_header(pes: &[u8]) -> Option<(usize, Option<u64>)> {
         if start > pes.len() {
             return None;
         }
-        let pts = (flags >> 6 & 0b10 != 0).then(|| pes.get(9..14).map(read_pts)).flatten();
+        let pts = (flags >> 6 & 0b10 != 0)
+            .then(|| pes.get(9..14).map(read_pts))
+            .flatten();
         return Some((start, pts));
     }
     let mut i = 6;
@@ -142,7 +152,9 @@ fn pes_header(pes: &[u8]) -> Option<(usize, Option<u64>)> {
 /// The frame rate a sequence header's `frame_rate_code` names (H.262 Table
 /// 6-4; the MPEG-1 table agrees for 1-8).
 pub(crate) fn sequence_frame_rate(es: &[u8]) -> Option<f64> {
-    let (o, _) = start_codes(es).into_iter().find(|(_, c)| *c == MPEG2_SEQUENCE_HEADER)?;
+    let (o, _) = start_codes(es)
+        .into_iter()
+        .find(|(_, c)| *c == MPEG2_SEQUENCE_HEADER)?;
     let code = es.get(o + 7)? & 0x0F;
     Some(match code {
         1 => 24_000.0 / 1001.0,
@@ -176,7 +188,9 @@ pub(crate) fn coded_frames(es: &[u8]) -> Vec<Vec<u8>> {
     for unit in crate::mpeg_es::split_mpeg2_pictures(es) {
         let structure = picture_structure(&unit);
         if structure != 3 && open_field {
-            out.last_mut().expect("the first field").extend_from_slice(&unit);
+            out.last_mut()
+                .expect("the first field")
+                .extend_from_slice(&unit);
             open_field = false;
         } else {
             open_field = structure != 3;
@@ -198,7 +212,11 @@ pub struct PsStreamingDemuxer {
 
 pub(crate) fn demux_ps_streaming_init(data: bytes::Bytes) -> Result<PsStreamingDemuxer> {
     let packets = pes_packets(&data);
-    let Some(video_id) = packets.iter().map(|p| p.stream_id).find(|id| (0xE0..=0xEF).contains(id)) else {
+    let Some(video_id) = packets
+        .iter()
+        .map(|p| p.stream_id)
+        .find(|id| (0xE0..=0xEF).contains(id))
+    else {
         bail!("MPEG program stream: no video stream");
     };
     let mut es = Vec::new();
@@ -210,7 +228,10 @@ pub(crate) fn demux_ps_streaming_init(data: bytes::Bytes) -> Result<PsStreamingD
         es.extend_from_slice(p.payload);
     }
     // From the first sequence header: what comes before it cannot be decoded.
-    let Some((start, _)) = start_codes(&es).into_iter().find(|(_, c)| *c == MPEG2_SEQUENCE_HEADER) else {
+    let Some((start, _)) = start_codes(&es)
+        .into_iter()
+        .find(|(_, c)| *c == MPEG2_SEQUENCE_HEADER)
+    else {
         bail!("MPEG program stream: the video has no sequence header");
     };
     let es = es.split_off(start);
@@ -223,8 +244,9 @@ pub(crate) fn demux_ps_streaming_init(data: bytes::Bytes) -> Result<PsStreamingD
     if frames.is_empty() {
         bail!("MPEG program stream: the video has no picture");
     }
-    let (width, height) = frame::pixel_format::detect_dims(&codec, std::slice::from_ref(&frames[0]))
-        .ok_or_else(|| anyhow::anyhow!("MPEG program stream: unreadable sequence header"))?;
+    let (width, height) =
+        frame::pixel_format::detect_dims(&codec, std::slice::from_ref(&frames[0]))
+            .ok_or_else(|| anyhow::anyhow!("MPEG program stream: unreadable sequence header"))?;
     let frame_rate = sequence_frame_rate(&es).unwrap_or(25.0);
     let mut info = StreamInfo {
         codec: codec.clone(),
@@ -243,12 +265,23 @@ pub(crate) fn demux_ps_streaming_init(data: bytes::Bytes) -> Result<PsStreamingD
         || crate::demux::aspect::from_bitstream(&codec, &[], Some(&frames[0]), width, height),
         "ps",
     );
-    crate::demux::hdr::resolve_source_colour(&mut info, Default::default(), &codec, &[], Some(&frames[0]), "ps");
+    crate::demux::hdr::resolve_source_colour(
+        &mut info,
+        Default::default(),
+        &codec,
+        &[],
+        Some(&frames[0]),
+        "ps",
+    );
 
     // Audio: the first MPEG audio stream, or the first AC-3 DVD sub-stream.
     let audio_choice = packets.iter().find_map(|p| match p.stream_id {
         0xC0..=0xDF => Some((p.stream_id, None)),
-        0xBD => p.payload.first().filter(|s| (0x80..=0x87).contains(*s)).map(|&s| (0xBD, Some(s))),
+        0xBD => p
+            .payload
+            .first()
+            .filter(|s| (0x80..=0x87).contains(*s))
+            .map(|&s| (0xBD, Some(s))),
         _ => None,
     });
     let (audio, audio_edit) = match audio_choice {
@@ -281,9 +314,17 @@ pub(crate) fn demux_ps_streaming_init(data: bytes::Bytes) -> Result<PsStreamingD
                 (Some(t), Some(a), Some(v)) if a != v => {
                     let sr = t.timescale.max(1);
                     Some(if a > v {
-                        AudioEdit { delay: rescale_round(a - v, sr, PTS_HZ), media_start: 0, media_end: None }
+                        AudioEdit {
+                            delay: rescale_round(a - v, sr, PTS_HZ),
+                            media_start: 0,
+                            media_end: None,
+                        }
                     } else {
-                        AudioEdit { delay: 0, media_start: rescale_round(v - a, sr, PTS_HZ), media_end: None }
+                        AudioEdit {
+                            delay: 0,
+                            media_start: rescale_round(v - a, sr, PTS_HZ),
+                            media_end: None,
+                        }
                     })
                 }
                 _ => None,
@@ -293,7 +334,13 @@ pub(crate) fn demux_ps_streaming_init(data: bytes::Bytes) -> Result<PsStreamingD
     };
 
     Ok(PsStreamingDemuxer {
-        header: DemuxHeader { codec, info, timescale: PTS_HZ, rotation_degrees: 0, sample_aspect },
+        header: DemuxHeader {
+            codec,
+            info,
+            timescale: PTS_HZ,
+            rotation_degrees: 0,
+            sample_aspect,
+        },
         samples: frames.into_iter(),
         index: 0,
         frame_ticks: f64::from(PTS_HZ) / frame_rate,
@@ -308,10 +355,16 @@ impl StreamingDemuxer for PsStreamingDemuxer {
     }
 
     fn next_video_sample(&mut self) -> Result<Option<Sample>> {
-        let Some(data) = self.samples.next() else { return Ok(None) };
+        let Some(data) = self.samples.next() else {
+            return Ok(None);
+        };
         let pts_ticks = (self.index as f64 * self.frame_ticks).round() as i64;
         self.index += 1;
-        Ok(Some(Sample { data, pts_ticks, duration_ticks: self.frame_ticks.round() as u32 }))
+        Ok(Some(Sample {
+            data,
+            pts_ticks,
+            duration_ticks: self.frame_ticks.round() as u32,
+        }))
     }
 
     fn audio(&self) -> Option<&AudioTrack> {
@@ -347,7 +400,10 @@ mod tests {
         m1.extend(b);
         assert_eq!(pes_header(&m1), Some((15, Some(pts))));
         // MPEG-1 without timestamps.
-        assert_eq!(pes_header(&[0, 0, 1, 0xC0, 0, 0, 0x0F, 0x55]), Some((7, None)));
+        assert_eq!(
+            pes_header(&[0, 0, 1, 0xC0, 0, 0, 0x0F, 0x55]),
+            Some((7, None))
+        );
     }
 
     #[test]

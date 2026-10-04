@@ -71,10 +71,8 @@ pub fn bt601_to_bt709_planes_10bit_scalar(
         let (cbp, crp) = v;
         let cbl = *cbp as i32 - CHROMA_CENTER_10BIT;
         let crl = *crp as i32 - CHROMA_CENTER_10BIT;
-        let new_cb =
-            (super::M_CB_CB * cbl + super::M_CB_CR * crl + super::Q15_ROUND) >> super::Q15;
-        let new_cr =
-            (super::M_CR_CB * cbl + super::M_CR_CR * crl + super::Q15_ROUND) >> super::Q15;
+        let new_cb = (super::M_CB_CB * cbl + super::M_CB_CR * crl + super::Q15_ROUND) >> super::Q15;
+        let new_cr = (super::M_CR_CB * cbl + super::M_CR_CR * crl + super::Q15_ROUND) >> super::Q15;
         *cbp = clamp_c_10bit(new_cb + CHROMA_CENTER_10BIT);
         *crp = clamp_c_10bit(new_cr + CHROMA_CENTER_10BIT);
     }
@@ -157,10 +155,8 @@ unsafe fn bt601_to_bt709_10bit_avx2(
             let mut cx = 0usize;
             while cx + 16 <= cw {
                 // Load 16 Cb/Cr u16, compute deltas (subtract chroma center).
-                let cb_i16 =
-                    _mm256_loadu_si256(cb.as_ptr().add(c_row + cx) as *const _);
-                let cr_i16 =
-                    _mm256_loadu_si256(cr.as_ptr().add(c_row + cx) as *const _);
+                let cb_i16 = _mm256_loadu_si256(cb.as_ptr().add(c_row + cx) as *const _);
+                let cr_i16 = _mm256_loadu_si256(cr.as_ptr().add(c_row + cx) as *const _);
                 let cbl = _mm256_sub_epi16(cb_i16, v_chroma_center);
                 let crl = _mm256_sub_epi16(cr_i16, v_chroma_center);
 
@@ -179,37 +175,26 @@ unsafe fn bt601_to_bt709_10bit_avx2(
                     dy_luma_pair[i * 2] = dy_luma[i];
                     dy_luma_pair[i * 2 + 1] = dy_luma[i];
                 }
-                let dy_luma_lo =
-                    _mm256_loadu_si256(dy_luma_pair.as_ptr() as *const _);
-                let dy_luma_hi =
-                    _mm256_loadu_si256(dy_luma_pair.as_ptr().add(16) as *const _);
+                let dy_luma_lo = _mm256_loadu_si256(dy_luma_pair.as_ptr() as *const _);
+                let dy_luma_hi = _mm256_loadu_si256(dy_luma_pair.as_ptr().add(16) as *const _);
 
                 // Apply to both luma rows for this chroma row.
                 for row_off in [y_row0, y_row1] {
                     // Load 32 luma u16 across two 256-bit registers.
-                    let y_lo =
-                        _mm256_loadu_si256(y.as_ptr().add(row_off + cx * 2) as *const _);
-                    let y_hi = _mm256_loadu_si256(
-                        y.as_ptr().add(row_off + cx * 2 + 16) as *const _,
-                    );
+                    let y_lo = _mm256_loadu_si256(y.as_ptr().add(row_off + cx * 2) as *const _);
+                    let y_hi =
+                        _mm256_loadu_si256(y.as_ptr().add(row_off + cx * 2 + 16) as *const _);
 
                     let y_lo_out = _mm256_add_epi16(y_lo, dy_luma_lo);
                     let y_hi_out = _mm256_add_epi16(y_hi, dy_luma_hi);
 
                     // Clamp to limited-range luma [64, 940].
-                    let y_lo_out = _mm256_min_epi16(
-                        _mm256_max_epi16(y_lo_out, v_luma_lo),
-                        v_luma_hi,
-                    );
-                    let y_hi_out = _mm256_min_epi16(
-                        _mm256_max_epi16(y_hi_out, v_luma_lo),
-                        v_luma_hi,
-                    );
+                    let y_lo_out =
+                        _mm256_min_epi16(_mm256_max_epi16(y_lo_out, v_luma_lo), v_luma_hi);
+                    let y_hi_out =
+                        _mm256_min_epi16(_mm256_max_epi16(y_hi_out, v_luma_lo), v_luma_hi);
 
-                    _mm256_storeu_si256(
-                        y.as_mut_ptr().add(row_off + cx * 2) as *mut _,
-                        y_lo_out,
-                    );
+                    _mm256_storeu_si256(y.as_mut_ptr().add(row_off + cx * 2) as *mut _, y_lo_out);
                     _mm256_storeu_si256(
                         y.as_mut_ptr().add(row_off + cx * 2 + 16) as *mut _,
                         y_hi_out,
@@ -224,8 +209,8 @@ unsafe fn bt601_to_bt709_10bit_avx2(
                 let cb_idx = c_row + cx;
                 let cbl = cb[cb_idx] as i32 - CHROMA_CENTER_10BIT;
                 let crl = cr[cb_idx] as i32 - CHROMA_CENTER_10BIT;
-                let delta = (super::M_Y_CB * cbl + super::M_Y_CR * crl + super::Q15_ROUND)
-                    >> super::Q15;
+                let delta =
+                    (super::M_Y_CB * cbl + super::M_Y_CR * crl + super::Q15_ROUND) >> super::Q15;
                 let xi = cx * 2;
                 for row_off in [y_row0, y_row1] {
                     for sub in 0..2 {
@@ -260,10 +245,8 @@ unsafe fn bt601_to_bt709_10bit_avx2(
             let new_cr = _mm256_add_epi16(new_cr, v_chroma_center);
 
             // Clamp [64, 960].
-            let new_cb =
-                _mm256_min_epi16(_mm256_max_epi16(new_cb, v_chroma_lo), v_chroma_hi);
-            let new_cr =
-                _mm256_min_epi16(_mm256_max_epi16(new_cr, v_chroma_lo), v_chroma_hi);
+            let new_cb = _mm256_min_epi16(_mm256_max_epi16(new_cb, v_chroma_lo), v_chroma_hi);
+            let new_cr = _mm256_min_epi16(_mm256_max_epi16(new_cr, v_chroma_lo), v_chroma_hi);
 
             _mm256_storeu_si256(cb.as_mut_ptr().add(i) as *mut _, new_cb);
             _mm256_storeu_si256(cr.as_mut_ptr().add(i) as *mut _, new_cr);
@@ -275,10 +258,10 @@ unsafe fn bt601_to_bt709_10bit_avx2(
         while i < total_c {
             let cbl = cb[i] as i32 - CHROMA_CENTER_10BIT;
             let crl = cr[i] as i32 - CHROMA_CENTER_10BIT;
-            let new_cb = (super::M_CB_CB * cbl + super::M_CB_CR * crl + super::Q15_ROUND)
-                >> super::Q15;
-            let new_cr = (super::M_CR_CB * cbl + super::M_CR_CR * crl + super::Q15_ROUND)
-                >> super::Q15;
+            let new_cb =
+                (super::M_CB_CB * cbl + super::M_CB_CR * crl + super::Q15_ROUND) >> super::Q15;
+            let new_cr =
+                (super::M_CR_CB * cbl + super::M_CR_CR * crl + super::Q15_ROUND) >> super::Q15;
             cb[i] = clamp_c_10bit(new_cb + CHROMA_CENTER_10BIT);
             cr[i] = clamp_c_10bit(new_cr + CHROMA_CENTER_10BIT);
             i += 1;

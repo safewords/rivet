@@ -141,7 +141,11 @@ impl DpirModel {
 /// and extrapolates badly).
 pub(super) fn validate_sigma(sigma: f32) -> Result<()> {
     if !SIGMA_RANGE.contains(&sigma) {
-        bail!("dpir sigma must be {:?}..={:?} (8-bit noise level), got {sigma}", SIGMA_RANGE.start(), SIGMA_RANGE.end());
+        bail!(
+            "dpir sigma must be {:?}..={:?} (8-bit noise level), got {sigma}",
+            SIGMA_RANGE.start(),
+            SIGMA_RANGE.end()
+        );
     }
     Ok(())
 }
@@ -163,7 +167,9 @@ pub(super) fn parse(parts: &[&str], spec: &str) -> Result<VideoFilter> {
         match p.to_ascii_lowercase().as_str() {
             "gray" | "grey" | "luma" => color = false,
             "color" | "colour" | "rgb" => color = true,
-            o => bail!("unknown dpir option '{o}' in '{spec}' (want a sigma 0..=50, gray, or color)"),
+            o => {
+                bail!("unknown dpir option '{o}' in '{spec}' (want a sigma 0..=50, gray, or color)")
+            }
         }
     }
     validate_sigma(sigma)?;
@@ -189,14 +195,26 @@ pub fn cache_dir() -> Option<PathBuf> {
 /// Where `model`'s weights are expected, given the [`ENV_MODEL`] override
 /// (a file — anything ending in `.pth` / `.safetensors` — or a directory) and
 /// the cache dir. Pure: does not touch the file system.
-pub fn expected_model_path(model: DpirModel, override_: Option<&Path>, cache: Option<&Path>) -> Result<PathBuf> {
+pub fn expected_model_path(
+    model: DpirModel,
+    override_: Option<&Path>,
+    cache: Option<&Path>,
+) -> Result<PathBuf> {
     if let Some(o) = override_ {
-        let is_file = o.extension().is_some_and(|e| e.eq_ignore_ascii_case("pth") || e.eq_ignore_ascii_case("safetensors"));
-        return Ok(if is_file { o.to_path_buf() } else { o.join(model.file_name()) });
+        let is_file = o.extension().is_some_and(|e| {
+            e.eq_ignore_ascii_case("pth") || e.eq_ignore_ascii_case("safetensors")
+        });
+        return Ok(if is_file {
+            o.to_path_buf()
+        } else {
+            o.join(model.file_name())
+        });
     }
     match cache {
         Some(c) => Ok(c.join(model.file_name())),
-        None => bail!("no cache directory (LOCALAPPDATA / XDG_CACHE_HOME / HOME unset); set {ENV_MODEL} to the model file"),
+        None => bail!(
+            "no cache directory (LOCALAPPDATA / XDG_CACHE_HOME / HOME unset); set {ENV_MODEL} to the model file"
+        ),
     }
 }
 
@@ -254,8 +272,20 @@ pub(crate) fn tiles(w: usize, h: usize, tile: usize, overlap: usize) -> Vec<Tile
         while tx < w {
             let keep_w = tile.min(w - tx);
             let (x, y) = (tx.saturating_sub(overlap), ty.saturating_sub(overlap));
-            let (x1, y1) = ((tx + keep_w + overlap).min(w), (ty + keep_h + overlap).min(h));
-            out.push(Tile { x, y, w: x1 - x, h: y1 - y, keep_x: tx, keep_y: ty, keep_w, keep_h });
+            let (x1, y1) = (
+                (tx + keep_w + overlap).min(w),
+                (ty + keep_h + overlap).min(h),
+            );
+            out.push(Tile {
+                x,
+                y,
+                w: x1 - x,
+                h: y1 - y,
+                keep_x: tx,
+                keep_y: ty,
+                keep_w,
+                keep_h,
+            });
             tx += tile;
         }
         ty += tile;
@@ -285,15 +315,30 @@ pub(crate) struct Levels {
 
 impl Levels {
     pub(crate) fn for_bps(bps: usize) -> Self {
-        let (max, k) = if bps == 2 { (1023.0, 4.0) } else { (255.0, 1.0) };
-        Self { max, black: 16.0 * k, y_range: 219.0 * k, c_mid: 128.0 * k, c_range: 224.0 * k }
+        let (max, k) = if bps == 2 {
+            (1023.0, 4.0)
+        } else {
+            (255.0, 1.0)
+        };
+        Self {
+            max,
+            black: 16.0 * k,
+            y_range: 219.0 * k,
+            c_mid: 128.0 * k,
+            c_range: 224.0 * k,
+        }
     }
 }
 
 /// Plane bytes (`u8`, or `u16` little-endian for `bps == 2`) → code values.
 pub(crate) fn plane_to_f32(plane: &[u8], bps: usize) -> Vec<f32> {
     if bps == 2 {
-        plane.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) as f32).collect()
+        plane
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes([c[0], c[1]]) as f32)
+            .collect()
     } else {
         plane.iter().map(|&v| v as f32).collect()
     }
@@ -302,7 +347,9 @@ pub(crate) fn plane_to_f32(plane: &[u8], bps: usize) -> Vec<f32> {
 /// Code values → plane bytes, rounded to nearest and clamped to `0..=max`.
 pub(crate) fn f32_to_plane(v: &[f32], bps: usize, max: f32) -> Vec<u8> {
     if bps == 2 {
-        v.iter().flat_map(|&x| (x.round().clamp(0.0, max) as u16).to_le_bytes()).collect()
+        v.iter()
+            .flat_map(|&x| (x.round().clamp(0.0, max) as u16).to_le_bytes())
+            .collect()
     } else {
         v.iter().map(|&x| x.round().clamp(0.0, max) as u8).collect()
     }
@@ -342,7 +389,15 @@ pub(crate) fn kr_kb(cs: ColorSpace) -> (f32, f32) {
 /// BT.709 to the pipeline while ffmpeg wrote them BT.601) puts *most* pixels
 /// outside it, and clamping cost 12 dB on such a clip. DRUNet is
 /// convolutional with no input bound, so it takes the overshoot in stride.
-pub(crate) fn yuv420_to_rgb(y: &[f32], u: &[f32], v: &[f32], w: usize, h: usize, cs: ColorSpace, lv: Levels) -> [Vec<f32>; 3] {
+pub(crate) fn yuv420_to_rgb(
+    y: &[f32],
+    u: &[f32],
+    v: &[f32],
+    w: usize,
+    h: usize,
+    cs: ColorSpace,
+    lv: Levels,
+) -> [Vec<f32>; 3] {
     let (kr, kb) = kr_kb(cs);
     let kg = 1.0 - kr - kb;
     let (cw, ch) = ((w / 2).max(1), (h / 2).max(1));
@@ -369,7 +424,13 @@ pub(crate) fn yuv420_to_rgb(y: &[f32], u: &[f32], v: &[f32], w: usize, h: usize,
 /// the full-resolution Cb'/Cr'. The inverse of [`yuv420_to_rgb`] (exactly, up
 /// to float rounding, for chroma that was 2×2-replicated); the caller's
 /// [`f32_to_plane`] clamps to the code range.
-pub(crate) fn rgb_to_yuv420(rgb: &[Vec<f32>; 3], w: usize, h: usize, cs: ColorSpace, lv: Levels) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+pub(crate) fn rgb_to_yuv420(
+    rgb: &[Vec<f32>; 3],
+    w: usize,
+    h: usize,
+    cs: ColorSpace,
+    lv: Levels,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let (kr, kb) = kr_kb(cs);
     let kg = 1.0 - kr - kb;
     let (cw, ch) = (w / 2, h / 2);

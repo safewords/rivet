@@ -5,12 +5,13 @@
 //! (`demux_ts_streaming_init`) entry points.
 
 use super::{
-    AudioCodecKind, AudioStreamInfo, PatProgram, VideoStreamInfo, DESC_TAG_REGISTRATION, REG_AC3,
-    REG_DTS1, REG_DTS2, REG_DTS3, REG_EAC3, REG_OPUS, STREAM_TYPE_AAC_ADTS, STREAM_TYPE_AAC_LATM, STREAM_TYPE_AC3,
-    STREAM_TYPE_BD_EAC3, STREAM_TYPE_BD_LPCM, STREAM_TYPE_DTS, STREAM_TYPE_DTS_HD_HR, STREAM_TYPE_DTS_HD_MA,
-    STREAM_TYPE_EAC3, STREAM_TYPE_H264, STREAM_TYPE_HEVC, STREAM_TYPE_MPEG1_AUDIO, STREAM_TYPE_MPEG1_VIDEO,
-    STREAM_TYPE_MPEG2_AUDIO, STREAM_TYPE_MPEG2_VIDEO, STREAM_TYPE_MPEG4_AUDIO_RAW, STREAM_TYPE_PES_PRIVATE,
-    STREAM_TYPE_TRUEHD, STREAM_TYPE_BD_SECONDARY_DTS, STREAM_TYPE_BD_SECONDARY_EAC3,
+    AudioCodecKind, AudioStreamInfo, DESC_TAG_REGISTRATION, PatProgram, REG_AC3, REG_DTS1,
+    REG_DTS2, REG_DTS3, REG_EAC3, REG_OPUS, STREAM_TYPE_AAC_ADTS, STREAM_TYPE_AAC_LATM,
+    STREAM_TYPE_AC3, STREAM_TYPE_BD_EAC3, STREAM_TYPE_BD_LPCM, STREAM_TYPE_BD_SECONDARY_DTS,
+    STREAM_TYPE_BD_SECONDARY_EAC3, STREAM_TYPE_DTS, STREAM_TYPE_DTS_HD_HR, STREAM_TYPE_DTS_HD_MA,
+    STREAM_TYPE_EAC3, STREAM_TYPE_H264, STREAM_TYPE_HEVC, STREAM_TYPE_MPEG1_AUDIO,
+    STREAM_TYPE_MPEG1_VIDEO, STREAM_TYPE_MPEG2_AUDIO, STREAM_TYPE_MPEG2_VIDEO,
+    STREAM_TYPE_MPEG4_AUDIO_RAW, STREAM_TYPE_PES_PRIVATE, STREAM_TYPE_TRUEHD, VideoStreamInfo,
 };
 
 /// Walk the PAT section and return every `(program_number, pmt_pid)`
@@ -125,7 +126,10 @@ pub(super) fn parse_pmt_streams(
         };
 
         match stype {
-            STREAM_TYPE_MPEG1_VIDEO | STREAM_TYPE_MPEG2_VIDEO | STREAM_TYPE_H264 | STREAM_TYPE_HEVC => {
+            STREAM_TYPE_MPEG1_VIDEO
+            | STREAM_TYPE_MPEG2_VIDEO
+            | STREAM_TYPE_H264
+            | STREAM_TYPE_HEVC => {
                 video.push(VideoStreamInfo {
                     pid,
                     stream_type: stype,
@@ -160,19 +164,34 @@ pub(super) fn parse_pmt_streams(
                 });
             }
             STREAM_TYPE_DTS | STREAM_TYPE_DTS_HD_HR | STREAM_TYPE_DTS_HD_MA => {
-                audio.push(AudioStreamInfo { pid, stream_type: stype, kind: AudioCodecKind::Dts });
+                audio.push(AudioStreamInfo {
+                    pid,
+                    stream_type: stype,
+                    kind: AudioCodecKind::Dts,
+                });
             }
             STREAM_TYPE_BD_LPCM => {
-                audio.push(AudioStreamInfo { pid, stream_type: stype, kind: AudioCodecKind::BdLpcm });
+                audio.push(AudioStreamInfo {
+                    pid,
+                    stream_type: stype,
+                    kind: AudioCodecKind::BdLpcm,
+                });
             }
-            STREAM_TYPE_TRUEHD | STREAM_TYPE_BD_SECONDARY_DTS | STREAM_TYPE_AAC_LATM | STREAM_TYPE_MPEG4_AUDIO_RAW => {
+            STREAM_TYPE_TRUEHD
+            | STREAM_TYPE_BD_SECONDARY_DTS
+            | STREAM_TYPE_AAC_LATM
+            | STREAM_TYPE_MPEG4_AUDIO_RAW => {
                 let name = match stype {
                     STREAM_TYPE_TRUEHD => "truehd",
                     STREAM_TYPE_BD_SECONDARY_DTS => "dts_express",
                     STREAM_TYPE_AAC_LATM => "aac_latm",
                     _ => "mpeg4_audio_raw",
                 };
-                audio.push(AudioStreamInfo { pid, stream_type: stype, kind: AudioCodecKind::Unsupported(name) });
+                audio.push(AudioStreamInfo {
+                    pid,
+                    stream_type: stype,
+                    kind: AudioCodecKind::Unsupported(name),
+                });
             }
             STREAM_TYPE_PES_PRIVATE => {
                 // DVB (ETSI TS 101 154) carries AC-3, E-AC-3, DTS and Opus
@@ -181,7 +200,11 @@ pub(super) fn parse_pmt_streams(
                 // descriptor (ETSI EN 300 468 Annex D / G). A PES-private
                 // stream with neither (subtitles, teletext, data) is not audio.
                 if let Some(kind) = private_audio_kind(descriptors) {
-                    audio.push(AudioStreamInfo { pid, stream_type: stype, kind });
+                    audio.push(AudioStreamInfo {
+                        pid,
+                        stream_type: stype,
+                        kind,
+                    });
                 }
             }
             _ => {}
@@ -206,10 +229,14 @@ fn private_audio_kind(descriptors: &[u8]) -> Option<AudioCodecKind> {
                 .find(|&(tag, body)| tag == 0x7F && body.first() == Some(&0x80))
                 .and_then(|(_, body)| body.get(1).copied());
             return Some(match code {
-                Some(c) => AudioCodecKind::Opus { channel_config_code: c },
+                Some(c) => AudioCodecKind::Opus {
+                    channel_config_code: c,
+                },
                 // No descriptor: stereo, the default of the mapping's most
                 // common configuration, read with the decoder's checks.
-                None => AudioCodecKind::Opus { channel_config_code: 0x02 },
+                None => AudioCodecKind::Opus {
+                    channel_config_code: 0x02,
+                },
             });
         }
         _ => {}

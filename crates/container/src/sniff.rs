@@ -103,7 +103,13 @@ impl ContainerKind {
     /// the bitstream itself states: the inputs `input-fps` sets the frame
     /// rate of. (IVF stamps every frame, so it is not one.)
     pub fn is_video_elementary_stream(self) -> bool {
-        matches!(self, ContainerKind::H264Es | ContainerKind::HevcEs | ContainerKind::Av1Obu | ContainerKind::MpegVideoEs)
+        matches!(
+            self,
+            ContainerKind::H264Es
+                | ContainerKind::HevcEs
+                | ContainerKind::Av1Obu
+                | ContainerKind::MpegVideoEs
+        )
     }
 
     /// Whether this crate has a demuxer for it.
@@ -244,11 +250,19 @@ mod tests {
             m2ts[k * 192..k * 192 + 4].copy_from_slice(&[0x0E, 0xBF, 0x46, 0x22]);
             m2ts[k * 192 + 4] = 0x47;
         }
-        assert_eq!(sniff_container(&m2ts), ContainerKind::MpegTs, "192-byte packets");
+        assert_eq!(
+            sniff_container(&m2ts),
+            ContainerKind::MpegTs,
+            "192-byte packets"
+        );
         for k in 0..3 {
             m2ts[k * 192..k * 192 + 4].fill(0);
         }
-        assert_eq!(sniff_container(&m2ts), ContainerKind::MpegTs, "zeroed TP_extra_header");
+        assert_eq!(
+            sniff_container(&m2ts),
+            ContainerKind::MpegTs,
+            "zeroed TP_extra_header"
+        );
         // A third packet off the grid is not one.
         m2ts[388] = 0;
         assert_eq!(sniff_container(&m2ts), ContainerKind::Unknown);
@@ -257,20 +271,31 @@ mod tests {
         for k in 0..3 {
             rs[k * 204] = 0x47;
         }
-        assert_eq!(sniff_container(&rs), ContainerKind::MpegTs, "204-byte packets");
+        assert_eq!(
+            sniff_container(&rs),
+            ContainerKind::MpegTs,
+            "204-byte packets"
+        );
 
         // A lone 0x47 is not a transport stream.
         let mut not_ts = vec![0u8; 190];
         not_ts[0] = 0x47;
         assert_eq!(sniff_container(&not_ts), ContainerKind::Unknown);
 
-        assert_eq!(sniff_container(b"hello, this is plain text"), ContainerKind::Unknown);
+        assert_eq!(
+            sniff_container(b"hello, this is plain text"),
+            ContainerKind::Unknown
+        );
 
         let mut mp3 = b"ID3\x04\x00\x00\x00\x00\x00\x00".to_vec();
         mp3.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x44]);
         assert_eq!(sniff_container(&mp3), ContainerKind::Mp3);
         assert_eq!(ContainerKind::Mp3.label(), "mp3");
-        assert_eq!(sniff_container(&[0u8; 4]), ContainerKind::Unknown, "too short to say");
+        assert_eq!(
+            sniff_container(&[0u8; 4]),
+            ContainerKind::Unknown,
+            "too short to say"
+        );
         assert!(!ContainerKind::Unknown.is_known());
         assert_eq!(ContainerKind::IsoBmff.label(), "mp4");
     }

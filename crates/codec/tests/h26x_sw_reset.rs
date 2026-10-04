@@ -25,7 +25,14 @@ fn frame(pts: u64) -> VideoFrame {
         }
     }
     data.extend(std::iter::repeat_n(128u8, 2 * chroma));
-    VideoFrame::new(Bytes::from(data), W, H, PixelFormat::Yuv420p, ColorSpace::Bt709, pts)
+    VideoFrame::new(
+        Bytes::from(data),
+        W,
+        H,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        pts,
+    )
 }
 
 fn nal_types(data: &[u8], hevc: bool) -> Vec<u8> {
@@ -83,19 +90,35 @@ fn check(codec: VideoCodec) {
     for round in 0..3u64 {
         if round > 0 {
             enc.reset().expect("h26x reset");
-            assert!(enc.receive_packet().unwrap().is_none(), "nothing queued after a reset");
+            assert!(
+                enc.receive_packet().unwrap().is_none(),
+                "nothing queued after a reset"
+            );
         }
         let packets = stream(&mut enc, round * 100, 5);
         assert_eq!(packets.len(), 5, "round {round}: one packet per frame");
         assert!(packets[0].is_keyframe, "round {round}: opens with an IDR");
-        assert!(packets[1..].iter().all(|p| !p.is_keyframe), "round {round}: one IDR at this GOP");
-        assert_eq!(packets[0].pts, round * 100, "round {round}: the new stream's timestamps");
+        assert!(
+            packets[1..].iter().all(|p| !p.is_keyframe),
+            "round {round}: one IDR at this GOP"
+        );
+        assert_eq!(
+            packets[0].pts,
+            round * 100,
+            "round {round}: the new stream's timestamps"
+        );
         let types = nal_types(&packets[0].data, hevc);
-        assert!(types.contains(&sps), "round {round}: SPS on the first packet: {types:?}");
+        assert!(
+            types.contains(&sps),
+            "round {round}: SPS on the first packet: {types:?}"
+        );
         eprintln!("{codec:?} round {round}: first packet NAL types {types:?}");
         openings.push(types);
     }
-    assert_eq!(openings[0], openings[1], "a reset stream opens like a fresh one");
+    assert_eq!(
+        openings[0], openings[1],
+        "a reset stream opens like a fresh one"
+    );
     assert_eq!(openings[1], openings[2]);
 }
 
@@ -115,7 +138,11 @@ fn h265_software_reset_opens_a_fresh_stream() {
 #[test]
 fn a_reset_costs_no_more_than_a_construction() {
     for codec in [VideoCodec::H264, VideoCodec::H265] {
-        let cfg = EncoderConfig { width: 640, height: 360, ..config(codec) };
+        let cfg = EncoderConfig {
+            width: 640,
+            height: 360,
+            ..config(codec)
+        };
         let n = 200;
         let t = Instant::now();
         for _ in 0..n {

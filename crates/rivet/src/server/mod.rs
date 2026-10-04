@@ -51,18 +51,18 @@ use std::sync::{Arc, Mutex, RwLock};
 use anyhow::{Context, Result};
 use axum::Router;
 use axum::body::Bytes;
+use axum::extract::DefaultBodyLimit;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::extract::DefaultBodyLimit;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::progress::{ProgressSink, RungProgress, RungStatus};
 
+mod docs;
 mod handlers;
 mod spec;
-mod docs;
 #[cfg(test)]
 mod tests;
 
@@ -86,8 +86,10 @@ pub const SERVER_JOBS_ENV: &str = "RIVET_SERVER_JOBS";
 /// `env` (the [`SERVER_JOBS_ENV`] setting) when it is a whole number of at
 /// least one, else `None` — no limit, every accepted job starts at once.
 pub(super) fn job_limit(flag: Option<usize>, env: Option<&str>) -> Option<usize> {
-    flag.filter(|&n| n >= 1)
-        .or_else(|| env.and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n >= 1))
+    flag.filter(|&n| n >= 1).or_else(|| {
+        env.and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|&n| n >= 1)
+    })
 }
 
 #[derive(Clone)]
@@ -109,7 +111,10 @@ impl AppState {
             && let Some(v) = env.as_deref()
             && job_limit(None, Some(v)).is_none()
         {
-            tracing::warn!(value = v, "{SERVER_JOBS_ENV} is not a whole number of at least 1; no job limit");
+            tracing::warn!(
+                value = v,
+                "{SERVER_JOBS_ENV} is not a whole number of at least 1; no job limit"
+            );
         }
         let limit = job_limit(jobs, env.as_deref());
         // With a limit, every job's share of the CPU is reckoned against it,
@@ -118,7 +123,10 @@ impl AppState {
         // the machine divided by the jobs running when it asks.
         crate::thread_budget::reserve_jobs(limit.unwrap_or(0));
         match limit {
-            Some(n) => tracing::info!(jobs = n, "rivet serve: at most {n} jobs at once; the rest wait queued"),
+            Some(n) => tracing::info!(
+                jobs = n,
+                "rivet serve: at most {n} jobs at once; the rest wait queued"
+            ),
             None => tracing::info!("rivet serve: no job limit; every accepted job starts at once"),
         }
         Self::with_limit(hooks, limit)
@@ -332,16 +340,28 @@ pub(super) struct ApiError {
 
 impl ApiError {
     pub(super) fn bad_request(e: anyhow::Error) -> Self {
-        Self { status: StatusCode::BAD_REQUEST, message: format!("{e:#}") }
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: format!("{e:#}"),
+        }
     }
     pub(super) fn internal(e: anyhow::Error) -> Self {
-        Self { status: StatusCode::INTERNAL_SERVER_ERROR, message: format!("{e:#}") }
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!("{e:#}"),
+        }
     }
     pub(super) fn not_found(what: String) -> Self {
-        Self { status: StatusCode::NOT_FOUND, message: format!("{what} not found") }
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: format!("{what} not found"),
+        }
     }
     pub(super) fn rejected(message: String) -> Self {
-        Self { status: StatusCode::UNPROCESSABLE_ENTITY, message }
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message,
+        }
     }
 }
 
@@ -406,7 +426,11 @@ pub async fn serve_with_hooks(addr: SocketAddr, hooks: crate::hooks::Hooks) -> R
 /// [`serve_with_hooks`] with a job limit (`rivet serve --jobs`): see
 /// [`build_router_with`]. `None` leaves it to [`SERVER_JOBS_ENV`], and with
 /// that unset every accepted job starts at once.
-pub async fn serve_with(addr: SocketAddr, hooks: crate::hooks::Hooks, jobs: Option<usize>) -> Result<()> {
+pub async fn serve_with(
+    addr: SocketAddr,
+    hooks: crate::hooks::Hooks,
+    jobs: Option<usize>,
+) -> Result<()> {
     let app = build_router_with(hooks, jobs);
     let listener = tokio::net::TcpListener::bind(addr)
         .await

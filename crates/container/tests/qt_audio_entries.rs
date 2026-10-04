@@ -26,7 +26,14 @@ fn be32(v: u32) -> [u8; 4] {
 
 /// A sound description of `version` (0, 1 or 2) for `fourcc`, with
 /// `children` after its fixed fields.
-fn sound_entry(fourcc: &[u8; 4], version: u16, channels: u16, bits: u16, rate: u32, children: &[u8]) -> Vec<u8> {
+fn sound_entry(
+    fourcc: &[u8; 4],
+    version: u16,
+    channels: u16,
+    bits: u16,
+    rate: u32,
+    children: &[u8],
+) -> Vec<u8> {
     let mut b = vec![0u8; 6];
     b.extend_from_slice(&1u16.to_be_bytes()); // data reference index
     b.extend_from_slice(&version.to_be_bytes());
@@ -133,8 +140,18 @@ fn movie(t: Track<'_>) -> Vec<u8> {
     hdlr.extend_from_slice(&[0; 13]);
     let mut dref = be32(1).to_vec();
     dref.extend(full(b"url ", 1, &[]));
-    let minf = [full(b"smhd", 0, &[0; 4]), boxed(b"dinf", &full(b"dref", 0, &dref)), boxed(b"stbl", &stbl)].concat();
-    let mdia = [full(b"mdhd", 0, &mdhd), full(b"hdlr", 0, &hdlr), boxed(b"minf", &minf)].concat();
+    let minf = [
+        full(b"smhd", 0, &[0; 4]),
+        boxed(b"dinf", &full(b"dref", 0, &dref)),
+        boxed(b"stbl", &stbl),
+    ]
+    .concat();
+    let mdia = [
+        full(b"mdhd", 0, &mdhd),
+        full(b"hdlr", 0, &hdlr),
+        boxed(b"minf", &minf),
+    ]
+    .concat();
     let mut tkhd = vec![0u8; 8];
     tkhd.extend_from_slice(&be32(1));
     tkhd.extend_from_slice(&[0; 4]);
@@ -165,9 +182,14 @@ fn signal(frames: usize, bits: u32) -> Vec<i32> {
 
 /// Decode a demuxed track to f32 with rivet's decoder for its codec.
 fn decode(track: &container::demux::AudioTrack) -> Vec<f32> {
-    let extra = if track.codec_private.is_empty() { None } else { Some(track.codec_private.as_slice()) };
+    let extra = if track.codec_private.is_empty() {
+        None
+    } else {
+        Some(track.codec_private.as_slice())
+    };
     let mut dec =
-        codec::audio::create_decoder(&track.codec, extra, track.sample_rate, track.channels as u8).expect("decoder");
+        codec::audio::create_decoder(&track.codec, extra, track.sample_rate, track.channels as u8)
+            .expect("decoder");
     let mut out = Vec::new();
     for p in &track.samples {
         for f in dec.decode(p, 0).expect("decode") {
@@ -200,7 +222,12 @@ fn chunked(bytes: &[u8], frame_bytes: usize, frames: &[u32]) -> Vec<Vec<u8>> {
 fn every_quicktime_pcm_encoding_reads_and_decodes_exactly() {
     const FRAMES: usize = 3000;
     let frames_per_chunk = [1024u32, 1024, 952];
-    let wave_enda = |fourcc: &[u8; 4]| boxed(b"wave", &[boxed(b"frma", fourcc), boxed(b"enda", &[0, 1])].concat());
+    let wave_enda = |fourcc: &[u8; 4]| {
+        boxed(
+            b"wave",
+            &[boxed(b"frma", fourcc), boxed(b"enda", &[0, 1])].concat(),
+        )
+    };
     // (fourcc, version, bits, little-endian, float, children, expected codec)
     type Case<'a> = (&'a [u8; 4], u16, u16, bool, bool, Vec<u8>, &'a str);
     let cases: Vec<Case> = vec![
@@ -225,14 +252,24 @@ fn every_quicktime_pcm_encoding_reads_and_decodes_exactly() {
         for &v in &ints {
             let (le, value): (Vec<u8>, f64) = if float {
                 let x = f64::from(v) / f64::from(1 << 23);
-                (if bits == 32 { (x as f32).to_le_bytes().to_vec() } else { x.to_le_bytes().to_vec() }, x)
+                (
+                    if bits == 32 {
+                        (x as f32).to_le_bytes().to_vec()
+                    } else {
+                        x.to_le_bytes().to_vec()
+                    },
+                    x,
+                )
             } else {
                 match bits {
                     8 => {
                         let s = (v >> 16) as i8;
                         let raw = fourcc == b"raw ";
                         // `raw ` is offset binary; `twos` two's complement.
-                        (vec![if raw { (s as u8) ^ 0x80 } else { s as u8 }], f64::from(s) / 128.0)
+                        (
+                            vec![if raw { (s as u8) ^ 0x80 } else { s as u8 }],
+                            f64::from(s) / 128.0,
+                        )
                     }
                     16 => {
                         let s = (v >> 8) as i16;
@@ -264,10 +301,16 @@ fn every_quicktime_pcm_encoding_reads_and_decodes_exactly() {
             delta: 1,
             timescale: 48_000,
         });
-        let src = demux_audio(Bytes::from(file)).expect("demux").unwrap_or_else(|| panic!("{name}: no audio"));
+        let src = demux_audio(Bytes::from(file))
+            .expect("demux")
+            .unwrap_or_else(|| panic!("{name}: no audio"));
         let t = &src.track;
         assert_eq!(t.codec, codec, "{name}");
-        assert_eq!((t.sample_rate, t.channels, t.timescale), (48_000, 2, 48_000), "{name}");
+        assert_eq!(
+            (t.sample_rate, t.channels, t.timescale),
+            (48_000, 2, 48_000),
+            "{name}"
+        );
         assert_eq!(t.samples.len(), 3, "{name}: one packet per chunk");
         assert_eq!(t.durations, frames_per_chunk, "{name}");
         let got = decode(t);
@@ -285,14 +328,36 @@ fn alac_with_its_cookie_in_a_wave_atom_reads_and_decodes_bit_exact() {
     use codec::audio::{AudioCodec, AudioEncoderConfig, AudioFrame, create_encoder};
     const FRAMES: usize = 10_000;
     let ints = signal(FRAMES, 24);
-    let pcm: Vec<f32> = ints.iter().map(|&v| ((v >> 8) as i16) as f32 / 32768.0).collect();
-    let mut enc = create_encoder(AudioEncoderConfig::new(AudioCodec::Alac { bits_per_sample: 16 }, 44_100, 2, 0))
+    let pcm: Vec<f32> = ints
+        .iter()
+        .map(|&v| ((v >> 8) as i16) as f32 / 32768.0)
+        .collect();
+    let mut enc = create_encoder(AudioEncoderConfig::new(
+        AudioCodec::Alac {
+            bits_per_sample: 16,
+        },
+        44_100,
+        2,
+        0,
+    ))
     .expect("alac encoder");
-    let mut packets = enc.encode(&AudioFrame { samples: pcm.clone(), sample_rate: 44_100, channels: 2, pts: 0 }).unwrap();
+    let mut packets = enc
+        .encode(&AudioFrame {
+            samples: pcm.clone(),
+            sample_rate: 44_100,
+            channels: 2,
+            pts: 0,
+        })
+        .unwrap();
     packets.extend(enc.flush().unwrap());
     let cookie = enc.extra_data();
     assert_eq!(cookie.len(), 24, "the bare ALACSpecificConfig");
-    let wave = [boxed(b"frma", b"alac"), full(b"alac", 0, &cookie), [0u8, 0, 0, 8, 0, 0, 0, 0].to_vec()].concat();
+    let wave = [
+        boxed(b"frma", b"alac"),
+        full(b"alac", 0, &cookie),
+        [0u8, 0, 0, 8, 0, 0, 0, 0].to_vec(),
+    ]
+    .concat();
     let entry = sound_entry(b"alac", 1, 2, 16, 44_100, &boxed(b"wave", &wave));
     let chunks: Vec<Vec<u8>> = packets.iter().map(|p| p.data.clone()).collect();
     let file = movie(Track {
@@ -304,7 +369,9 @@ fn alac_with_its_cookie_in_a_wave_atom_reads_and_decodes_bit_exact() {
         delta: 4096,
         timescale: 44_100,
     });
-    let src = demux_audio(Bytes::from(file)).expect("demux").expect("the ALAC track");
+    let src = demux_audio(Bytes::from(file))
+        .expect("demux")
+        .expect("the ALAC track");
     assert_eq!(src.track.codec, "alac");
     assert_eq!(src.track.codec_private, cookie);
     assert_eq!(src.track.samples.len(), chunks.len());
@@ -335,7 +402,9 @@ fn an_unsupported_audio_entry_is_named_not_hidden() {
         delta: 160,
         timescale: 8000,
     });
-    let src = demux_audio(Bytes::from(file)).expect("demux").expect("a named track");
+    let src = demux_audio(Bytes::from(file))
+        .expect("demux")
+        .expect("a named track");
     assert_eq!(src.track.codec, "amr_nb");
     assert!(src.track.samples.is_empty());
 }

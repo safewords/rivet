@@ -29,9 +29,16 @@ fn sweep_of(rows: &[(i16, u64, f64)]) -> Sweep {
 fn the_cheapest_candidate_clearing_the_floor_wins() {
     // Not the highest quality, and not the smallest — the smallest that is
     // still good enough, which is the only question a ladder actually asks.
-    let sweep = sweep_of(&[(-2, 900, 0.985), (0, 700, 0.975), (2, 500, 0.960), (4, 350, 0.930)]);
+    let sweep = sweep_of(&[
+        (-2, 900, 0.985),
+        (0, 700, 0.975),
+        (2, 500, 0.960),
+        (4, 350, 0.930),
+    ]);
 
-    let best = sweep.best_at_or_above(0.955).expect("something clears 0.955");
+    let best = sweep
+        .best_at_or_above(0.955)
+        .expect("something clears 0.955");
     assert_eq!(best.quality_delta, 2, "picked {:?}", best);
     assert_eq!(best.bytes, 500);
 }
@@ -87,8 +94,26 @@ fn value_per_quality_point_is_measured_above_a_floor() {
     // Near SSIM 1.0 the denominator collapses and every ratio becomes huge and
     // meaningless, so the comparison is against a floor of worth-having
     // quality rather than against zero.
-    let cheap = Sample { quality_delta: 4, bytes: 400, trimmed_bytes: 400, psnr: 38.0, ssim: 0.96, packets: 0, largest_packet: 0, mean_other_packet: 0 };
-    let dear = Sample { quality_delta: -2, bytes: 1600, trimmed_bytes: 1600, psnr: 44.0, ssim: 0.98, packets: 0, largest_packet: 0, mean_other_packet: 0 };
+    let cheap = Sample {
+        quality_delta: 4,
+        bytes: 400,
+        trimmed_bytes: 400,
+        psnr: 38.0,
+        ssim: 0.96,
+        packets: 0,
+        largest_packet: 0,
+        mean_other_packet: 0,
+    };
+    let dear = Sample {
+        quality_delta: -2,
+        bytes: 1600,
+        trimmed_bytes: 1600,
+        psnr: 44.0,
+        ssim: 0.98,
+        packets: 0,
+        largest_packet: 0,
+        mean_other_packet: 0,
+    };
 
     assert!(
         cheap.bytes_per_ssim_above(0.90) < dear.bytes_per_ssim_above(0.90),
@@ -102,19 +127,49 @@ fn ssim_in_db_separates_what_raw_ssim_crushes_together() {
     // 0.9989 and 0.9804 look like neighbours; they are 12 dB apart, and their
     // delivered VMAF was 99.4 and 81.7. Any threshold set in raw SSIM is
     // describing one of them wrongly.
-    let flat = Sample { quality_delta: 0, bytes: 1, trimmed_bytes: 1, psnr: 0.0, ssim: 0.9989, packets: 0, largest_packet: 0, mean_other_packet: 0 };
-    let noisy = Sample { quality_delta: 0, bytes: 1, trimmed_bytes: 1, psnr: 0.0, ssim: 0.9804, packets: 0, largest_packet: 0, mean_other_packet: 0 };
+    let flat = Sample {
+        quality_delta: 0,
+        bytes: 1,
+        trimmed_bytes: 1,
+        psnr: 0.0,
+        ssim: 0.9989,
+        packets: 0,
+        largest_packet: 0,
+        mean_other_packet: 0,
+    };
+    let noisy = Sample {
+        quality_delta: 0,
+        bytes: 1,
+        trimmed_bytes: 1,
+        psnr: 0.0,
+        ssim: 0.9804,
+        packets: 0,
+        largest_packet: 0,
+        mean_other_packet: 0,
+    };
 
     assert!((flat.ssim_db() - 29.6).abs() < 0.5, "{}", flat.ssim_db());
     assert!((noisy.ssim_db() - 17.1).abs() < 0.5, "{}", noisy.ssim_db());
-    assert!(flat.ssim_db() - noisy.ssim_db() > 10.0, "the scale still crushes them together");
+    assert!(
+        flat.ssim_db() - noisy.ssim_db() > 10.0,
+        "the scale still crushes them together"
+    );
 }
 
 #[test]
 fn a_perfect_slice_does_not_return_infinity() {
     // One flat frame can be reconstructed exactly. Left uncapped that is an
     // infinite dB value, and it propagates into every comparison it touches.
-    let perfect = Sample { quality_delta: 0, bytes: 1, trimmed_bytes: 1, psnr: 0.0, ssim: 1.0, packets: 0, largest_packet: 0, mean_other_packet: 0 };
+    let perfect = Sample {
+        quality_delta: 0,
+        bytes: 1,
+        trimmed_bytes: 1,
+        psnr: 0.0,
+        ssim: 1.0,
+        packets: 0,
+        largest_packet: 0,
+        mean_other_packet: 0,
+    };
 
     assert!(perfect.ssim_db().is_finite(), "{}", perfect.ssim_db());
     assert!(perfect.ssim_db() <= 60.0);
@@ -129,19 +184,30 @@ fn the_budget_is_spent_against_the_clips_own_base() {
     // Easy clip — base is far above transparency, so a 1 dB budget should buy
     // a much cheaper encode.
     let easy = sweep_of(&[
-        (0, 1000, 0.9989),   // 29.6 dB — base
-        (4, 600, 0.9975),    // 26.0 dB — 3.6 dB down, too far
-        (2, 800, 0.9986),    // 28.5 dB — 1.1 dB down, just outside
+        (0, 1000, 0.9989), // 29.6 dB — base
+        (4, 600, 0.9975),  // 26.0 dB — 3.6 dB down, too far
+        (2, 800, 0.9986),  // 28.5 dB — 1.1 dB down, just outside
     ]);
-    let picked = easy.best_within_drop(1.0, None).expect("the base itself always qualifies");
-    assert_eq!(picked.quality_delta, 0, "gave away more than the budget: {picked:?}");
+    let picked = easy
+        .best_within_drop(1.0, None)
+        .expect("the base itself always qualifies");
+    assert_eq!(
+        picked.quality_delta, 0,
+        "gave away more than the budget: {picked:?}"
+    );
 
     // Same budget, wider spacing — now there is something inside it.
     let easy2 = sweep_of(&[
-        (0, 1000, 0.9989),   // 29.6 dB
-        (2, 700, 0.99875),   // 29.0 dB — 0.6 dB down, inside a 1 dB budget
+        (0, 1000, 0.9989), // 29.6 dB
+        (2, 700, 0.99875), // 29.0 dB — 0.6 dB down, inside a 1 dB budget
     ]);
-    assert_eq!(easy2.best_within_drop(1.0, None).expect("inside budget").quality_delta, 2);
+    assert_eq!(
+        easy2
+            .best_within_drop(1.0, None)
+            .expect("inside budget")
+            .quality_delta,
+        2
+    );
 }
 
 #[test]
@@ -150,13 +216,18 @@ fn a_clip_with_no_headroom_keeps_its_base() {
     // the honest answer is the base — not the least-bad alternative. This is
     // the direction that ruins videos when it goes wrong.
     let hard = sweep_of(&[
-        (0, 1000, 0.9804),   // 17.1 dB
-        (6, 500, 0.9703),    // 15.3 dB — 1.8 dB down
-        (8, 350, 0.9619),    // 14.2 dB — 2.9 dB down
+        (0, 1000, 0.9804), // 17.1 dB
+        (6, 500, 0.9703),  // 15.3 dB — 1.8 dB down
+        (8, 350, 0.9619),  // 14.2 dB — 2.9 dB down
     ]);
 
-    let picked = hard.best_within_drop(0.5, None).expect("the base qualifies");
-    assert_eq!(picked.quality_delta, 0, "shipped a visible quality loss: {picked:?}");
+    let picked = hard
+        .best_within_drop(0.5, None)
+        .expect("the base qualifies");
+    assert_eq!(
+        picked.quality_delta, 0,
+        "shipped a visible quality loss: {picked:?}"
+    );
     assert_eq!(picked.bytes, 1000);
 }
 
@@ -166,8 +237,14 @@ fn the_absolute_floor_still_vetoes_a_bad_base() {
     // it. The relative rule alone would happily approve 0.90 → 0.89.
     let poor = sweep_of(&[(0, 1000, 0.90), (4, 400, 0.895)]);
 
-    assert!(poor.best_within_drop(1.0, Some(0.95)).is_none(), "a poor base passed the floor");
-    assert!(poor.best_within_drop(1.0, None).is_some(), "the floor is meant to be optional");
+    assert!(
+        poor.best_within_drop(1.0, Some(0.95)).is_none(),
+        "a poor base passed the floor"
+    );
+    assert!(
+        poor.best_within_drop(1.0, None).is_some(),
+        "the floor is meant to be optional"
+    );
 }
 
 #[test]
@@ -200,7 +277,10 @@ fn on_flat_content_the_cheapest_candidate_wins() {
     ]);
 
     let picked = flat.rd_optimal(0.15, PX, FR).expect("a non-empty sweep");
-    assert_eq!(picked.quality_delta, 8, "left the saving on the table: {picked:?}");
+    assert_eq!(
+        picked.quality_delta, 8,
+        "left the saving on the table: {picked:?}"
+    );
 }
 
 #[test]
@@ -217,21 +297,26 @@ fn on_hard_content_the_same_lambda_refuses_the_saving() {
     ]);
 
     let picked = hard.rd_optimal(0.15, PX, FR).expect("a non-empty sweep");
-    assert_eq!(picked.quality_delta, 0, "shipped a visible loss: {picked:?}");
+    assert_eq!(
+        picked.quality_delta, 0,
+        "shipped a visible loss: {picked:?}"
+    );
 }
 
 #[test]
 fn lambda_orders_the_tradeoff_monotonically() {
     // A larger lambda values bytes more, so it can never choose a *dearer*
     // encode than a smaller one. If this inverts, the knob is not a knob.
-    let sweep = sweep_of(&[
-        (0, 200_000, 0.995),
-        (4, 120_000, 0.990),
-        (8, 60_000, 0.975),
-    ]);
+    let sweep = sweep_of(&[(0, 200_000, 0.995), (4, 120_000, 0.990), (8, 60_000, 0.975)]);
 
-    let cheapskate = sweep.rd_optimal(5.0, PX, FR).expect("non-empty").quality_delta;
-    let spendthrift = sweep.rd_optimal(0.001, PX, FR).expect("non-empty").quality_delta;
+    let cheapskate = sweep
+        .rd_optimal(5.0, PX, FR)
+        .expect("non-empty")
+        .quality_delta;
+    let spendthrift = sweep
+        .rd_optimal(0.001, PX, FR)
+        .expect("non-empty")
+        .quality_delta;
 
     assert!(
         cheapskate >= spendthrift,
@@ -246,20 +331,34 @@ fn rate_is_normalised_so_lambda_survives_a_different_sample_size() {
     // that looks like the encoder behaving differently on long videos.
     let sweep = sweep_of(&[(0, 200_000, 0.995), (4, 120_000, 0.990), (8, 60_000, 0.975)]);
 
-    let short = sweep.rd_optimal(0.15, PX, 30).expect("non-empty").quality_delta;
-    let long = sweep_of(&[(0, 400_000, 0.995), (4, 240_000, 0.990), (8, 120_000, 0.975)])
-        .rd_optimal(0.15, PX, 60)
+    let short = sweep
+        .rd_optimal(0.15, PX, 30)
         .expect("non-empty")
         .quality_delta;
+    let long = sweep_of(&[
+        (0, 400_000, 0.995),
+        (4, 240_000, 0.990),
+        (8, 120_000, 0.975),
+    ])
+    .rd_optimal(0.15, PX, 60)
+    .expect("non-empty")
+    .quality_delta;
 
-    assert_eq!(short, long, "twice the sample at the same bitrate changed the answer");
+    assert_eq!(
+        short, long,
+        "twice the sample at the same bitrate changed the answer"
+    );
 }
 
 #[test]
 fn an_empty_sweep_has_no_optimum() {
     assert!(Sweep::default().rd_optimal(0.15, PX, FR).is_none());
     // Zero pixels would divide by zero and rank every candidate as equal.
-    assert!(sweep_of(&[(0, 100, 0.99)]).rd_optimal(0.15, 0, FR).is_none());
+    assert!(
+        sweep_of(&[(0, 100, 0.99)])
+            .rd_optimal(0.15, 0, FR)
+            .is_none()
+    );
 }
 
 #[test]
@@ -280,8 +379,14 @@ fn scoring_a_smaller_rung_goes_through_the_upscale() {
             data[y * sw as usize + x] = ((x * 3 + y * 7) % 255) as u8;
         }
     }
-    let reference =
-        VideoFrame::new(bytes::Bytes::from(data), sw, sh, PixelFormat::Yuv420p, ColorSpace::Bt709, 0);
+    let reference = VideoFrame::new(
+        bytes::Bytes::from(data),
+        sw,
+        sh,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        0,
+    );
 
     let rung = scale_frame(&reference, 64, 32).expect("down to the rung");
     assert_eq!((rung.width, rung.height), (64, 32));
@@ -295,7 +400,10 @@ fn scoring_a_smaller_rung_goes_through_the_upscale() {
     // free. The assertion is that it is *visible to the metric* at all — the
     // native-resolution comparison this replaced would have reported a
     // near-perfect score for the same rung.
-    assert!(score.ssim < 0.999, "the upscale round trip was free: {score:?}");
+    assert!(
+        score.ssim < 0.999,
+        "the upscale round trip was free: {score:?}"
+    );
     assert!(score.ssim > 0.0, "the comparison collapsed: {score:?}");
 }
 
@@ -326,10 +434,18 @@ fn a_quality_target_picks_the_measured_optimum_on_both_clips() {
         (16, 599437, 0.998961),
         (24, 599125, 0.993335),
     ]);
-    assert_eq!(flat.cheapest_reaching(0.9985).expect("flat clears").quality_delta, 16);
+    assert_eq!(
+        flat.cheapest_reaching(0.9985)
+            .expect("flat clears")
+            .quality_delta,
+        16
+    );
 
     let noisy = sweep_of(&[(0, 1219814, 0.982717), (16, 505085, 0.925466)]);
-    assert!(noisy.cheapest_reaching(0.9985).is_none(), "spent a budget the clip did not have");
+    assert!(
+        noisy.cheapest_reaching(0.9985).is_none(),
+        "spent a budget the clip did not have"
+    );
 }
 
 #[test]
@@ -341,5 +457,8 @@ fn the_quality_target_never_consults_bytes() {
     let sweep = sweep_of(&[(0, 100, 0.9995), (8, 999999, 0.9990), (16, 1, 0.9000)]);
 
     let picked = sweep.cheapest_reaching(0.998).expect("two clear the floor");
-    assert_eq!(picked.quality_delta, 8, "byte counts leaked into the decision: {picked:?}");
+    assert_eq!(
+        picked.quality_delta, 8,
+        "byte counts leaked into the decision: {picked:?}"
+    );
 }

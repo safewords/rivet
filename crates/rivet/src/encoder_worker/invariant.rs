@@ -1,12 +1,12 @@
 //! Per-rung codec invariant: types + the validate/set helper.
 
 use anyhow::{Result, anyhow};
-use std::sync::RwLock;
 use codec::frame::VideoCodec;
 use codec::pixel_format::{
     Av1SequenceHeader, H264SpsInfo, HevcSpsInfo, parse_av1_sequence_header, parse_h264_sps,
     parse_hevc_sps,
 };
+use std::sync::RwLock;
 
 /// Mandatory AV1 sequence-header fields that every encoder
 /// contributing segments to a single rendition MUST agree on.
@@ -40,7 +40,11 @@ pub enum RungCodecInvariant {
     /// VP9 (the one other codec an HLS ladder carries): the profile, depth
     /// and chroma of the first key frame's uncompressed header — what a
     /// `vp09` init segment's `vpcC` records for every segment.
-    Vp9 { profile: u8, bit_depth: u8, subsampling: (u8, u8) },
+    Vp9 {
+        profile: u8,
+        bit_depth: u8,
+        subsampling: (u8, u8),
+    },
     /// A codec only rivet's own encoder writes, whose first packets have
     /// nothing a decoder is initialised from beyond the codec itself.
     Codec(VideoCodec),
@@ -250,14 +254,20 @@ pub fn validate_or_set_rung_invariant(
             RungCodecInvariant::H26x(H26xInvariant::from_h265(&sps))
         }
         VideoCodec::Vp9 => {
-            let info = container::vpx::vp9_frame_info(first_packet).filter(|i| i.key_frame).ok_or_else(|| {
-                anyhow!(
-                    "rung {} (vendor {:?}): the first encoded VP9 packet is not a key frame",
-                    rung_idx,
-                    gpu_vendor,
-                )
-            })?;
-            RungCodecInvariant::Vp9 { profile: info.profile, bit_depth: info.bit_depth, subsampling: info.subsampling }
+            let info = container::vpx::vp9_frame_info(first_packet)
+                .filter(|i| i.key_frame)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "rung {} (vendor {:?}): the first encoded VP9 packet is not a key frame",
+                        rung_idx,
+                        gpu_vendor,
+                    )
+                })?;
+            RungCodecInvariant::Vp9 {
+                profile: info.profile,
+                bit_depth: info.bit_depth,
+                subsampling: info.subsampling,
+            }
         }
         other => RungCodecInvariant::Codec(other),
     };

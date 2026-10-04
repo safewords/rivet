@@ -47,7 +47,11 @@ pub(crate) fn run(json: bool) {
             let u = util.read(d);
             print!(
                 "      load       : gpu {}% · enc {}% · dec {}% · mem {}/{} MiB",
-                u.util_percent, u.encoder_percent, u.decoder_percent, u.mem_used_mib, u.mem_total_mib
+                u.util_percent,
+                u.encoder_percent,
+                u.decoder_percent,
+                u.mem_used_mib,
+                u.mem_total_mib
             );
             if let Some(t) = u.temperature_c {
                 print!(" · {t}°C");
@@ -56,7 +60,11 @@ pub(crate) fn run(json: bool) {
         }
         println!();
     }
-    if !devices.iter().any(|d| ENCODE_CODECS.iter().any(|&c| codec::encode::encode_capable(d, c))) {
+    if !devices.iter().any(|d| {
+        ENCODE_CODECS
+            .iter()
+            .any(|&c| codec::encode::encode_capable(d, c))
+    }) {
         println!(
             "No detected GPU can encode in this build (detected is not usable: the vendor feature \
              may be off, or the silicon predates the codec). Software encode in this build: {}.",
@@ -79,7 +87,11 @@ pub(crate) fn encode_verdicts(d: &codec::gpu::GpuDevice) -> String {
             format!(
                 "{} {}",
                 codec_label(c),
-                if codec::encode::encode_capable(d, c) { "yes" } else { "no" }
+                if codec::encode::encode_capable(d, c) {
+                    "yes"
+                } else {
+                    "no"
+                }
             )
         })
         .collect::<Vec<_>>()
@@ -92,8 +104,16 @@ pub(crate) fn software_summary() -> String {
     let plan = rivet::multigpu::host_software_pool_plan();
     format!(
         "AV1 {} (`av1-sw-fallback`), H.264 / H.265 {} (`h26x-fallback`), VP8 / VP9 / MPEG-2 / MPEG-4 / ProRes yes (rivet's own); {} software slot(s) × {} thread(s)",
-        if codec::encode::software_encode_available(VideoCodec::Av1) { "yes" } else { "no" },
-        if codec::encode::software_encode_available(VideoCodec::H264) { "yes" } else { "no" },
+        if codec::encode::software_encode_available(VideoCodec::Av1) {
+            "yes"
+        } else {
+            "no"
+        },
+        if codec::encode::software_encode_available(VideoCodec::H264) {
+            "yes"
+        } else {
+            "no"
+        },
         plan.slots,
         plan.threads,
     )
@@ -172,7 +192,14 @@ fn pcie_json(r: &codec::gpu::PcieReport) -> String {
     let chain: Vec<String> = r
         .chain
         .iter()
-        .map(|(pci, l)| format!("{{\"pci\":\"{}\",\"gts\":{},\"width\":{}}}", super::esc(pci), l.gts, l.width))
+        .map(|(pci, l)| {
+            format!(
+                "{{\"pci\":\"{}\",\"gts\":{},\"width\":{}}}",
+                super::esc(pci),
+                l.gts,
+                l.width
+            )
+        })
         .collect();
     format!(
         "{{\"gts\":{},\"width\":{},\"gbytes_per_s\":{:.2},\"chain\":[{}]}}",

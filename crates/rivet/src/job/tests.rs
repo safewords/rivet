@@ -48,8 +48,14 @@ fn trim_audio_keeps_window_and_concat_appends() {
     assert_eq!(t.samples[0].0, vec![2u8]);
     assert_eq!(t.samples[2].0, vec![4u8]);
     // Open start keeps from 0; open end keeps to the end.
-    assert_eq!(trim_audio(Some(&a), None, Some(3.0)).unwrap().samples.len(), 3);
-    assert_eq!(trim_audio(Some(&a), Some(6.0), None).unwrap().samples.len(), 2);
+    assert_eq!(
+        trim_audio(Some(&a), None, Some(3.0)).unwrap().samples.len(),
+        3
+    );
+    assert_eq!(
+        trim_audio(Some(&a), Some(6.0), None).unwrap().samples.len(),
+        2
+    );
     // No bounds → unchanged.
     assert_eq!(trim_audio(Some(&a), None, None).unwrap().samples.len(), 8);
     // Concat appends.
@@ -77,16 +83,30 @@ fn a_trim_on_edited_audio_cuts_the_presentation_exactly() {
         handling: "aac passthrough".into(),
         encoder: None,
         file_header: None,
-        edit: TrackEdit { delay: 0, media_time: 1024, duration: None },
+        edit: TrackEdit {
+            delay: 0,
+            media_time: 1024,
+            duration: None,
+        },
     };
     // From 0.1 s of presentation = media 1024 + 4800 = 5824, inside packet 5
     // (5120..6144); packet 4 is its preroll and the edit hides 1728 of it.
     let t = trim_audio(Some(&edited), Some(0.1), None).unwrap();
     assert_eq!(t.samples.first().unwrap().0, vec![4u8]);
     assert_eq!(t.samples.len(), 6);
-    assert_eq!(t.edit, TrackEdit { delay: 0, media_time: 1728, duration: None });
+    assert_eq!(
+        t.edit,
+        TrackEdit {
+            delay: 0,
+            media_time: 1728,
+            duration: None
+        }
+    );
     // The same trim without an edit is the packet-granular trim it always was.
-    let plain = PreparedAudio { edit: TrackEdit::default(), ..edited };
+    let plain = PreparedAudio {
+        edit: TrackEdit::default(),
+        ..edited
+    };
     let t = trim_audio(Some(&plain), Some(0.1), None).unwrap();
     assert_eq!(t.samples.first().unwrap().0, vec![5u8]);
     assert!(t.edit.is_identity());
@@ -200,8 +220,16 @@ fn concat_applies_an_edit_inside_the_join_to_whole_packets() {
     // The first clip presents 2.5 s of its 4; the next hides its first 1.5 s.
     // The first cut lands at 2 s (the nearer boundary; a tie keeps fewer), half
     // a packet short, so the next clip's start moves back by that half: 1 s.
-    let mut joined = mk(TrackEdit { delay: 0, media_time: 0, duration: Some(2500) });
-    joined.extend(&mk(TrackEdit { delay: 0, media_time: 1500, duration: None }));
+    let mut joined = mk(TrackEdit {
+        delay: 0,
+        media_time: 0,
+        duration: Some(2500),
+    });
+    joined.extend(&mk(TrackEdit {
+        delay: 0,
+        media_time: 1500,
+        duration: None,
+    }));
     let order: Vec<u8> = joined.samples.iter().map(|(p, _)| p[0]).collect();
     assert_eq!(order, vec![0, 1, 1, 2, 3]);
     // The edit presents both clips' lengths, exactly: 2.5 s + 2.5 s.
@@ -228,7 +256,11 @@ fn joins_across_edits_do_not_accumulate_error() {
         handling: "aac passthrough".into(),
         encoder: None,
         file_header: None,
-        edit: TrackEdit { delay: 0, media_time: 0, duration: Some(2600) },
+        edit: TrackEdit {
+            delay: 0,
+            media_time: 0,
+            duration: Some(2600),
+        },
     };
     let mut joined = clip(0);
     for n in 1..10 {
@@ -243,7 +275,10 @@ fn joins_across_edits_do_not_accumulate_error() {
         let (n, i) = (payload[0], payload[1]);
         if seen.insert(n) {
             let intended = i64::from(n) * 2600 + i64::from(i) * 1000;
-            assert!((at - intended).abs() <= 500, "clip {n} starts {at}, intended {intended}");
+            assert!(
+                (at - intended).abs() <= 500,
+                "clip {n} starts {at}, intended {intended}"
+            );
         }
         at += i64::from(*d);
     }
@@ -269,11 +304,20 @@ fn a_joined_clips_short_last_packet_counts_at_its_decoded_length() {
     // where the clip is placed right.
     let clip = |n: u8| PreparedAudio {
         info: info.clone(),
-        samples: vec![(vec![n, 0], 1000u32), (vec![n, 1], 1000), (vec![n, 2], 1000), (vec![n, 3], 750)],
+        samples: vec![
+            (vec![n, 0], 1000u32),
+            (vec![n, 1], 1000),
+            (vec![n, 2], 1000),
+            (vec![n, 3], 750),
+        ],
         handling: "aac passthrough".into(),
         encoder: None,
         file_header: None,
-        edit: TrackEdit { delay: 0, media_time: 1000, duration: None },
+        edit: TrackEdit {
+            delay: 0,
+            media_time: 1000,
+            duration: None,
+        },
     };
     let mut joined = clip(0);
     for n in 1..4 {
@@ -289,7 +333,10 @@ fn a_joined_clips_short_last_packet_counts_at_its_decoded_length() {
         let (n, i) = (payload[0], payload[1]);
         if seen.insert(n) {
             let intended = i64::from(n) * 2750 + i64::from(i) * 1000;
-            assert!((decoded_at - intended).abs() <= 500, "clip {n} decodes from {decoded_at}, intended {intended}");
+            assert!(
+                (decoded_at - intended).abs() <= 500,
+                "clip {n} decodes from {decoded_at}, intended {intended}"
+            );
         }
         decoded_at += 1000;
     }
@@ -297,7 +344,10 @@ fn a_joined_clips_short_last_packet_counts_at_its_decoded_length() {
     // Every packet inside the joined track carries its decoded length; only
     // the very end keeps the short stamp, where the output edit cuts it.
     let durations: Vec<u32> = joined.samples.iter().map(|(_, d)| *d).collect();
-    assert!(durations[..durations.len() - 1].iter().all(|&d| d == 1000), "{durations:?}");
+    assert!(
+        durations[..durations.len() - 1].iter().all(|&d| d == 1000),
+        "{durations:?}"
+    );
 }
 
 #[test]
@@ -306,34 +356,54 @@ fn a_pcm_window_cuts_decoded_samples_to_the_edit() {
     use codec::audio::AudioFrame;
     // Stereo frames of 1024 samples, each sample's value its position.
     let frame = |start: usize| AudioFrame {
-        samples: (start..start + 1024).flat_map(|i| [i as f32, i as f32]).collect(),
+        samples: (start..start + 1024)
+            .flat_map(|i| [i as f32, i as f32])
+            .collect(),
         sample_rate: 48_000,
         channels: 2,
         pts: 0,
     };
     // Present media 1500..2500 of a track timed at its sample rate.
-    let edit = container::edit::AudioEdit { delay: 0, media_start: 1500, media_end: Some(2500) };
+    let edit = container::edit::AudioEdit {
+        delay: 0,
+        media_start: 1500,
+        media_end: Some(2500),
+    };
     let mut w = PcmWindow::new(&edit, 48_000, 48_000);
     assert!(w.take(&frame(0)).is_none(), "0..1024 is all hidden");
-    let f = w.take(&frame(1024)).expect("1024..2048 is partly presented");
+    let f = w
+        .take(&frame(1024))
+        .expect("1024..2048 is partly presented");
     assert_eq!((f.samples.len(), f.samples[0]), ((2048 - 1500) * 2, 1500.0));
-    let f = w.take(&frame(2048)).expect("2048..3072 is partly presented");
-    assert_eq!((f.samples.len(), *f.samples.last().unwrap()), ((2500 - 2048) * 2, 2499.0));
+    let f = w
+        .take(&frame(2048))
+        .expect("2048..3072 is partly presented");
+    assert_eq!(
+        (f.samples.len(), *f.samples.last().unwrap()),
+        ((2500 - 2048) * 2, 2499.0)
+    );
     assert!(w.take(&frame(3072)).is_none(), "past the end");
     // A track timed in milliseconds: 1500..2500 ms at 48 kHz.
     let mut ms = PcmWindow::new(
-        &container::edit::AudioEdit { delay: 0, media_start: 1500, media_end: None },
+        &container::edit::AudioEdit {
+            delay: 0,
+            media_start: 1500,
+            media_end: None,
+        },
         1000,
         48_000,
     );
-    let samples: usize = (0..80).filter_map(|i| ms.take(&frame(i * 1024))).map(|f| f.samples.len() / 2).sum();
+    let samples: usize = (0..80)
+        .filter_map(|i| ms.take(&frame(i * 1024)))
+        .map(|f| f.samples.len() / 2)
+        .sum();
     assert_eq!(samples, 80 * 1024 - 72_000);
 }
 
 #[test]
 fn a_hole_in_a_decoded_track_is_filled_with_its_length_of_silence() {
-    use container::edit::AudioGap;
     use crate::spec::AudioCodecPolicy;
+    use container::edit::AudioGap;
     // 0.5 s of 5.1 AC-3 at 48 kHz from a transport stream, decoded to Opus: a hole
     // the reader reports after its fourth frame (a transport stream's audio
     // PES lost there) plays as that much silence, so the output presents that
@@ -344,15 +414,29 @@ fn a_hole_in_a_decoded_track_is_filled_with_its_length_of_silence() {
     ));
     let demuxer = container::streaming::demux_streaming(ts).expect("demux");
     let track = demuxer.audio().expect("the AC-3 track").clone();
-    assert_eq!((track.codec.as_str(), track.sample_rate, track.timescale), ("ac3", 48_000, 48_000));
+    assert_eq!(
+        (track.codec.as_str(), track.sample_rate, track.timescale),
+        ("ac3", 48_000, 48_000)
+    );
     let opus = |gaps: &[AudioGap]| {
-        super::audio::prepare_audio(Some(&track), None, gaps, super::audio::AudioRequest::plain(AudioCodecPolicy::ForceOpus))
-            .expect("prepare")
-            .expect("an audio track")
+        super::audio::prepare_audio(
+            Some(&track),
+            None,
+            gaps,
+            super::audio::AudioRequest::plain(AudioCodecPolicy::ForceOpus),
+        )
+        .expect("prepare")
+        .expect("an audio track")
     };
     let whole = opus(&[]);
-    let holed = opus(&[AudioGap { after_packet: 3, ticks: 4800 }]);
-    assert_eq!(whole.handling, format!("ac3 → opus ({}ch)", whole.info.channels));
+    let holed = opus(&[AudioGap {
+        after_packet: 3,
+        ticks: 4800,
+    }]);
+    assert_eq!(
+        whole.handling,
+        format!("ac3 → opus ({}ch)", whole.info.channels)
+    );
     assert_eq!(holed.edit.duration, whole.edit.duration.map(|d| d + 4800));
 }
 
@@ -374,25 +458,47 @@ fn a_hole_inside_a_joined_clip_does_not_lengthen_its_last_packet() {
     // length.
     let clip = |n: u8| PreparedAudio {
         info: info.clone(),
-        samples: vec![(vec![n, 0], 1536u32), (vec![n, 1], 1536 + 4800), (vec![n, 2], 1536), (vec![n, 3], 1000)],
+        samples: vec![
+            (vec![n, 0], 1536u32),
+            (vec![n, 1], 1536 + 4800),
+            (vec![n, 2], 1536),
+            (vec![n, 3], 1000),
+        ],
         handling: "ac3 passthrough".into(),
         encoder: None,
         file_header: None,
-        edit: TrackEdit { delay: 0, media_time: 0, duration: Some(3 * 1536 + 4800 + 1000) },
+        edit: TrackEdit {
+            delay: 0,
+            media_time: 0,
+            duration: Some(3 * 1536 + 4800 + 1000),
+        },
     };
     let mut joined = clip(0);
     joined.extend(&clip(1));
     assert_eq!(joined.samples[3], (vec![0, 3], 1536));
     // Durations that only round a frame (Matroska's millisecond timestamps:
     // 21.33 ms frames as 21, 21, 22) still take the longest of them.
-    let info = AudioInfo { timescale: 1000, ..info };
+    let info = AudioInfo {
+        timescale: 1000,
+        ..info
+    };
     let clip = |n: u8| PreparedAudio {
         info: info.clone(),
-        samples: vec![(vec![n, 0], 21u32), (vec![n, 1], 21), (vec![n, 2], 22), (vec![n, 3], 21), (vec![n, 4], 20)],
+        samples: vec![
+            (vec![n, 0], 21u32),
+            (vec![n, 1], 21),
+            (vec![n, 2], 22),
+            (vec![n, 3], 21),
+            (vec![n, 4], 20),
+        ],
         handling: "ac3 passthrough".into(),
         encoder: None,
         file_header: None,
-        edit: TrackEdit { delay: 0, media_time: 0, duration: Some(105) },
+        edit: TrackEdit {
+            delay: 0,
+            media_time: 0,
+            duration: Some(105),
+        },
     };
     let mut joined = clip(0);
     joined.extend(&clip(1));
@@ -425,9 +531,21 @@ mod refusal {
         let header: u8 = (1 << 3) | (1 << 1);
         let mut first = vec![header, 5];
         first.extend_from_slice(&[0u8; 5]);
-        muxer.add_packet(EncodedPacket { data: Bytes::from(first), pts: 0, is_keyframe: true }).unwrap();
+        muxer
+            .add_packet(EncodedPacket {
+                data: Bytes::from(first),
+                pts: 0,
+                is_keyframe: true,
+            })
+            .unwrap();
         for i in 1..30u64 {
-            muxer.add_packet(EncodedPacket { data: Bytes::from(vec![0xAA; 64]), pts: i, is_keyframe: false }).unwrap();
+            muxer
+                .add_packet(EncodedPacket {
+                    data: Bytes::from(vec![0xAA; 64]),
+                    pts: i,
+                    is_keyframe: false,
+                })
+                .unwrap();
         }
         muxer.finalize().unwrap()
     }
@@ -441,8 +559,10 @@ mod refusal {
     /// bound measures the refusal, not how fast a loaded machine probes its
     /// cards.
     fn a_family_this_host_lacks() -> Option<(GpuFamily, &'static str)> {
-        let present: Vec<GpuVendor> =
-            crate::multigpu::host_verdicts(VideoCodec::H264, false).iter().map(|c| c.device.vendor).collect();
+        let present: Vec<GpuVendor> = crate::multigpu::host_verdicts(VideoCodec::H264, false)
+            .iter()
+            .map(|c| c.device.vendor)
+            .collect();
         [
             (GpuFamily::Intel, GpuVendor::Intel, "intel"),
             (GpuFamily::Amd, GpuVendor::Amd, "amd"),
@@ -480,7 +600,12 @@ mod refusal {
             },
         )
         .expect_err("nothing this job pinned can encode");
-        assert!(msg.contains(&format!("no encoder matches `--encode family:{flag}` for H.264 on this host: no ")), "{msg}");
+        assert!(
+            msg.contains(&format!(
+                "no encoder matches `--encode family:{flag}` for H.264 on this host: no "
+            )),
+            "{msg}"
+        );
     }
 
     /// The HLS job: the control build sat at `0/120 frames` on the same
@@ -498,16 +623,30 @@ mod refusal {
             "an HLS job pinned to an absent family waited for a lease instead of refusing",
             move || async move {
                 let spec = pinned(OutputSpec::hls(vec![Rung::new(64, 64)], 1.0), fam);
-                super::super::run_job(undecodable_mp4(), &spec, Some(dir.as_path()), Arc::new(NullSink))
-                    .await
-                    .map(|_| ())
-                    .map_err(|e| format!("{e:#}"))
+                super::super::run_job(
+                    undecodable_mp4(),
+                    &spec,
+                    Some(dir.as_path()),
+                    Arc::new(NullSink),
+                )
+                .await
+                .map(|_| ())
+                .map_err(|e| format!("{e:#}"))
             },
         )
         .expect_err("nothing this job pinned can encode");
-        assert!(msg.contains(&format!("no encoder matches `--encode family:{flag}` for H.264 on this host: no ")), "{msg}");
+        assert!(
+            msg.contains(&format!(
+                "no encoder matches `--encode family:{flag}` for H.264 on this host: no "
+            )),
+            "{msg}"
+        );
         let written: Vec<_> = std::fs::read_dir(root.path()).unwrap().collect();
-        assert!(written.is_empty(), "a refused job wrote {} entries", written.len());
+        assert!(
+            written.is_empty(),
+            "a refused job wrote {} entries",
+            written.len()
+        );
     }
 
     /// A splice encodes serially too; the same pin is refused the same way,
@@ -531,7 +670,12 @@ mod refusal {
             },
         )
         .expect_err("nothing this job pinned can encode");
-        assert!(msg.contains(&format!("no encoder matches `--encode family:{flag}` for H.264 on this host: no ")), "{msg}");
+        assert!(
+            msg.contains(&format!(
+                "no encoder matches `--encode family:{flag}` for H.264 on this host: no "
+            )),
+            "{msg}"
+        );
     }
 }
 
@@ -562,7 +706,9 @@ fn a_failed_rung_reports_its_whole_error_chain() {
     assert_eq!((got[0].rung_index, got[0].status), (2, RungStatus::Failed));
     assert_eq!(
         got[0].message.as_deref(),
-        Some("finalize: placing video samples by presentation order: presentation timestamp 30 appears on two samples")
+        Some(
+            "finalize: placing video samples by presentation order: presentation timestamp 30 appears on two samples"
+        )
     );
 }
 
@@ -589,15 +735,24 @@ fn a_track_the_mp4_muxer_refuses_refuses_the_job() {
         file_header: None,
         edit: Default::default(),
     };
-    let kept = fit_single_file(Some(track(5, 5)), crate::spec::Container::Mp4).unwrap().expect("5.0 is kept");
+    let kept = fit_single_file(Some(track(5, 5)), crate::spec::Container::Mp4)
+        .unwrap()
+        .expect("5.0 is kept");
     assert_eq!(kept.handling, "aac passthrough");
     assert!(kept.has_samples());
     let refused = fit_single_file(Some(track(24, 13)), crate::spec::Container::Mp4)
         .err()
         .expect("22.2 is refused, not written video-only")
         .to_string();
-    assert!(refused.contains("mp4 muxer refuses") && refused.contains("--audio drop"), "{refused}");
-    assert!(fit_single_file(None, crate::spec::Container::Mp4).unwrap().is_none());
+    assert!(
+        refused.contains("mp4 muxer refuses") && refused.contains("--audio drop"),
+        "{refused}"
+    );
+    assert!(
+        fit_single_file(None, crate::spec::Container::Mp4)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -612,15 +767,31 @@ fn opus_asked_of_an_aac_source_transcodes_it() {
     let demuxer = container::streaming::demux_streaming(ts).expect("demux");
     let track = demuxer.audio().expect("the AAC track").clone();
     assert_eq!(track.codec, "aac");
-    let prepared = super::audio::prepare_audio(Some(&track), None, &[], super::audio::AudioRequest::plain(AudioCodecPolicy::ForceOpus))
-        .expect("prepare")
-        .expect("an audio track");
-    assert_eq!(prepared.handling, format!("aac → opus ({}ch)", track.channels));
+    let prepared = super::audio::prepare_audio(
+        Some(&track),
+        None,
+        &[],
+        super::audio::AudioRequest::plain(AudioCodecPolicy::ForceOpus),
+    )
+    .expect("prepare")
+    .expect("an audio track");
+    assert_eq!(
+        prepared.handling,
+        format!("aac → opus ({}ch)", track.channels)
+    );
     assert_eq!(prepared.info.codec, "opus");
     // As long as the source: 20 ms Opus packets over its 1024-sample AUs.
     let source_seconds = track.samples.len() as f64 * 1024.0 / f64::from(track.sample_rate);
-    let out_seconds = prepared.samples.iter().map(|(_, d)| f64::from(*d)).sum::<f64>() / 48_000.0;
-    assert!((out_seconds - source_seconds).abs() < 0.05, "{out_seconds} s from {source_seconds} s");
+    let out_seconds = prepared
+        .samples
+        .iter()
+        .map(|(_, d)| f64::from(*d))
+        .sum::<f64>()
+        / 48_000.0;
+    assert!(
+        (out_seconds - source_seconds).abs() < 0.05,
+        "{out_seconds} s from {source_seconds} s"
+    );
 }
 
 /// `input-fps` retimes a raw elementary stream's header (the duration with
@@ -659,13 +830,22 @@ fn input_fps_sets_an_elementary_streams_rate_and_only_its() {
     }
     let header = demux_streaming(&es).unwrap().header().clone();
     assert_eq!(header.info.frame_rate, 30.0);
-    let spec = OutputSpec { input_frame_rate: Some(24.0), ..OutputSpec::single_file(vec![Rung::new(64, 48)]) };
+    let spec = OutputSpec {
+        input_frame_rate: Some(24.0),
+        ..OutputSpec::single_file(vec![Rung::new(64, 48)])
+    };
     let set = super::with_input_frame_rate(header.clone(), &es, &spec).unwrap();
     assert_eq!(set.info.frame_rate, 24.0);
     assert!((set.info.duration - 4.0 / 24.0).abs() < 1e-9);
     // Without the setting the stream's own rate stands.
     let plain = OutputSpec::single_file(vec![Rung::new(64, 48)]);
-    assert_eq!(super::with_input_frame_rate(header.clone(), &es, &plain).unwrap().info.frame_rate, 30.0);
+    assert_eq!(
+        super::with_input_frame_rate(header.clone(), &es, &plain)
+            .unwrap()
+            .info
+            .frame_rate,
+        30.0
+    );
     // A container is refused, by name: an ISO BMFF `ftyp` first.
     let mut mp4_head = 24u32.to_be_bytes().to_vec();
     mp4_head.extend_from_slice(b"ftypisom");

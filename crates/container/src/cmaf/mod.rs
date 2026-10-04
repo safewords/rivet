@@ -54,7 +54,7 @@ use frame::{ColorMetadata, VideoCodec};
 use std::fs;
 use std::io::Write;
 
-use crate::atomic::{write_atomic, AtomicFile};
+use crate::atomic::{AtomicFile, write_atomic};
 use std::path::{Path, PathBuf};
 
 use crate::AudioInfo;
@@ -456,7 +456,12 @@ impl CmafVideoMuxer {
                     self.config_obus = Some(payload.clone());
                     self.first_duration = duration;
                 }
-                self.pending.push(PendingVideoSample { payload, duration, is_keyframe, pts });
+                self.pending.push(PendingVideoSample {
+                    payload,
+                    duration,
+                    is_keyframe,
+                    pts,
+                });
             }
             None => {
                 // AV1: capture the OBU sequence header once; store OBUs verbatim.
@@ -573,7 +578,10 @@ impl CmafVideoMuxer {
         let durations: Vec<u32> = self.pending.iter().map(|s| s.duration).collect();
         let pts: Vec<u64> = self.pending.iter().map(|s| s.pts).collect();
         let offsets = composition_offsets(&pts, &durations).with_context(|| {
-            format!("placing the samples of CMAF segment {} by presentation order", self.sequence_number + 1)
+            format!(
+                "placing the samples of CMAF segment {} by presentation order",
+                self.sequence_number + 1
+            )
         })?;
         if offsets.first().is_some_and(|&o| o != 0) {
             anyhow::bail!(
@@ -698,7 +706,10 @@ impl CmafVideoMuxer {
                 )
             }
             VideoCodec::H264 => {
-                let w = self.nal_writer.as_ref().context("H.264 CMAF nal writer missing")?;
+                let w = self
+                    .nal_writer
+                    .as_ref()
+                    .context("H.264 CMAF nal writer missing")?;
                 if !w.has_param_sets() {
                     anyhow::bail!("cannot write CMAF H.264 init segment: no SPS/PPS observed yet");
                 }
@@ -706,8 +717,13 @@ impl CmafVideoMuxer {
                 // avc1 sample entry: every set this stream has sent is in
                 // avcC. A set changed under its id already → avc3.
                 // `settle_video_sample_entry` checks the segments written after.
-                let fourcc = if w.param_sets_changed() { b"avc3" } else { b"avc1" };
-                let entry = build_avc1(self.width, self.height, &avcc, &self.color_metadata, fourcc);
+                let fourcc = if w.param_sets_changed() {
+                    b"avc3"
+                } else {
+                    b"avc1"
+                };
+                let entry =
+                    build_avc1(self.width, self.height, &avcc, &self.color_metadata, fourcc);
                 build_init_segment_video_with_entry(
                     self.width,
                     self.height,
@@ -717,7 +733,10 @@ impl CmafVideoMuxer {
                 )
             }
             VideoCodec::H265 => {
-                let w = self.nal_writer.as_ref().context("H.265 CMAF nal writer missing")?;
+                let w = self
+                    .nal_writer
+                    .as_ref()
+                    .context("H.265 CMAF nal writer missing")?;
                 if !w.has_param_sets() {
                     anyhow::bail!(
                         "cannot write CMAF H.265 init segment: no VPS/SPS/PPS observed yet"
@@ -727,7 +746,8 @@ impl CmafVideoMuxer {
                 let changed = w.param_sets_changed();
                 let hvcc = build_hvcc(&w.vps, &w.sps, &w.pps, !changed);
                 let fourcc = if changed { b"hev1" } else { b"hvc1" };
-                let entry = build_hvc1(self.width, self.height, &hvcc, &self.color_metadata, fourcc);
+                let entry =
+                    build_hvc1(self.width, self.height, &hvcc, &self.color_metadata, fourcc);
                 build_init_segment_video_with_entry(
                     self.width,
                     self.height,
@@ -760,14 +780,23 @@ impl CmafVideoMuxer {
                     &config.vpcc_box(),
                     &self.color_metadata,
                 );
-                build_init_segment_video_with_entry(self.width, self.height, self.timescale, &entry, b"vp09")
+                build_init_segment_video_with_entry(
+                    self.width,
+                    self.height,
+                    self.timescale,
+                    &entry,
+                    b"vp09",
+                )
             }
             VideoCodec::Vp8 | VideoCodec::Mpeg2 | VideoCodec::Mpeg4 | VideoCodec::ProRes(_) => {
                 unreachable!("refused by the constructor")
             }
         };
         write_atomic(&self.init_path, &init).with_context(|| {
-            format!("writing CMAF video init segment: {}", self.init_path.display())
+            format!(
+                "writing CMAF video init segment: {}",
+                self.init_path.display()
+            )
         })?;
         self.init_written = true;
         Ok(())
@@ -927,7 +956,10 @@ impl CmafAudioMuxer {
         }
         let init = build_init_segment_audio_with_edit(&self.info, &self.edit);
         write_atomic(&self.init_path, &init).with_context(|| {
-            format!("writing CMAF audio init segment: {}", self.init_path.display())
+            format!(
+                "writing CMAF audio init segment: {}",
+                self.init_path.display()
+            )
         })?;
         self.init_written = true;
         Ok(())

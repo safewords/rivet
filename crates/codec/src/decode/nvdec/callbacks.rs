@@ -4,20 +4,19 @@
 
 use std::ffi::c_void;
 use std::os::raw::{c_int, c_uint, c_ulong};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 
-use crate::frame::ColorSpace;
 use super::NvdecError;
 use super::convert::{output_geometry, validate_format};
 use super::ffi::{
-    CU_MEMORYTYPE_DEVICE, CU_MEMORYTYPE_HOST,
-    CUVID_CHROMA_420, CUVID_CREATE_PREFER_CUVID, CUVID_FMT_NV12, CUVID_FMT_P016, CUVID_H264,
-    CUdeviceptr, CUvideodecoder,
-    CudaMemcpy2D, CuVideoDecodeCaps, CuVideoDecodeCreateInfo, CuVideoDispInfo, CuVideoFormat,
-    CuVideoPicParams, CuVideoProcParams,
+    CU_MEMORYTYPE_DEVICE, CU_MEMORYTYPE_HOST, CUVID_CHROMA_420, CUVID_CREATE_PREFER_CUVID,
+    CUVID_FMT_NV12, CUVID_FMT_P016, CUVID_H264, CUdeviceptr, CUvideodecoder, CuVideoDecodeCaps,
+    CuVideoDecodeCreateInfo, CuVideoDispInfo, CuVideoFormat, CuVideoPicParams, CuVideoProcParams,
+    CudaMemcpy2D,
 };
 use super::state::{CallbackState, DecodedFrame};
+use crate::frame::ColorSpace;
 
 // ─── Callbacks ─────────────────────────────────────────────────────
 //

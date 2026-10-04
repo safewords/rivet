@@ -79,19 +79,38 @@ impl Vp8Encoder {
             threads: threads(&config),
             ..vp8::Config::default()
         };
-        let inner = vp8::Encoder::new(cfg.clone()).context("the VP8 encoder rejected the configuration")?;
-        Ok(Self { inner, cfg, ready: VecDeque::new() })
+        let inner =
+            vp8::Encoder::new(cfg.clone()).context("the VP8 encoder rejected the configuration")?;
+        Ok(Self {
+            inner,
+            cfg,
+            ready: VecDeque::new(),
+        })
     }
 }
 
 impl Encoder for Vp8Encoder {
     fn send_frame(&mut self, frame: &VideoFrame) -> Result<()> {
-        let want = check_frame("VP8", frame, self.cfg.width, self.cfg.height, &[PixelFormat::Yuv420p])?;
-        let picture = vp8::Frame::from_packed(self.cfg.width, self.cfg.height, frame.data[..want].to_vec())
-            .context("the VP8 encoder refused the frame's layout")?;
-        let data = self.inner.encode(&picture).context("the VP8 encoder refused a frame")?;
+        let want = check_frame(
+            "VP8",
+            frame,
+            self.cfg.width,
+            self.cfg.height,
+            &[PixelFormat::Yuv420p],
+        )?;
+        let picture =
+            vp8::Frame::from_packed(self.cfg.width, self.cfg.height, frame.data[..want].to_vec())
+                .context("the VP8 encoder refused the frame's layout")?;
+        let data = self
+            .inner
+            .encode(&picture)
+            .context("the VP8 encoder refused a frame")?;
         let is_keyframe = data.first().is_some_and(|tag| tag & 1 == 0);
-        self.ready.push_back(EncodedPacket { data: Bytes::from(data), pts: frame.pts, is_keyframe });
+        self.ready.push_back(EncodedPacket {
+            data: Bytes::from(data),
+            pts: frame.pts,
+            is_keyframe,
+        });
         Ok(())
     }
 
@@ -125,11 +144,18 @@ mod tests {
     #[test]
     fn packets_decode_to_the_reconstruction() {
         let (w, h) = (64, 48);
-        let config = EncoderConfig { width: w, height: h, codec: VideoCodec::Vp8, keyframe_interval: 3, ..Default::default() };
+        let config = EncoderConfig {
+            width: w,
+            height: h,
+            codec: VideoCodec::Vp8,
+            keyframe_interval: 3,
+            ..Default::default()
+        };
         let mut enc = Vp8Encoder::new(config).unwrap();
         let mut dec = vp8::Decoder::new();
         for n in 0..5 {
-            enc.send_frame(&super::super::native::test_picture(w, h, n)).unwrap();
+            enc.send_frame(&super::super::native::test_picture(w, h, n))
+                .unwrap();
             let p = enc.receive_packet().unwrap().expect("a packet per frame");
             assert_eq!(p.pts, n);
             assert_eq!(p.is_keyframe, n % 3 == 0, "frame {n}");
@@ -137,28 +163,53 @@ mod tests {
             assert_eq!(shown.packed(), enc.inner.reconstruction().unwrap().packed());
         }
         enc.force_keyframe_next().unwrap();
-        enc.send_frame(&super::super::native::test_picture(w, h, 5)).unwrap();
+        enc.send_frame(&super::super::native::test_picture(w, h, 5))
+            .unwrap();
         assert!(enc.receive_packet().unwrap().unwrap().is_keyframe);
     }
 
     /// The rung's thread budget reaches the encoder; zero is the machine's.
     #[test]
     fn the_rung_thread_budget_reaches_the_encoder() {
-        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Vp8, ..Default::default() };
+        let base = EncoderConfig {
+            width: 64,
+            height: 48,
+            frame_rate: 25.0,
+            codec: VideoCodec::Vp8,
+            ..Default::default()
+        };
         let all = std::thread::available_parallelism().map_or(1, |n| n.get());
         for (asked, want) in [(3, 3), (0, all)] {
-            let enc = Vp8Encoder::new(EncoderConfig { threads: asked, ..base.clone() }).unwrap();
+            let enc = Vp8Encoder::new(EncoderConfig {
+                threads: asked,
+                ..base.clone()
+            })
+            .unwrap();
             assert_eq!(enc.cfg.threads, want, "threads {asked}");
         }
     }
 
     #[test]
     fn ten_bit_and_rates_are_refused() {
-        let base = EncoderConfig { width: 64, height: 48, codec: VideoCodec::Vp8, ..Default::default() };
-        let ten = EncoderConfig { pixel_format: PixelFormat::Yuv420p10le, ..base.clone() };
+        let base = EncoderConfig {
+            width: 64,
+            height: 48,
+            codec: VideoCodec::Vp8,
+            ..Default::default()
+        };
+        let ten = EncoderConfig {
+            pixel_format: PixelFormat::Yuv420p10le,
+            ..base.clone()
+        };
         assert!(Vp8Encoder::new(ten).is_err());
         let mut rate = base;
         rate.overrides.bitrate = Some(1_000_000);
-        assert!(Vp8Encoder::new(rate).err().expect("refused").to_string().contains("fixed quantiser"));
+        assert!(
+            Vp8Encoder::new(rate)
+                .err()
+                .expect("refused")
+                .to_string()
+                .contains("fixed quantiser")
+        );
     }
 }

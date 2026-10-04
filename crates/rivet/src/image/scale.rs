@@ -37,7 +37,11 @@ pub(crate) struct Pixels<'a> {
 /// `upscale` off) is made once, and reported.
 pub(crate) fn plan(picture: &Picture, spec: &ImageSpec) -> (Vec<Plan>, Vec<MergedRendition>) {
     let (w, h) = picture.rgba.dimensions();
-    let shape = SourceShape { width: w, height: h, sample_aspect: picture.sample_aspect };
+    let shape = SourceShape {
+        width: w,
+        height: h,
+        sample_aspect: picture.sample_aspect,
+    };
     let requests: Vec<((u32, u32), Fit, Orientation, bool)> = if spec.renditions.is_empty() {
         // The picture at its own size — as shown, for an anamorphic frame.
         let (dw, dh) = shape.display_size();
@@ -64,19 +68,31 @@ pub(crate) fn plan(picture: &Picture, spec: &ImageSpec) -> (Vec<Plan>, Vec<Merge
         // Same output and the same picture in it, from a different box: two
         // renditions the picture collapsed into one. The same box asked for
         // twice is the caller's business, and both are made.
-        if let Some(earlier) =
-            plans.iter().find(|p| p.placement == placement && requests[p.rendition].0 != requested)
+        if let Some(earlier) = plans
+            .iter()
+            .find(|p| p.placement == placement && requests[p.rendition].0 != requested)
         {
-            merged.push(MergedRendition { rendition: index, same_as: earlier.rendition, output: placement.canvas });
+            merged.push(MergedRendition {
+                rendition: index,
+                same_as: earlier.rendition,
+                output: placement.canvas,
+            });
             continue;
         }
         let base = format!("{}x{}", placement.canvas.0, placement.canvas.1);
         let label = if plans.iter().any(|p| p.label == base) {
-            (2..).map(|n| format!("{base}-{n}")).find(|l| plans.iter().all(|p| &p.label != l)).unwrap_or(base)
+            (2..)
+                .map(|n| format!("{base}-{n}"))
+                .find(|l| plans.iter().all(|p| &p.label != l))
+                .unwrap_or(base)
         } else {
             base
         };
-        plans.push(Plan { rendition: index, label, placement });
+        plans.push(Plan {
+            rendition: index,
+            label,
+            placement,
+        });
     }
     (plans, merged)
 }
@@ -105,13 +121,21 @@ pub(crate) fn apply<'a>(source: Source<'a>, plan: &Plan, keeps_alpha: bool) -> R
     let image = if p.scaled == p.canvas {
         scaled
     } else {
-        let bar = if keeps_alpha && picture.alpha { [0, 0, 0, 0] } else { [0, 0, 0, u8::MAX] };
+        let bar = if keeps_alpha && picture.alpha {
+            [0, 0, 0, 0]
+        } else {
+            [0, 0, 0, u8::MAX]
+        };
         let mut canvas = RgbaImage::from_pixel(p.canvas.0, p.canvas.1, bar);
         canvas.replace(&scaled, i64::from(p.offset.0), i64::from(p.offset.1));
         canvas
     };
     let alpha = picture.alpha || image.has_alpha();
-    Ok(Pixels { image, alpha, icc: source.icc })
+    Ok(Pixels {
+        image,
+        alpha,
+        icc: source.icc,
+    })
 }
 
 /// Lanczos-3, premultiplied when the picture has transparency.

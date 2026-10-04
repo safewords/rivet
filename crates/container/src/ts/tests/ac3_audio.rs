@@ -2,11 +2,12 @@
 
 use super::super::pat_pmt::parse_pmt_streams;
 use super::super::{
-    AudioCodecKind, DESC_TAG_REGISTRATION, STREAM_TYPE_AAC_ADTS, STREAM_TYPE_AC3,
-    STREAM_TYPE_EAC3, STREAM_TYPE_MPEG2_VIDEO, STREAM_TYPE_PES_PRIVATE, demux_ts,
+    AudioCodecKind, DESC_TAG_REGISTRATION, STREAM_TYPE_AAC_ADTS, STREAM_TYPE_AC3, STREAM_TYPE_EAC3,
+    STREAM_TYPE_MPEG2_VIDEO, STREAM_TYPE_PES_PRIVATE, demux_ts,
 };
-use super::{build_ts_with_audio, synth_ac3_frame_stereo_48k_128k,
-            synth_eac3_frame_stereo_48k_192bytes};
+use super::{
+    build_ts_with_audio, synth_ac3_frame_stereo_48k_128k, synth_eac3_frame_stereo_48k_192bytes,
+};
 
 #[test]
 fn pmt_walker_classifies_aac_ac3_eac3_stream_types() {

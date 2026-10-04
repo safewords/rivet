@@ -42,12 +42,16 @@
 // The OpenAPI document (`server::docs`) is one `json!` literal, deeper than
 // the default macro recursion limit allows.
 #![recursion_limit = "256"]
+// Parsers return their pieces as tuples spelled out at the signature.
+#![allow(clippy::type_complexity)]
 
+#[cfg(feature = "thumbnail")]
+pub mod avif;
 pub mod cmaf_util;
 pub mod cmaf_validate;
 pub mod decode_pump;
-pub mod fit;
 pub mod encoder_worker;
+pub mod fit;
 pub mod frame_queue;
 pub mod gpu_pool;
 pub mod hooks;
@@ -71,8 +75,6 @@ pub mod rung_scaler;
 pub mod server;
 pub mod settings;
 pub mod spec;
-#[cfg(feature = "thumbnail")]
-pub mod avif;
 pub mod thread_budget;
 #[cfg(feature = "thumbnail")]
 pub mod thumbnail;
@@ -93,23 +95,25 @@ pub use container;
 // Flatten the most common entry points to the crate root.
 pub use gpu_pool::{GpuLease, GpuPool, LeaseKind};
 pub use job::{
-    Clip, JobOutput, RungArtifact, RungOutput, run_job, run_job_blocking,
-    run_job_blocking_owned, run_splice_job,
-    run_splice_job_blocking, single_file_extension, single_file_media_type,
+    Clip, JobOutput, RungArtifact, RungOutput, run_job, run_job_blocking, run_job_blocking_owned,
+    run_splice_job, run_splice_job_blocking, single_file_extension, single_file_media_type,
 };
 pub use ladder::standard_ladder;
-pub use multigpu::{MultiGpuParams, RungManifest, detect_gpu_pool, run_multigpu_hls};
-pub use probe::{AudioStreamInfo, MediaInfo, SubtitleStreamInfo, probe_bytes, probe_bytes_shared, probe_file};
-pub use progress::{JobEvent, ProgressSink, RungProgress, RungStatus, channel_sink, fn_sink};
 #[cfg(feature = "batch")]
 pub use manifest::{
     BatchReport, Format as ManifestFormat, JobOutcome, JobStatus, Manifest, run_manifest_file,
 };
-pub use settings::{Mode, TranscodeSettings};
-pub use spec::{
-    AudioBitDepth, AudioChannels, AudioCodecPolicy, BitDepth, ColorPolicy, Container, DecodePolicy, EncodePolicy, GpuFamily, Muxer,
-    OutputMode, OutputSpec, Quality, Rung, SubtitlePolicy, VideoCodec, VideoCodecPolicy,
+pub use multigpu::{MultiGpuParams, RungManifest, detect_gpu_pool, run_multigpu_hls};
+pub use probe::{
+    AudioStreamInfo, MediaInfo, SubtitleStreamInfo, probe_bytes, probe_bytes_shared, probe_file,
 };
+pub use progress::{JobEvent, ProgressSink, RungProgress, RungStatus, channel_sink, fn_sink};
+pub use settings::{Mode, TranscodeSettings};
 #[allow(deprecated)]
 pub use spec::AudioPolicy;
+pub use spec::{
+    AudioBitDepth, AudioChannels, AudioCodecPolicy, BitDepth, ColorPolicy, Container, DecodePolicy,
+    EncodePolicy, GpuFamily, Muxer, OutputMode, OutputSpec, Quality, Rung, SubtitlePolicy,
+    VideoCodec, VideoCodecPolicy,
+};
 pub use transcode::{AudioHandling, TranscodeOutcome, transcode_bytes, transcode_file};

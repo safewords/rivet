@@ -46,7 +46,10 @@ pub enum AudioFilter {
         pairs: Vec<(ChannelLabel, ChannelLabel)>,
         /// Explicit output layout (ffmpeg's second argument). `None` = infer
         /// from `pairs`.
-        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
         layout: Option<ChannelLayout>,
     },
 }
@@ -74,7 +77,11 @@ impl fmt::Display for AudioFilter {
 /// A whole chain as a comma-separated textual string (the inverse of
 /// [`parse_chain`]).
 pub fn chain_to_string(chain: &[AudioFilter]) -> String {
-    chain.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(",")
+    chain
+        .iter()
+        .map(|f| f.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Parse an ffmpeg-`-filter:a`-style chain, e.g.
@@ -113,7 +120,9 @@ pub fn apply_chain(frame: &AudioFrame, chain: &[AudioFilter]) -> Result<AudioFra
 /// Apply one filter to one decoded frame.
 pub fn apply(frame: &AudioFrame, filter: &AudioFilter) -> Result<AudioFrame> {
     match filter {
-        AudioFilter::ChannelMap { pairs, layout } => channelmap::apply(frame, pairs, layout.as_ref()),
+        AudioFilter::ChannelMap { pairs, layout } => {
+            channelmap::apply(frame, pairs, layout.as_ref())
+        }
     }
 }
 
@@ -124,7 +133,9 @@ pub fn output_layout(chain: &[AudioFilter], in_channels: u8) -> Result<Option<Ch
     let mut layout = None;
     for filter in chain {
         let l = match filter {
-            AudioFilter::ChannelMap { pairs, layout } => channelmap::output_layout(pairs, layout.as_ref(), ch)?,
+            AudioFilter::ChannelMap { pairs, layout } => {
+                channelmap::output_layout(pairs, layout.as_ref(), ch)?
+            }
         };
         ch = l.len() as u8;
         layout = Some(l);

@@ -156,7 +156,13 @@ mod tests {
         let v = standard_ladder(1920, 1080, None);
         assert_eq!(
             dims(&v),
-            vec![(1920, 1080), (1280, 720), (852, 480), (640, 360), (426, 240)]
+            vec![
+                (1920, 1080),
+                (1280, 720),
+                (852, 480),
+                (640, 360),
+                (426, 240)
+            ]
         );
     }
 
@@ -176,7 +182,16 @@ mod tests {
     #[test]
     fn ladder_portrait_short_side_labels() {
         let v = standard_ladder(1080, 1920, None);
-        assert_eq!(dims(&v), vec![(1080, 1920), (720, 1280), (480, 852), (360, 640), (240, 426)]);
+        assert_eq!(
+            dims(&v),
+            vec![
+                (1080, 1920),
+                (720, 1280),
+                (480, 852),
+                (360, 640),
+                (240, 426)
+            ]
+        );
         assert_eq!(v[0].label, "1080p");
         assert_eq!(v[1].label, "720p");
     }
@@ -203,40 +218,69 @@ mod tests {
     fn a_source_just_above_a_standard_rung_absorbs_it() {
         // 1920×818 used to ship an 818 rung *and* a 720 rung, 12% apart. The
         // source keeps its resolution; the near-identical rung underneath goes.
-        let heights: Vec<u32> =
-            standard_ladder(1920, 818, None).iter().map(|r| r.height).collect();
-        assert_eq!(heights.first(), Some(&818), "the source lost resolution: {heights:?}");
+        let heights: Vec<u32> = standard_ladder(1920, 818, None)
+            .iter()
+            .map(|r| r.height)
+            .collect();
+        assert_eq!(
+            heights.first(),
+            Some(&818),
+            "the source lost resolution: {heights:?}"
+        );
         assert!(
             !heights.contains(&720),
             "shipped a near-duplicate 12% below the top: {heights:?}"
         );
         // Only the neighbour goes; the rest of the ladder is untouched.
-        assert!(heights.contains(&480), "absorbed more than the neighbour: {heights:?}");
+        assert!(
+            heights.contains(&480),
+            "absorbed more than the neighbour: {heights:?}"
+        );
     }
 
     #[test]
     fn a_source_far_from_a_standard_rung_keeps_its_own() {
         // 1920×960 is 33% above 720 — a real rung of its own.
-        let heights: Vec<u32> =
-            standard_ladder(1920, 960, None).iter().map(|r| r.height).collect();
-        assert_eq!(heights.first(), Some(&960), "a genuine top rung was collapsed: {heights:?}");
-        assert!(heights.contains(&720), "the standard rung below it went missing");
+        let heights: Vec<u32> = standard_ladder(1920, 960, None)
+            .iter()
+            .map(|r| r.height)
+            .collect();
+        assert_eq!(
+            heights.first(),
+            Some(&960),
+            "a genuine top rung was collapsed: {heights:?}"
+        );
+        assert!(
+            heights.contains(&720),
+            "the standard rung below it went missing"
+        );
     }
 
     #[test]
     fn a_source_already_on_a_standard_rung_is_unchanged() {
-        let heights: Vec<u32> =
-            standard_ladder(1280, 720, None).iter().map(|r| r.height).collect();
+        let heights: Vec<u32> = standard_ladder(1280, 720, None)
+            .iter()
+            .map(|r| r.height)
+            .collect();
         assert_eq!(heights.first(), Some(&720));
         assert_eq!(heights.iter().filter(|&&h| h == 720).count(), 1);
     }
 
     #[test]
     fn portrait_absorbs_on_the_short_side_too() {
-        let widths: Vec<u32> =
-            standard_ladder(818, 1920, None).iter().map(|r| r.width).collect();
-        assert_eq!(widths.first(), Some(&818), "portrait lost resolution: {widths:?}");
-        assert!(!widths.contains(&720), "portrait kept the near-duplicate: {widths:?}");
+        let widths: Vec<u32> = standard_ladder(818, 1920, None)
+            .iter()
+            .map(|r| r.width)
+            .collect();
+        assert_eq!(
+            widths.first(),
+            Some(&818),
+            "portrait lost resolution: {widths:?}"
+        );
+        assert!(
+            !widths.contains(&720),
+            "portrait kept the near-duplicate: {widths:?}"
+        );
     }
 
     #[test]

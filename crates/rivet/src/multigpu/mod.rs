@@ -48,13 +48,15 @@ mod ladder;
 mod single_file;
 pub(crate) mod speed;
 
+pub(crate) use gpu_policy::check_rate_pool;
+pub use gpu_policy::{
+    CardVerdict, HostCards, SOFTWARE_SLOTS_ENV, SoftwarePoolPlan, detect_gpu_pool,
+    gpu_pool_for_job, gpu_pool_for_policy, gpu_pool_for_serial, gpu_pool_for_serial_job,
+    host_software_pool_plan, policy_gpu_indices, serial_gpu_for_policy, serial_target,
+    software_only, software_pool_plan,
+};
 #[cfg(test)]
 pub(crate) use gpu_policy::{cards_for_policy, host_verdicts};
-pub use gpu_policy::{
-    CardVerdict, HostCards, SOFTWARE_SLOTS_ENV, SoftwarePoolPlan, detect_gpu_pool, gpu_pool_for_job, gpu_pool_for_policy, gpu_pool_for_serial, gpu_pool_for_serial_job, software_only,
-    host_software_pool_plan, policy_gpu_indices, serial_gpu_for_policy, serial_target, software_pool_plan,
-};
-pub(crate) use gpu_policy::check_rate_pool;
 pub use hls::run_multigpu_hls;
 pub use single_file::{RungPackets, run_multigpu_single_file, single_file_chunk_frames};
 
@@ -109,9 +111,16 @@ pub(super) const PROGRESS_TICK: std::time::Duration = std::time::Duration::from_
 
 /// Queue depth for one rung, given how many rungs share the budget and how big
 /// a chunk of this rung's frames is (NV12/YUV420p is 1.5 bytes per pixel).
-pub(super) fn queue_capacity_for(width: u32, height: u32, frames_per_chunk: u32, rungs: usize) -> usize {
+pub(super) fn queue_capacity_for(
+    width: u32,
+    height: u32,
+    frames_per_chunk: u32,
+    rungs: usize,
+) -> usize {
     let frame_bytes = u64::from(width) * u64::from(height) * 3 / 2;
-    let chunk_bytes = frame_bytes.saturating_mul(u64::from(frames_per_chunk)).max(1);
+    let chunk_bytes = frame_bytes
+        .saturating_mul(u64::from(frames_per_chunk))
+        .max(1);
     let per_rung_budget = QUEUE_BYTE_BUDGET / rungs.max(1) as u64;
     let affordable = (per_rung_budget / chunk_bytes) as usize;
     let depth = affordable.clamp(1, QUEUE_CAPACITY);
@@ -228,9 +237,17 @@ impl MultiGpuParams<'_> {
     /// compiled in, and a range pinned there fails to build a decoder at all.
     pub(super) fn decode_capable_gpus(&self) -> Vec<u32> {
         let capable = codec::decode::decode_capable_gpu_indices(&self.header.codec);
-        let from_policy: Vec<u32> =
-            self.gpu_indices.iter().copied().filter(|g| capable.contains(g)).collect();
-        if from_policy.is_empty() { capable } else { from_policy }
+        let from_policy: Vec<u32> = self
+            .gpu_indices
+            .iter()
+            .copied()
+            .filter(|g| capable.contains(g))
+            .collect();
+        if from_policy.is_empty() {
+            capable
+        } else {
+            from_policy
+        }
     }
 
     /// The GPU for the `i`-th decode range: a pinned card wins, else the
@@ -274,7 +291,10 @@ impl MultiGpuParams<'_> {
                     rotation_degrees: self.header.rotation_degrees,
                     filters: self.filters.clone(),
                     // `frame_rate` is the source's, capped.
-                    decimate: crate::decode_pump::decimation(self.header.info.frame_rate, Some(self.frame_rate)),
+                    decimate: crate::decode_pump::decimation(
+                        self.header.info.frame_rate,
+                        Some(self.frame_rate),
+                    ),
                     hooks: self.hooks.clone(),
                 },
                 input: self.input.clone(),
@@ -285,7 +305,10 @@ impl MultiGpuParams<'_> {
         self.spliced_clips
             .iter()
             .map(|c| ClipSource {
-                cfg: DecodePumpConfig { gpu_index: gpu, ..c.cfg.clone() },
+                cfg: DecodePumpConfig {
+                    gpu_index: gpu,
+                    ..c.cfg.clone()
+                },
                 input: c.input.clone(),
                 start_frame: c.start_frame,
                 end_frame: c.end_frame,
@@ -409,7 +432,11 @@ pub(super) mod test_support {
     /// neither a starved timer nor a runtime that cannot shut down holds the
     /// verdict back. A body still running when the bound passes is left to
     /// end with the test process.
-    pub(crate) fn within<T, F, Fut>(bound: std::time::Duration, what_waited: &'static str, body: F) -> T
+    pub(crate) fn within<T, F, Fut>(
+        bound: std::time::Duration,
+        what_waited: &'static str,
+        body: F,
+    ) -> T
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: std::future::Future<Output = T>,
@@ -424,7 +451,8 @@ pub(super) mod test_support {
                     .enable_all()
                     .build()
                     .expect("building the test body's runtime");
-                let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rt.block_on(body())));
+                let verdict =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rt.block_on(body())));
                 // The verdict goes out before the runtime is dropped: a runtime
                 // whose blocking threads are parked on a queue must not hold it.
                 let _ = tx.send(verdict);
@@ -461,7 +489,10 @@ pub(super) mod test_support {
             },
             capable,
         };
-        HostCards::Fixed(vec![card(0, codec::gpu::GpuVendor::Nvidia, true), card(1, codec::gpu::GpuVendor::Amd, false)])
+        HostCards::Fixed(vec![
+            card(0, codec::gpu::GpuVendor::Nvidia, true),
+            card(1, codec::gpu::GpuVendor::Amd, false),
+        ])
     }
 
     pub(super) fn params_with_pool<'a>(
@@ -500,7 +531,9 @@ pub(super) mod test_support {
             output_pixel_format: PixelFormat::Yuv420p,
             needs_downsample: false,
             chroma_downsample: codec::colorspace::ChromaDownsample::default(),
-            filters: Arc::new(codec::filter::FilterChain::prepare(&[]).expect("an empty filter chain prepares")),
+            filters: Arc::new(
+                codec::filter::FilterChain::prepare(&[]).expect("an empty filter chain prepares"),
+            ),
             hooks: crate::hooks::Hooks::default(),
             frame_rate: 30.0,
             gpu_pool: pool,

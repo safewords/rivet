@@ -103,9 +103,10 @@ pub fn color_info(m: &ColorMetadata) -> av1::ColorInfo {
 pub fn hdr_metadata(m: &ColorMetadata) -> av1::HdrMetadata {
     let xy = |v: u16| ((u64::from(v) * 65_536 + 25_000) / 50_000).min(65_535) as u16;
     av1::HdrMetadata {
-        content_light: m
-            .content_light_level
-            .map(|c| av1::ContentLightLevel { max_cll: c.max_cll, max_fall: c.max_fall }),
+        content_light: m.content_light_level.map(|c| av1::ContentLightLevel {
+            max_cll: c.max_cll,
+            max_fall: c.max_fall,
+        }),
         mastering_display: m.mastering_display.map(|d| av1::MasteringDisplay {
             primaries: [
                 [xy(d.primaries_r_x), xy(d.primaries_r_y)],
@@ -113,8 +114,10 @@ pub fn hdr_metadata(m: &ColorMetadata) -> av1::HdrMetadata {
                 [xy(d.primaries_b_x), xy(d.primaries_b_y)],
             ],
             white_point: [xy(d.white_point_x), xy(d.white_point_y)],
-            luminance_max: ((u64::from(d.max_luminance) * 256 + 5_000) / 10_000).min(u64::from(u32::MAX)) as u32,
-            luminance_min: ((u64::from(d.min_luminance) * 16_384 + 5_000) / 10_000).min(u64::from(u32::MAX)) as u32,
+            luminance_max: ((u64::from(d.max_luminance) * 256 + 5_000) / 10_000)
+                .min(u64::from(u32::MAX)) as u32,
+            luminance_min: ((u64::from(d.min_luminance) * 16_384 + 5_000) / 10_000)
+                .min(u64::from(u32::MAX)) as u32,
         }),
     }
 }
@@ -152,7 +155,11 @@ impl Av1Encoder {
             ),
         };
         if config.width == 0 || config.height == 0 {
-            bail!("the software AV1 encoder needs a frame size, got {}x{}", config.width, config.height);
+            bail!(
+                "the software AV1 encoder needs a frame size, got {}x{}",
+                config.width,
+                config.height
+            );
         }
         if config.color_metadata.matrix_coefficients == 0 {
             bail!(
@@ -177,16 +184,25 @@ impl Av1Encoder {
         let mut cfg = av1::Config::new(config.width, config.height);
         cfg.bit_depth = bit_depth;
         cfg.quantizer = quantizer;
-        cfg.keyframe_interval = if config.keyframe_interval == 0 { 240 } else { config.keyframe_interval };
+        cfg.keyframe_interval = if config.keyframe_interval == 0 {
+            240
+        } else {
+            config.keyframe_interval
+        };
         cfg.search_range = p.search_range;
         cfg.speed = p.speed;
         cfg.tools = av1::Tools::for_speed(p.speed);
         cfg.threads = threads;
-        cfg.tile_cols_log2 = tile_cols_log2(config.width, threads, p.tile_columns, cfg.tools.wavefront);
+        cfg.tile_cols_log2 =
+            tile_cols_log2(config.width, threads, p.tile_columns, cfg.tools.wavefront);
         cfg.color = color_info(&config.color_metadata);
         cfg.hdr = hdr_metadata(&config.color_metadata);
         if let Some(bps) = rate {
-            let fps = if config.frame_rate.is_finite() && config.frame_rate > 0.0 { config.frame_rate } else { 30.0 };
+            let fps = if config.frame_rate.is_finite() && config.frame_rate > 0.0 {
+                config.frame_rate
+            } else {
+                30.0
+            };
             cfg.target_bits_per_frame = Some(((f64::from(bps) / fps).round() as u64).max(1));
         }
 
@@ -202,7 +218,11 @@ impl Av1Encoder {
             "no AV1 encode silicon available or asked for — encoding with rivet's own software AV1 encoder, \
              which is far slower than any hardware backend"
         );
-        Ok(Self { inner: av1::Encoder::new(cfg.clone()), cfg, ready: Default::default() })
+        Ok(Self {
+            inner: av1::Encoder::new(cfg.clone()),
+            cfg,
+            ready: Default::default(),
+        })
     }
 
     /// The settings the encoder was built with.
@@ -213,13 +233,35 @@ impl Av1Encoder {
 
 impl Encoder for Av1Encoder {
     fn send_frame(&mut self, frame: &VideoFrame) -> Result<()> {
-        let format = if self.cfg.bit_depth == 8 { PixelFormat::Yuv420p } else { PixelFormat::Yuv420p10le };
-        let want = check_frame("software AV1", frame, self.cfg.width, self.cfg.height, &[format])?;
-        let mut picture = av1::Frame::new(self.cfg.width, self.cfg.height, self.cfg.bit_depth, av1::ChromaFormat::Yuv420);
+        let format = if self.cfg.bit_depth == 8 {
+            PixelFormat::Yuv420p
+        } else {
+            PixelFormat::Yuv420p10le
+        };
+        let want = check_frame(
+            "software AV1",
+            frame,
+            self.cfg.width,
+            self.cfg.height,
+            &[format],
+        )?;
+        let mut picture = av1::Frame::new(
+            self.cfg.width,
+            self.cfg.height,
+            self.cfg.bit_depth,
+            av1::ChromaFormat::Yuv420,
+        );
         picture.data.copy_from_slice(&frame.data[..want]);
-        let data = self.inner.encode(&picture).context("the software AV1 encoder refused a frame")?;
+        let data = self
+            .inner
+            .encode(&picture)
+            .context("the software AV1 encoder refused a frame")?;
         let is_keyframe = self.inner.last_was_keyframe();
-        self.ready.push_back(EncodedPacket { data: Bytes::from(data), pts: frame.pts, is_keyframe });
+        self.ready.push_back(EncodedPacket {
+            data: Bytes::from(data),
+            pts: frame.pts,
+            is_keyframe,
+        });
         Ok(())
     }
 
@@ -252,11 +294,21 @@ mod tests {
     use crate::encode::tuning::{EncodeOverrides, RateMode};
 
     fn config(w: u32, h: u32) -> EncoderConfig {
-        EncoderConfig { width: w, height: h, keyframe_interval: 3, ..EncoderConfig::default() }
+        EncoderConfig {
+            width: w,
+            height: h,
+            keyframe_interval: 3,
+            ..EncoderConfig::default()
+        }
     }
 
     fn psnr(a: &[u8], b: &[u8]) -> f64 {
-        let mse = a.iter().zip(b).map(|(x, y)| (f64::from(*x) - f64::from(*y)).powi(2)).sum::<f64>() / a.len() as f64;
+        let mse = a
+            .iter()
+            .zip(b)
+            .map(|(x, y)| (f64::from(*x) - f64::from(*y)).powi(2))
+            .sum::<f64>()
+            / a.len() as f64;
         10.0 * (255.0f64 * 255.0 / mse.max(1e-9)).log10()
     }
 
@@ -279,7 +331,11 @@ mod tests {
             assert_eq!(p.pts, n);
             keys.push(p.is_keyframe);
             let shown = dec.decode(&p.data).unwrap().expect("a shown frame");
-            assert_eq!(&shown, enc.inner.reconstruction().unwrap(), "frame {n}: decoder and encoder agree");
+            assert_eq!(
+                &shown,
+                enc.inner.reconstruction().unwrap(),
+                "frame {n}: decoder and encoder agree"
+            );
             let luma = (w * h) as usize;
             let db = psnr(&shown.data[..luma], &src.data[..luma]);
             assert!(db > 30.0, "frame {n}: {db:.1} dB");
@@ -289,13 +345,23 @@ mod tests {
 
     #[test]
     fn ten_bit_is_coded() {
-        let cfg = EncoderConfig { pixel_format: PixelFormat::Yuv420p10le, ..config(32, 32) };
+        let cfg = EncoderConfig {
+            pixel_format: PixelFormat::Yuv420p10le,
+            ..config(32, 32)
+        };
         let mut enc = Av1Encoder::new(cfg).unwrap();
         let mut data = Vec::new();
         for i in 0..32 * 32 + 2 * 16 * 16 {
             data.extend_from_slice(&((i % 900 + 50) as u16).to_le_bytes());
         }
-        let frame = VideoFrame::new(Bytes::from(data), 32, 32, PixelFormat::Yuv420p10le, crate::frame::ColorSpace::Bt709, 7);
+        let frame = VideoFrame::new(
+            Bytes::from(data),
+            32,
+            32,
+            PixelFormat::Yuv420p10le,
+            crate::frame::ColorSpace::Bt709,
+            7,
+        );
         enc.send_frame(&frame).unwrap();
         let p = enc.receive_packet().unwrap().unwrap();
         let back = av1::Decoder::new().decode(&p.data).unwrap().unwrap();
@@ -305,14 +371,42 @@ mod tests {
     #[test]
     fn what_it_cannot_code_is_refused_by_name() {
         let rgb = EncoderConfig {
-            color_metadata: ColorMetadata { matrix_coefficients: 0, ..Default::default() },
+            color_metadata: ColorMetadata {
+                matrix_coefficients: 0,
+                ..Default::default()
+            },
             ..config(64, 64)
         };
-        assert!(Av1Encoder::new(rgb).err().unwrap().to_string().contains("identity matrix"));
-        let twelve = EncoderConfig { pixel_format: PixelFormat::Yuv444p, ..config(64, 64) };
-        assert!(Av1Encoder::new(twelve).err().unwrap().to_string().contains("profile 0"));
-        let cbr = EncodeOverrides { rate_mode: Some(RateMode::Constant), bitrate: Some(1_000_000), ..Default::default() };
-        let msg = Av1Encoder::new(EncoderConfig { overrides: cbr, ..config(64, 64) }).err().unwrap().to_string();
+        assert!(
+            Av1Encoder::new(rgb)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("identity matrix")
+        );
+        let twelve = EncoderConfig {
+            pixel_format: PixelFormat::Yuv444p,
+            ..config(64, 64)
+        };
+        assert!(
+            Av1Encoder::new(twelve)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("profile 0")
+        );
+        let cbr = EncodeOverrides {
+            rate_mode: Some(RateMode::Constant),
+            bitrate: Some(1_000_000),
+            ..Default::default()
+        };
+        let msg = Av1Encoder::new(EncoderConfig {
+            overrides: cbr,
+            ..config(64, 64)
+        })
+        .err()
+        .unwrap()
+        .to_string();
         assert!(msg.contains("constant"), "{msg}");
     }
 
@@ -320,7 +414,11 @@ mod tests {
     #[test]
     fn wide_frames_are_coded_in_tile_columns() {
         let (w, h) = (4160, 16);
-        let mut enc = Av1Encoder::new(EncoderConfig { tier: crate::encode::SpeedTier::Draft, ..config(w, h) }).unwrap();
+        let mut enc = Av1Encoder::new(EncoderConfig {
+            tier: crate::encode::SpeedTier::Draft,
+            ..config(w, h)
+        })
+        .unwrap();
         let src = super::super::native::test_picture(w, h, 0);
         enc.send_frame(&src).unwrap();
         let p = enc.receive_packet().unwrap().unwrap();
@@ -353,15 +451,29 @@ mod tests {
                 max_luminance: 10_000_000,
                 min_luminance: 50,
             }),
-            content_light_level: Some(ContentLightLevel { max_cll: 1000, max_fall: 400 }),
+            content_light_level: Some(ContentLightLevel {
+                max_cll: 1000,
+                max_fall: 400,
+            }),
         };
-        let cfg = EncoderConfig { pixel_format: PixelFormat::Yuv420p10le, color_metadata: meta, ..config(32, 32) };
+        let cfg = EncoderConfig {
+            pixel_format: PixelFormat::Yuv420p10le,
+            color_metadata: meta,
+            ..config(32, 32)
+        };
         let mut enc = Av1Encoder::new(cfg).unwrap();
         let mut data = Vec::new();
         for i in 0..32 * 32 + 2 * 16 * 16 {
             data.extend_from_slice(&((i % 900 + 50) as u16).to_le_bytes());
         }
-        let frame = VideoFrame::new(Bytes::from(data), 32, 32, PixelFormat::Yuv420p10le, crate::frame::ColorSpace::Bt2020, 0);
+        let frame = VideoFrame::new(
+            Bytes::from(data),
+            32,
+            32,
+            PixelFormat::Yuv420p10le,
+            crate::frame::ColorSpace::Bt2020,
+            0,
+        );
         let mut dec = av1::Decoder::new();
         for _ in 0..2 {
             enc.send_frame(&frame).unwrap();
@@ -376,7 +488,13 @@ mod tests {
             assert_eq!(md.primaries[0][0], 46_399);
             assert_eq!(md.luminance_max, 1000 << 8);
             assert_eq!(md.luminance_min, 82);
-            assert_eq!(back.hdr.content_light, Some(av1::ContentLightLevel { max_cll: 1000, max_fall: 400 }));
+            assert_eq!(
+                back.hdr.content_light,
+                Some(av1::ContentLightLevel {
+                    max_cll: 1000,
+                    max_fall: 400
+                })
+            );
         }
     }
 
@@ -398,11 +516,20 @@ mod tests {
         let mut seed = 0x9e37_79b9_7f4a_7c15u64 ^ n;
         let mut data = vec![128u8; (w * h * 3 / 2) as usize];
         for (i, v) in data.iter_mut().enumerate().take((w * h) as usize) {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let x = (i as u32 % w) as u64;
             *v = ((x * 2 + n * 3) % 160 + 40) as u8 ^ ((seed >> 59) as u8);
         }
-        VideoFrame::new(Bytes::from(data), w, h, PixelFormat::Yuv420p, crate::frame::ColorSpace::Bt709, n)
+        VideoFrame::new(
+            Bytes::from(data),
+            w,
+            h,
+            PixelFormat::Yuv420p,
+            crate::frame::ColorSpace::Bt709,
+            n,
+        )
     }
 
     /// A bitrate rung lands near its rate, and a higher rate spends more.
@@ -410,8 +537,16 @@ mod tests {
     fn a_bitrate_rung_is_coded_to_its_rate() {
         let (w, h) = (96, 64);
         let achieved = |bitrate: u32| {
-            let overrides = EncodeOverrides { bitrate: Some(bitrate), ..Default::default() };
-            let cfg = EncoderConfig { overrides, frame_rate: 25.0, keyframe_interval: 50, ..config(w, h) };
+            let overrides = EncodeOverrides {
+                bitrate: Some(bitrate),
+                ..Default::default()
+            };
+            let cfg = EncoderConfig {
+                overrides,
+                frame_rate: 25.0,
+                keyframe_interval: 50,
+                ..config(w, h)
+            };
             let mut enc = Av1Encoder::new(cfg).unwrap();
             let mut bits = 0u64;
             let n = 40;
@@ -424,7 +559,10 @@ mod tests {
         let (low, high) = (achieved(150_000), achieved(400_000));
         for (asked, got) in [(150_000.0, low), (400_000.0, high)] {
             let ratio = got / asked;
-            assert!((0.6..1.6).contains(&ratio), "asked {asked} b/s, got {got:.0} ({ratio:.2}x)");
+            assert!(
+                (0.6..1.6).contains(&ratio),
+                "asked {asked} b/s, got {got:.0} ({ratio:.2}x)"
+            );
         }
         assert!(high > low * 1.5, "{low:.0} vs {high:.0}");
     }

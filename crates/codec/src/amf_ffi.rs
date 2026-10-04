@@ -442,7 +442,8 @@ pub(crate) struct AmfObj {
 #[repr(C)]
 pub(crate) struct AmfFactoryVtbl {
     /// `core/Factory.h:72`
-    pub(crate) create_context: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> AmfResult,
+    pub(crate) create_context:
+        unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> AmfResult,
     /// `core/Factory.h:73`
     pub(crate) create_component: unsafe extern "system" fn(
         *mut c_void,
@@ -792,7 +793,13 @@ macro_rules! slot_is {
     ($ty:ty, $field:ident, $index:expr) => {
         assert!(
             std::mem::offset_of!($ty, $field) == $index * PTR,
-            concat!(stringify!($ty), "::", stringify!($field), " is not at header slot ", stringify!($index))
+            concat!(
+                stringify!($ty),
+                "::",
+                stringify!($field),
+                " is not at header slot ",
+                stringify!($index)
+            )
         );
     };
 }
@@ -800,7 +807,10 @@ macro_rules! slot_is {
 const _: () = {
     // 64-bit only: every offset below assumes 8-byte function pointers, and
     // `amfrt64` is the only runtime we load.
-    assert!(PTR == 8, "AMF FFI layout is verified for 64-bit targets only");
+    assert!(
+        PTR == 8,
+        "AMF FFI layout is verified for 64-bit targets only"
+    );
 
     // AMFGuid (core/Platform.h:508-521): 4 + 2 + 2 + 8 = 16, no padding.
     assert!(std::mem::size_of::<AmfGuid>() == 16);

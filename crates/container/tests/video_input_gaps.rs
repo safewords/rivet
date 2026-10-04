@@ -117,11 +117,27 @@ fn three_gp(pictures: &[Vec<u8>]) -> Vec<u8> {
             full(b"stco", &stco),
         ]
         .concat();
-        let dref = full(b"dref", &[1u32.to_be_bytes().to_vec(), bx(b"url ", &[0, 0, 0, 1])].concat());
-        let minf = [full(b"vmhd", &[0u8; 8]), bx(b"dinf", &dref), bx(b"stbl", &stbl)].concat();
-        let mdia = [full(b"mdhd", &mdhd), full(b"hdlr", &hdlr), bx(b"minf", &minf)].concat();
+        let dref = full(
+            b"dref",
+            &[1u32.to_be_bytes().to_vec(), bx(b"url ", &[0, 0, 0, 1])].concat(),
+        );
+        let minf = [
+            full(b"vmhd", &[0u8; 8]),
+            bx(b"dinf", &dref),
+            bx(b"stbl", &stbl),
+        ]
+        .concat();
+        let mdia = [
+            full(b"mdhd", &mdhd),
+            full(b"hdlr", &hdlr),
+            bx(b"minf", &minf),
+        ]
+        .concat();
         let trak = [tkhd.clone(), bx(b"mdia", &mdia)].concat();
-        bx(b"moov", &[full(b"mvhd", &mvhd), bx(b"trak", &trak)].concat())
+        bx(
+            b"moov",
+            &[full(b"mvhd", &mvhd), bx(b"trak", &trak)].concat(),
+        )
     };
     let moov_len = build(0).len();
     let mdat_body: Vec<u8> = pictures.concat();
@@ -154,8 +170,13 @@ fn h263_in_3gp_decodes_through_the_short_header_path() {
     let header = d.header().clone();
     assert_eq!(header.codec, "h263", "s263 is H.263");
     assert_eq!((header.info.width, header.info.height), (W, H));
-    assert!((header.info.frame_rate - 15.0).abs() < 0.01, "{}", header.info.frame_rate);
-    let mut dec = codec::decode::create_decoder(&header.codec, header.info.clone()).expect("a decoder for h263");
+    assert!(
+        (header.info.frame_rate - 15.0).abs() < 0.01,
+        "{}",
+        header.info.frame_rate
+    );
+    let mut dec = codec::decode::create_decoder(&header.codec, header.info.clone())
+        .expect("a decoder for h263");
     let mut decoded = Vec::new();
     while let Some(s) = d.next_video_sample().unwrap() {
         dec.push_sample(&s.data).expect("decode");
@@ -172,7 +193,9 @@ fn h263_in_3gp_decodes_through_the_short_header_path() {
     // within a few levels of its source.
     let paint = luma(0);
     let err: f64 = (0..(W * H) as usize)
-        .map(|i| (f64::from(decoded[0].data[i]) - f64::from(paint(i % W as usize, i / W as usize))).abs())
+        .map(|i| {
+            (f64::from(decoded[0].data[i]) - f64::from(paint(i % W as usize, i / W as usize))).abs()
+        })
         .sum::<f64>()
         / f64::from(W * H);
     assert!(err < 4.0, "mean luma error {err}");
@@ -216,10 +239,19 @@ fn vp8_in_avi_is_read_as_vp8() {
     let mut enc = codec::encode::vp8_sw::Vp8Encoder::new(cfg).expect("vp8 encoder");
     for n in 0..FRAMES {
         let paint = luma(n);
-        let mut data: Vec<u8> = (0..(W * H) as usize).map(|i| paint(i % W as usize, i / W as usize)).collect();
+        let mut data: Vec<u8> = (0..(W * H) as usize)
+            .map(|i| paint(i % W as usize, i / W as usize))
+            .collect();
         data.extend(std::iter::repeat_n(128u8, (W * H / 2) as usize));
-        enc.send_frame(&VideoFrame::new(data.into(), W, H, PixelFormat::Yuv420p, ColorSpace::Bt709, n as u64))
-            .unwrap();
+        enc.send_frame(&VideoFrame::new(
+            data.into(),
+            W,
+            H,
+            PixelFormat::Yuv420p,
+            ColorSpace::Bt709,
+            n as u64,
+        ))
+        .unwrap();
     }
     enc.flush().unwrap();
     let mut frames = Vec::new();
@@ -244,10 +276,31 @@ fn vp8_in_avi_is_read_as_vp8() {
     strf.extend(24u16.to_le_bytes());
     strf.extend(b"VP80");
     strf.extend([0u8; 20]);
-    let hdrl = list(b"hdrl", &[chunk(b"avih", &avih), list(b"strl", &[chunk(b"strh", &strh), chunk(b"strf", &strf)].concat())].concat());
-    let movi = list(b"movi", &frames.iter().flat_map(|f| chunk(b"00dc", f)).collect::<Vec<u8>>());
+    let hdrl = list(
+        b"hdrl",
+        &[
+            chunk(b"avih", &avih),
+            list(
+                b"strl",
+                &[chunk(b"strh", &strh), chunk(b"strf", &strf)].concat(),
+            ),
+        ]
+        .concat(),
+    );
+    let movi = list(
+        b"movi",
+        &frames
+            .iter()
+            .flat_map(|f| chunk(b"00dc", f))
+            .collect::<Vec<u8>>(),
+    );
     let body = [b"AVI ".to_vec(), hdrl, movi].concat();
-    let file = [b"RIFF".to_vec(), (body.len() as u32).to_le_bytes().to_vec(), body].concat();
+    let file = [
+        b"RIFF".to_vec(),
+        (body.len() as u32).to_le_bytes().to_vec(),
+        body,
+    ]
+    .concat();
 
     let mut d = demux_streaming(&file).expect("demux the AVI");
     assert_eq!(d.header().codec, "vp8");

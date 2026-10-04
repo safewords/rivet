@@ -191,15 +191,15 @@ impl AmfDecoder {
     /// (`GpuDevice::vendor_index`).
     pub fn new(info: StreamInfo, vendor_index: u32) -> Result<Self> {
         let codec = info.codec.to_ascii_lowercase();
-        let decoder_id =
-            amf_decoder_id(&codec).ok_or_else(|| anyhow::anyhow!("AMF cannot decode codec {codec}"))?;
+        let decoder_id = amf_decoder_id(&codec)
+            .ok_or_else(|| anyhow::anyhow!("AMF cannot decode codec {codec}"))?;
         let ten_bit = matches!(info.pixel_format, PixelFormat::Yuv420p10le);
 
         let runtime = AmfRuntime::open(vendor_index)?;
         unsafe {
-            let decoder = runtime
-                .create_component(decoder_id)
-                .map_err(|e| e.context("this GPU has no such decode block the AMF runtime drives"))?;
+            let decoder = runtime.create_component(decoder_id).map_err(|e| {
+                e.context("this GPU has no such decode block the AMF runtime drives")
+            })?;
 
             // Presentation-order timestamps (the default, said explicitly).
             if let Err(e) = set_int_property(decoder, TIMESTAMP_MODE, TS_PRESENTATION) {
@@ -212,7 +212,11 @@ impl AmfDecoder {
                 tracing::debug!(error = %e, "AMF decoder: SurfaceCpu hint not taken");
             }
 
-            let surface_fmt = if ten_bit { AMF_SURFACE_P010 } else { AMF_SURFACE_NV12 };
+            let surface_fmt = if ten_bit {
+                AMF_SURFACE_P010
+            } else {
+                AMF_SURFACE_NV12
+            };
             let w = info.width.max(16) as i32;
             let h = info.height.max(16) as i32;
             let decoder_vt = &*(*(decoder as *mut AmfComponentObj)).vtbl;
@@ -225,7 +229,11 @@ impl AmfDecoder {
                 );
             }
 
-            let fps = if info.frame_rate > 0.0 { info.frame_rate } else { 30.0 };
+            let fps = if info.frame_rate > 0.0 {
+                info.frame_rate
+            } else {
+                30.0
+            };
             tracing::info!(
                 codec = %codec,
                 component = decoder_id,
@@ -274,7 +282,10 @@ impl AmfDecoder {
                     }
                     AMF_EOF => return Ok(DrainEnd::Eof),
                     AMF_NEED_MORE_INPUT => return Ok(DrainEnd::NeedMoreInput),
-                    other => bail!("AMF QueryOutput (decode) failed: {other} ({})", result_name(other)),
+                    other => bail!(
+                        "AMF QueryOutput (decode) failed: {other} ({})",
+                        result_name(other)
+                    ),
                 }
             }
         }
@@ -306,13 +317,18 @@ impl AmfDecoder {
             // possible. Copy through host memory if needed", core/Data.h:152).
             let rc = (surf_vt.data.convert)(surf, AMF_MEMORY_HOST);
             if rc != AMF_OK {
-                bail!("AMFSurface::Convert(HOST) failed: {rc} ({})", result_name(rc));
+                bail!(
+                    "AMFSurface::Convert(HOST) failed: {rc} ({})",
+                    result_name(rc)
+                );
             }
             let format = (surf_vt.get_format)(surf);
             let (ten_bit, bytes_per_sample) = match format {
                 AMF_SURFACE_NV12 => (false, 1usize),
                 AMF_SURFACE_P010 => (true, 2usize),
-                other => bail!("AMF decoder produced surface format {other}, expected NV12 (1) or P010 (10)"),
+                other => bail!(
+                    "AMF decoder produced surface format {other}, expected NV12 (1) or P010 (10)"
+                ),
             };
 
             let plane = |which: i32| -> Result<(*const u8, usize, usize, usize)> {
@@ -340,18 +356,29 @@ impl AmfDecoder {
             let (w, h) = if self.picture_from_surface {
                 (y_w.max(1), y_h.max(1))
             } else {
-                ((self.info.width as usize).min(y_w).max(1), (self.info.height as usize).min(y_h).max(1))
+                (
+                    (self.info.width as usize).min(y_w).max(1),
+                    (self.info.height as usize).min(y_h).max(1),
+                )
             };
             let ch = h.div_ceil(2).min(uv_h.max(1));
             if y_pitch < w * bytes_per_sample || uv_pitch < w.div_ceil(2) * 2 * bytes_per_sample {
-                bail!("AMF output plane pitch smaller than the picture ({y_pitch} / {uv_pitch} for {w}x{h})");
+                bail!(
+                    "AMF output plane pitch smaller than the picture ({y_pitch} / {uv_pitch} for {w}x{h})"
+                );
             }
             let y = std::slice::from_raw_parts(y_ptr, y_pitch * h);
             let uv = std::slice::from_raw_parts(uv_ptr, uv_pitch * ch);
             let (pixel_format, packed) = if ten_bit {
-                (PixelFormat::Yuv420p10le, p010_planes_to_yuv420p10le(y, y_pitch, uv, uv_pitch, w, h))
+                (
+                    PixelFormat::Yuv420p10le,
+                    p010_planes_to_yuv420p10le(y, y_pitch, uv, uv_pitch, w, h),
+                )
             } else {
-                (PixelFormat::Yuv420p, nv12_planes_to_yuv420p(y, y_pitch, uv, uv_pitch, w, h))
+                (
+                    PixelFormat::Yuv420p,
+                    nv12_planes_to_yuv420p(y, y_pitch, uv, uv_pitch, w, h),
+                )
             };
             let pts = self.next_pts;
             self.next_pts += 1;
@@ -446,7 +473,10 @@ impl Decoder for AmfDecoder {
                     rc => {
                         release(buf);
                         self.failed = true;
-                        bail!("AMFComponent::SubmitInput (decode) failed: {rc} ({})", result_name(rc));
+                        bail!(
+                            "AMFComponent::SubmitInput (decode) failed: {rc} ({})",
+                            result_name(rc)
+                        );
                     }
                 }
             }
@@ -474,7 +504,10 @@ impl Decoder for AmfDecoder {
                     DrainEnd::Eof => return Ok(()),
                     DrainEnd::Repeat | DrainEnd::NeedMoreInput => {
                         if std::time::Instant::now() >= deadline {
-                            bail!("AMF decoder never reached AMF_EOF within {:?} of Drain", FLUSH_TIMEOUT);
+                            bail!(
+                                "AMF decoder never reached AMF_EOF within {:?} of Drain",
+                                FLUSH_TIMEOUT
+                            );
                         }
                         std::thread::sleep(std::time::Duration::from_millis(1));
                     }
@@ -524,7 +557,9 @@ mod tests {
         let _hw = crate::amf_hwtest::hw_lock();
         let caps = probe_decode_caps();
         eprintln!("AMF decode probe on this machine: {caps:?}");
-        let amd = crate::gpu::detect_gpus().iter().any(|g| g.vendor == crate::gpu::GpuVendor::Amd);
+        let amd = crate::gpu::detect_gpus()
+            .iter()
+            .any(|g| g.vendor == crate::gpu::GpuVendor::Amd);
         if amd && AmfRuntime::open(0).is_ok() {
             assert!(caps.contains(&"h264") && caps.contains(&"hevc"), "{caps:?}");
         }

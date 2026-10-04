@@ -56,7 +56,11 @@ impl BarReport {
         // VRAM sizes are reported a little under the power of two the window
         // rounds up to; half is far above any default window and far below
         // any real card's VRAM.
-        if self.bytes >= self.vram_mib * 1024 * 1024 / 2 { BarVerdict::Full } else { BarVerdict::Small }
+        if self.bytes >= self.vram_mib * 1024 * 1024 / 2 {
+            BarVerdict::Full
+        } else {
+            BarVerdict::Small
+        }
     }
 
     /// One line for `rivet devices`: `full (6144 MiB of 6144 MiB)`, or
@@ -84,7 +88,10 @@ impl BarReport {
                 } else {
                     "enable Above 4G Decoding and Resizable BAR in the firmware"
                 };
-                format!("small ({window} of {} MiB VRAM): {cause}; {fix}", self.vram_mib)
+                format!(
+                    "small ({window} of {} MiB VRAM): {cause}; {fix}",
+                    self.vram_mib
+                )
             }
         }
     }
@@ -124,9 +131,12 @@ pub(crate) fn largest_memory_bar(resource: &str) -> Option<(usize, u64)> {
         .take(6)
         .enumerate()
         .filter_map(|(i, line)| {
-            let mut fields = line.split_whitespace().map(|f| u64::from_str_radix(f.trim_start_matches("0x"), 16).ok());
+            let mut fields = line
+                .split_whitespace()
+                .map(|f| u64::from_str_radix(f.trim_start_matches("0x"), 16).ok());
             let (start, end, flags) = (fields.next()??, fields.next()??, fields.next()??);
-            (start != 0 && end > start && flags & IORESOURCE_MEM != 0).then_some((i, end - start + 1))
+            (start != 0 && end > start && flags & IORESOURCE_MEM != 0)
+                .then_some((i, end - start + 1))
         })
         .max_by_key(|&(_, bytes)| bytes)
 }
@@ -142,7 +152,9 @@ pub(crate) fn largest_supported(mask: &str) -> Option<u64> {
 /// Whether kernel `release` (`6.8.0-45-generic`) creates `resourceN_resize`.
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn kernel_has_resize_files(release: &str) -> bool {
-    let mut parts = release.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty());
+    let mut parts = release
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty());
     let major: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
     let minor: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
     (major, minor) >= (6, 1)
@@ -164,19 +176,33 @@ mod linux {
             format!("0000:{}", device.host_pci_address)
         };
         let dir = Path::new("/sys/bus/pci/devices").join(bdf);
-        let (index, bytes) = largest_memory_bar(&std::fs::read_to_string(dir.join("resource")).ok()?)?;
+        let (index, bytes) =
+            largest_memory_bar(&std::fs::read_to_string(dir.join("resource")).ok()?)?;
         let resize = dir.join(format!("resource{index}_resize"));
         let resizable = if resize.exists() {
             Some(true)
-        } else if std::fs::read_to_string("/proc/sys/kernel/osrelease").is_ok_and(|r| kernel_has_resize_files(r.trim())) {
+        } else if std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .is_ok_and(|r| kernel_has_resize_files(r.trim()))
+        {
             Some(false)
         } else {
             None
         };
-        let max_bytes = std::fs::read_to_string(&resize).ok().and_then(|m| largest_supported(&m));
-        let virtualised = std::fs::read_to_string("/proc/cpuinfo")
-            .is_ok_and(|c| c.lines().any(|l| l.starts_with("flags") && l.split_whitespace().any(|f| f == "hypervisor")));
-        Some(BarReport { index, bytes, vram_mib: device.vram_mib, resizable, max_bytes, virtualised })
+        let max_bytes = std::fs::read_to_string(&resize)
+            .ok()
+            .and_then(|m| largest_supported(&m));
+        let virtualised = std::fs::read_to_string("/proc/cpuinfo").is_ok_and(|c| {
+            c.lines()
+                .any(|l| l.starts_with("flags") && l.split_whitespace().any(|f| f == "hypervisor"))
+        });
+        Some(BarReport {
+            index,
+            bytes,
+            vram_mib: device.vram_mib,
+            resizable,
+            max_bytes,
+            virtualised,
+        })
     }
 }
 
@@ -196,13 +222,29 @@ mod tests {
 0x00000000fc000000 0x00000000fc1fffff 0x0000000000046200
 ";
 
-    fn report(bytes: u64, resizable: Option<bool>, max_bytes: Option<u64>, virtualised: bool) -> BarReport {
-        BarReport { index: 2, bytes, vram_mib: 6144, resizable, max_bytes, virtualised }
+    fn report(
+        bytes: u64,
+        resizable: Option<bool>,
+        max_bytes: Option<u64>,
+        virtualised: bool,
+    ) -> BarReport {
+        BarReport {
+            index: 2,
+            bytes,
+            vram_mib: 6144,
+            resizable,
+            max_bytes,
+            virtualised,
+        }
     }
 
     #[test]
     fn finds_the_vram_window() {
-        assert_eq!(largest_memory_bar(SMALL), Some((2, 256 << 20)), "the ROM line (7th) is not a BAR");
+        assert_eq!(
+            largest_memory_bar(SMALL),
+            Some((2, 256 << 20)),
+            "the ROM line (7th) is not a BAR"
+        );
         let full = SMALL.replace("0x000000600fffffff", "0x000000617fffffff");
         assert_eq!(largest_memory_bar(&full), Some((2, 6144 << 20)));
         assert_eq!(largest_memory_bar("garbage\n"), None);
@@ -228,15 +270,41 @@ mod tests {
 
     #[test]
     fn verdicts_and_causes() {
-        assert_eq!(report(6144 << 20, Some(true), None, false).verdict(), BarVerdict::Full);
-        assert_eq!(report(8192 << 20, Some(true), None, false).verdict(), BarVerdict::Full, "rounded up past VRAM");
+        assert_eq!(
+            report(6144 << 20, Some(true), None, false).verdict(),
+            BarVerdict::Full
+        );
+        assert_eq!(
+            report(8192 << 20, Some(true), None, false).verdict(),
+            BarVerdict::Full,
+            "rounded up past VRAM"
+        );
         let small = report(256 << 20, Some(true), Some(8192 << 20), false);
         assert_eq!(small.verdict(), BarVerdict::Small);
-        assert!(small.describe().starts_with("small (256 MiB of 6144 MiB VRAM): the card can resize it to 8192 MiB"));
-        assert!(report(256 << 20, Some(false), None, true).describe().contains("a VM"));
-        assert!(report(256 << 20, Some(false), None, true).describe().contains("pass the full BAR through"));
-        assert!(report(256 << 20, None, None, false).describe().contains("can't say"));
-        let unknown = BarReport { vram_mib: 0, ..small };
+        assert!(
+            small.describe().starts_with(
+                "small (256 MiB of 6144 MiB VRAM): the card can resize it to 8192 MiB"
+            )
+        );
+        assert!(
+            report(256 << 20, Some(false), None, true)
+                .describe()
+                .contains("a VM")
+        );
+        assert!(
+            report(256 << 20, Some(false), None, true)
+                .describe()
+                .contains("pass the full BAR through")
+        );
+        assert!(
+            report(256 << 20, None, None, false)
+                .describe()
+                .contains("can't say")
+        );
+        let unknown = BarReport {
+            vram_mib: 0,
+            ..small
+        };
         assert_eq!(unknown.verdict(), BarVerdict::Unknown);
     }
 }

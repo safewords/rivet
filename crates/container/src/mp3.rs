@@ -43,12 +43,20 @@ pub struct FrameHeader {
 }
 
 const BITRATES_V1: [[u32; 15]; 3] = [
-    [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448],
-    [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],
-    [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+    [
+        0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448,
+    ],
+    [
+        0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384,
+    ],
+    [
+        0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320,
+    ],
 ];
 const BITRATES_V2: [[u32; 15]; 3] = [
-    [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256],
+    [
+        0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256,
+    ],
     [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
     [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
 ];
@@ -77,7 +85,11 @@ impl FrameHeader {
         if index == 0 || index == 15 {
             return None;
         }
-        let table = if version == Version::Mpeg1 { &BITRATES_V1 } else { &BITRATES_V2 };
+        let table = if version == Version::Mpeg1 {
+            &BITRATES_V1
+        } else {
+            &BITRATES_V2
+        };
         let base = [44_100, 48_000, 32_000, 0][usize::from((b[2] >> 2) & 3)];
         if base == 0 {
             return None;
@@ -100,7 +112,11 @@ impl FrameHeader {
 
     /// Bytes in the frame, header included (§2.4.3.1).
     pub fn frame_len(&self) -> usize {
-        let (br, sr, pad) = (self.bitrate_kbps as usize * 1000, self.sample_rate as usize, usize::from(self.padding));
+        let (br, sr, pad) = (
+            self.bitrate_kbps as usize * 1000,
+            self.sample_rate as usize,
+            usize::from(self.padding),
+        );
         match (self.layer, self.version) {
             (1, _) => (12 * br / sr + pad) * 4,
             (3, Version::Mpeg2 | Version::Mpeg25) => 72 * br / sr + pad,
@@ -178,10 +194,15 @@ pub fn frames(es: &[u8]) -> Vec<(usize, FrameHeader)> {
             continue;
         };
         let end = at + h.frame_len();
-        let same_stream = |n: &FrameHeader| n.version == h.version && n.layer == h.layer && n.sample_rate == h.sample_rate;
+        let same_stream = |n: &FrameHeader| {
+            n.version == h.version && n.layer == h.layer && n.sample_rate == h.sample_rate
+        };
         let confirmed = match locked {
             Some(l) => same_stream(&l),
-            None => end == es.len() || FrameHeader::parse(&es[end.min(es.len())..]).is_some_and(|n| same_stream(&n)),
+            None => {
+                end == es.len()
+                    || FrameHeader::parse(&es[end.min(es.len())..]).is_some_and(|n| same_stream(&n))
+            }
         };
         if !confirmed || end > es.len() {
             if locked.is_some() && end > es.len() {
@@ -221,7 +242,11 @@ impl XingTag {
         if magic != b"Xing" && magic != b"Info" {
             return None;
         }
-        let be32 = |at: usize| frame.get(at..at + 4).map(|b| u32::from_be_bytes(b.try_into().unwrap()));
+        let be32 = |at: usize| {
+            frame
+                .get(at..at + 4)
+                .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+        };
         let flags = be32(at + 4)?;
         at += 8;
         let mut take = |bit: u32, len: usize| {
@@ -241,7 +266,9 @@ impl XingTag {
         // (rivet's own encoder signs `rivetmp3`), or when the encoder is one
         // known to write the pair without a valid CRC (LAME and the `Lavf` /
         // `Lavc` muxers).
-        let crc_ok = frame.get(at + 34..at + 36).is_some_and(|c| u16::from_be_bytes([c[0], c[1]]) == crc16_lame(&frame[..at + 34]));
+        let crc_ok = frame
+            .get(at + 34..at + 36)
+            .is_some_and(|c| u16::from_be_bytes([c[0], c[1]]) == crc16_lame(&frame[..at + 34]));
         let ext = frame
             .get(at..at + 24)
             .filter(|ext| crc_ok || [b"LAME", b"Lavf", b"Lavc"].iter().any(|m| &ext[..4] == *m));
@@ -250,7 +277,12 @@ impl XingTag {
             (v >> 12, v & 0xFFF)
         });
         let encoder = ext.map(|ext| String::from_utf8_lossy(&ext[..9]).trim_end().to_string());
-        Some(Self { frames, bytes, delay, encoder })
+        Some(Self {
+            frames,
+            bytes,
+            delay,
+            encoder,
+        })
     }
 }
 
@@ -270,7 +302,11 @@ pub struct Gapless {
 /// the LAME-style extension: the encoder delay and end padding a gapless
 /// player trims, and the CRC that marks the extension valid. Without them the tag says only how long
 /// the stream is, which a player then plays whole — delay included.
-pub fn write_file(frames: &[Vec<u8>], gapless: Option<Gapless>, encoder: Option<&str>) -> Result<Vec<u8>> {
+pub fn write_file(
+    frames: &[Vec<u8>],
+    gapless: Option<Gapless>,
+    encoder: Option<&str>,
+) -> Result<Vec<u8>> {
     let Some(first) = frames.first() else {
         bail!("an MP3 file needs at least one frame");
     };
@@ -284,7 +320,9 @@ pub fn write_file(frames: &[Vec<u8>], gapless: Option<Gapless>, encoder: Option<
             let coded = spf * frames.len() as u64;
             let padding = coded.checked_sub(u64::from(g.encoder_delay) + g.samples);
             match padding {
-                Some(p) if g.encoder_delay <= 0xFFF && p <= 0xFFF => Some((enc, g.encoder_delay, p as u32)),
+                Some(p) if g.encoder_delay <= 0xFFF && p <= 0xFFF => {
+                    Some((enc, g.encoder_delay, p as u32))
+                }
                 _ => bail!(
                     "gapless info does not fit the stream: {} frames of {spf} samples, delay {}, {} samples",
                     frames.len(),
@@ -296,21 +334,50 @@ pub fn write_file(frames: &[Vec<u8>], gapless: Option<Gapless>, encoder: Option<
         _ => None,
     };
     // Xing: magic, flags, frames, bytes, TOC, quality. LAME's extension: 36.
-    let needed = h.tag_offset() - if h.protected { 2 } else { 0 } + 120 + if lame.is_some() { 36 } else { 0 };
-    let table = if h.version == Version::Mpeg1 { &BITRATES_V1 } else { &BITRATES_V2 };
+    let needed = h.tag_offset() - if h.protected { 2 } else { 0 }
+        + 120
+        + if lame.is_some() { 36 } else { 0 };
+    let table = if h.version == Version::Mpeg1 {
+        &BITRATES_V1
+    } else {
+        &BITRATES_V2
+    };
     let ladder = &table[usize::from(h.layer - 1)];
     // The stream's own bitrate when the tag fits in one of its frames (a CBR
     // stream stays uniform), else the smallest one it fits in.
-    let own = ladder.iter().position(|&k| k == h.bitrate_kbps).unwrap_or(1);
-    let fits = |i: usize| FrameHeader { bitrate_kbps: ladder[i], padding: false, protected: false, ..h }.frame_len() >= needed;
-    let Some(index) = std::iter::once(own).chain(1..15).find(|&i| fits(i)) else {
-        bail!("no {:?} layer {} bitrate has room for a Xing tag", h.version, h.layer);
+    let own = ladder
+        .iter()
+        .position(|&k| k == h.bitrate_kbps)
+        .unwrap_or(1);
+    let fits = |i: usize| {
+        FrameHeader {
+            bitrate_kbps: ladder[i],
+            padding: false,
+            protected: false,
+            ..h
+        }
+        .frame_len()
+            >= needed
     };
-    let tag_h = FrameHeader { bitrate_kbps: ladder[index], padding: false, protected: false, ..h };
+    let Some(index) = std::iter::once(own).chain(1..15).find(|&i| fits(i)) else {
+        bail!(
+            "no {:?} layer {} bitrate has room for a Xing tag",
+            h.version,
+            h.layer
+        );
+    };
+    let tag_h = FrameHeader {
+        bitrate_kbps: ladder[index],
+        padding: false,
+        protected: false,
+        ..h
+    };
     let tag_len = tag_h.frame_len();
     let mut tag = vec![0u8; tag_len];
     tag[..4].copy_from_slice(&tag_h.to_bytes(index as u8, false));
-    let cbr = frames.iter().all(|f| f.get(2).map(|b| b >> 4) == first.get(2).map(|b| b >> 4));
+    let cbr = frames
+        .iter()
+        .all(|f| f.get(2).map(|b| b >> 4) == first.get(2).map(|b| b >> 4));
     let mut at = tag_h.tag_offset();
     tag[at..at + 4].copy_from_slice(if cbr { b"Info" } else { b"Xing" });
     tag[at + 4..at + 8].copy_from_slice(&0x0Fu32.to_be_bytes());
@@ -363,7 +430,11 @@ fn crc16_lame(bytes: &[u8]) -> u16 {
     for &b in bytes {
         crc ^= u16::from(b);
         for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xA001 } else { crc >> 1 };
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xA001
+            } else {
+                crc >> 1
+            };
         }
     }
     crc
@@ -377,7 +448,9 @@ pub fn sniff(data: &[u8]) -> bool {
     }
     FrameHeader::parse(data).is_some_and(|h| {
         let next = h.frame_len();
-        data.len() > next + 4 && FrameHeader::parse(&data[next..]).is_some_and(|n| n.sample_rate == h.sample_rate && n.layer == h.layer)
+        data.len() > next + 4
+            && FrameHeader::parse(&data[next..])
+                .is_some_and(|n| n.sample_rate == h.sample_rate && n.layer == h.layer)
     })
 }
 
@@ -392,7 +465,9 @@ pub fn read_file(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
     // size that excludes the 10-byte header and a 10-byte footer if flagged.
     while data.len() >= start + 10 && &data[start..start + 3] == b"ID3" {
         let s = &data[start + 6..start + 10];
-        let size = s.iter().fold(0usize, |acc, &b| (acc << 7) | usize::from(b & 0x7F));
+        let size = s
+            .iter()
+            .fold(0usize, |acc, &b| (acc << 7) | usize::from(b & 0x7F));
         let footer = if data[start + 5] & 0x10 != 0 { 10 } else { 0 };
         start += 10 + size + footer;
     }
@@ -404,7 +479,10 @@ pub fn read_file(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
     let Some(&(_, first)) = found.first() else {
         bail!("MP3: no MPEG audio frames found");
     };
-    let mut packets: Vec<&[u8]> = found.iter().map(|&(at, h)| &es[at..at + h.frame_len()]).collect();
+    let mut packets: Vec<&[u8]> = found
+        .iter()
+        .map(|&(at, h)| &es[at..at + h.frame_len()])
+        .collect();
     let tag = XingTag::parse(packets[0]);
     if tag.is_some() || packets[0].get(36..40) == Some(b"VBRI") {
         packets.remove(0);
@@ -413,12 +491,19 @@ pub fn read_file(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
         bail!("MP3: the stream holds a tag frame and no audio");
     }
     let spf = first.samples();
-    let edit = tag.as_ref().and_then(|t| t.delay).and_then(|(delay, padding)| {
-        let coded = u64::from(spf) * packets.len() as u64;
-        let skip = u64::from(delay) + 529;
-        let presented = coded.checked_sub(u64::from(delay) + u64::from(padding))?;
-        Some(AudioEdit { delay: 0, media_start: skip, media_end: Some(skip + presented) })
-    });
+    let edit = tag
+        .as_ref()
+        .and_then(|t| t.delay)
+        .and_then(|(delay, padding)| {
+            let coded = u64::from(spf) * packets.len() as u64;
+            let skip = u64::from(delay) + 529;
+            let presented = coded.checked_sub(u64::from(delay) + u64::from(padding))?;
+            Some(AudioEdit {
+                delay: 0,
+                media_start: skip,
+                media_end: Some(skip + presented),
+            })
+        });
     let track = AudioTrack {
         codec: first.codec().into(),
         samples: packets.iter().map(|p| p.to_vec()).collect(),
@@ -442,7 +527,12 @@ mod tests {
 
     /// A syntactically valid MPEG-1 Layer III frame: its header, the rest zero.
     fn frame(kbps_index: u8, rate_index: u8, mono: bool, padding: bool) -> Vec<u8> {
-        let h = [0xFF, 0xFB, (kbps_index << 4) | (rate_index << 2) | (u8::from(padding) << 1), if mono { 0xC0 } else { 0x40 }];
+        let h = [
+            0xFF,
+            0xFB,
+            (kbps_index << 4) | (rate_index << 2) | (u8::from(padding) << 1),
+            if mono { 0xC0 } else { 0x40 },
+        ];
         let len = FrameHeader::parse(&h).unwrap().frame_len();
         let mut f = vec![0u8; len];
         f[..4].copy_from_slice(&h);
@@ -453,22 +543,74 @@ mod tests {
     fn headers_parse_every_version_and_layer() {
         // MPEG-1 Layer III, 128 kbps, 44.1 kHz, joint stereo, no CRC.
         let h = FrameHeader::parse(&[0xFF, 0xFB, 0x90, 0x44]).unwrap();
-        assert_eq!((h.version, h.layer, h.bitrate_kbps, h.sample_rate, h.channels()), (Version::Mpeg1, 3, 128, 44_100, 2));
-        assert_eq!((h.frame_len(), h.samples(), h.protected, h.codec()), (417, 1152, false, "mp3"));
+        assert_eq!(
+            (
+                h.version,
+                h.layer,
+                h.bitrate_kbps,
+                h.sample_rate,
+                h.channels()
+            ),
+            (Version::Mpeg1, 3, 128, 44_100, 2)
+        );
+        assert_eq!(
+            (h.frame_len(), h.samples(), h.protected, h.codec()),
+            (417, 1152, false, "mp3")
+        );
         // Padded: one byte more.
-        assert_eq!(FrameHeader::parse(&[0xFF, 0xFB, 0x92, 0x44]).unwrap().frame_len(), 418);
+        assert_eq!(
+            FrameHeader::parse(&[0xFF, 0xFB, 0x92, 0x44])
+                .unwrap()
+                .frame_len(),
+            418
+        );
         // MPEG-2 Layer III, 64 kbps, 22.05 kHz, mono: 576 samples, 72·br/sr.
         let h = FrameHeader::parse(&[0xFF, 0xF3, 0x80, 0xC0]).unwrap();
-        assert_eq!((h.version, h.sample_rate, h.channels(), h.samples(), h.frame_len()), (Version::Mpeg2, 22_050, 1, 576, 208));
+        assert_eq!(
+            (
+                h.version,
+                h.sample_rate,
+                h.channels(),
+                h.samples(),
+                h.frame_len()
+            ),
+            (Version::Mpeg2, 22_050, 1, 576, 208)
+        );
         // MPEG-2.5 Layer III at 8 kHz.
-        assert_eq!(FrameHeader::parse(&[0xFF, 0xE3, 0x88, 0xC0]).unwrap().sample_rate, 8_000);
+        assert_eq!(
+            FrameHeader::parse(&[0xFF, 0xE3, 0x88, 0xC0])
+                .unwrap()
+                .sample_rate,
+            8_000
+        );
         // MPEG-1 Layer II, 192 kbps, 48 kHz: 576 bytes, codec mp2.
         let h = FrameHeader::parse(&[0xFF, 0xFD, 0xA4, 0x00]).unwrap();
-        assert_eq!((h.layer, h.bitrate_kbps, h.frame_len(), h.samples(), h.codec()), (2, 192, 576, 1152, "mp2"));
+        assert_eq!(
+            (
+                h.layer,
+                h.bitrate_kbps,
+                h.frame_len(),
+                h.samples(),
+                h.codec()
+            ),
+            (2, 192, 576, 1152, "mp2")
+        );
         // Layer I frames are 4-byte slots.
-        assert_eq!(FrameHeader::parse(&[0xFF, 0xFF, 0x10, 0x00]).unwrap().frame_len(), 32 * 12 * 1000 / 44_100 * 4);
+        assert_eq!(
+            FrameHeader::parse(&[0xFF, 0xFF, 0x10, 0x00])
+                .unwrap()
+                .frame_len(),
+            32 * 12 * 1000 / 44_100 * 4
+        );
         // Reserved version / layer / rate, free format, bad index.
-        for bad in [[0xFF, 0xEB, 0x90, 0], [0xFF, 0xF9, 0x90, 0], [0xFF, 0xFB, 0x9C, 0], [0xFF, 0xFB, 0x00, 0], [0xFF, 0xFB, 0xF0, 0], [0xFE, 0xFB, 0x90, 0]] {
+        for bad in [
+            [0xFF, 0xEB, 0x90, 0],
+            [0xFF, 0xF9, 0x90, 0],
+            [0xFF, 0xFB, 0x9C, 0],
+            [0xFF, 0xFB, 0x00, 0],
+            [0xFF, 0xFB, 0xF0, 0],
+            [0xFE, 0xFB, 0x90, 0],
+        ] {
             assert_eq!(FrameHeader::parse(&bad), None, "{bad:02X?}");
         }
     }
@@ -482,7 +624,10 @@ mod tests {
         }
         es.extend_from_slice(&f[..100]);
         let got = frames(&es);
-        assert_eq!(got.iter().map(|&(at, _)| at).collect::<Vec<_>>(), vec![4, 4 + 417, 4 + 2 * 417]);
+        assert_eq!(
+            got.iter().map(|&(at, _)| at).collect::<Vec<_>>(),
+            vec![4, 4 + 417, 4 + 2 * 417]
+        );
     }
 
     /// The written file reads back: an `Info` frame of the stream's bitrate,
@@ -493,34 +638,81 @@ mod tests {
         let frames: Vec<Vec<u8>> = (0..40).map(|i| frame(9, 0, false, i % 3 == 0)).collect();
         let audio: usize = frames.iter().map(Vec::len).sum();
         // 40 frames = 46080 samples: 576 of delay, 44100 of audio, 1404 padding.
-        let g = Gapless { encoder_delay: 576, samples: 44_100 };
+        let g = Gapless {
+            encoder_delay: 576,
+            samples: 44_100,
+        };
         let file = write_file(&frames, Some(g), Some("LAME3.100")).unwrap();
         let tag_frame = &file[..417];
-        assert_eq!(&file[417..], &frames.concat()[..], "the audio follows verbatim");
-        assert_eq!(&tag_frame[36..40], b"Info", "CBR, stereo side info (32 bytes) before it");
+        assert_eq!(
+            &file[417..],
+            &frames.concat()[..],
+            "the audio follows verbatim"
+        );
+        assert_eq!(
+            &tag_frame[36..40],
+            b"Info",
+            "CBR, stereo side info (32 bytes) before it"
+        );
         let tag = XingTag::parse(tag_frame).unwrap();
         assert_eq!(tag.frames, Some(40));
         assert_eq!(tag.bytes, Some((417 + audio) as u32));
         assert_eq!(tag.delay, Some((576, 40 * 1152 - 576 - 44_100)));
         assert_eq!(tag.encoder.as_deref(), Some("LAME3.100"));
         let toc = &tag_frame[52..152];
-        assert!(toc.windows(2).all(|w| w[0] <= w[1]), "the seek table only moves forward");
-        assert_eq!(toc[0], (417 * 256 / (417 + audio)) as u8, "0% is the first audio frame");
+        assert!(
+            toc.windows(2).all(|w| w[0] <= w[1]),
+            "the seek table only moves forward"
+        );
+        assert_eq!(
+            toc[0],
+            (417 * 256 / (417 + audio)) as u8,
+            "0% is the first audio frame"
+        );
         assert_eq!(&tag_frame[156..165], b"LAME3.100");
         // The tag CRC covers the frame's first 190 bytes (stereo MPEG-1).
-        assert_eq!(u16::from_be_bytes([tag_frame[190], tag_frame[191]]), crc16_lame(&tag_frame[..190]));
+        assert_eq!(
+            u16::from_be_bytes([tag_frame[190], tag_frame[191]]),
+            crc16_lame(&tag_frame[..190])
+        );
         // And the reader turns it into the edit that presents the audio.
         let (track, edit) = read_file(&file).unwrap();
-        assert_eq!((track.codec.as_str(), track.samples.len(), track.sample_rate, track.channels), ("mp3", 40, 44_100, 2));
-        assert_eq!(track.codec_private, b"LAME3.100", "the encoder name, for a passthrough to write again");
-        assert_eq!(edit, Some(AudioEdit { delay: 0, media_start: 576 + 529, media_end: Some(576 + 529 + 44_100) }));
+        assert_eq!(
+            (
+                track.codec.as_str(),
+                track.samples.len(),
+                track.sample_rate,
+                track.channels
+            ),
+            ("mp3", 40, 44_100, 2)
+        );
+        assert_eq!(
+            track.codec_private, b"LAME3.100",
+            "the encoder name, for a passthrough to write again"
+        );
+        assert_eq!(
+            edit,
+            Some(AudioEdit {
+                delay: 0,
+                media_start: 576 + 529,
+                media_end: Some(576 + 529 + 44_100)
+            })
+        );
     }
 
     #[test]
     fn a_low_bitrate_stream_gets_a_tag_frame_big_enough() {
         // 32 kbps mono at 48 kHz: 96-byte frames, too small for the tag.
         let frames: Vec<Vec<u8>> = (0..10).map(|_| frame(1, 1, true, false)).collect();
-        let file = write_file(&frames, Some(Gapless { encoder_delay: 576, samples: 10_000 }), Some("LAME3.100")).unwrap();
+        let file = write_file(
+            &frames,
+            Some(Gapless {
+                encoder_delay: 576,
+                samples: 10_000,
+            }),
+            Some("LAME3.100"),
+        )
+        .unwrap();
         let h = FrameHeader::parse(&file).unwrap();
         assert!(h.frame_len() >= 21 + 156 && h.bitrate_kbps > 32, "{h:?}");
         assert_eq!(&file[21..25], b"Info", "mono side info is 17 bytes");
@@ -529,7 +721,11 @@ mod tests {
 
     #[test]
     fn varying_bitrates_are_tagged_xing_and_plain_passthrough_has_no_lame_extension() {
-        let frames = vec![frame(9, 0, false, false), frame(11, 0, false, false), frame(9, 0, false, false)];
+        let frames = vec![
+            frame(9, 0, false, false),
+            frame(11, 0, false, false),
+            frame(9, 0, false, false),
+        ];
         let file = write_file(&frames, None, None).unwrap();
         assert_eq!(&file[36..40], b"Xing");
         let tag = XingTag::parse(&file).unwrap();
@@ -541,7 +737,17 @@ mod tests {
     #[test]
     fn gapless_info_that_does_not_fit_the_frames_is_refused() {
         let frames = vec![frame(9, 0, false, false); 2];
-        assert!(write_file(&frames, Some(Gapless { encoder_delay: 576, samples: 5000 }), Some("LAME3.100")).is_err());
+        assert!(
+            write_file(
+                &frames,
+                Some(Gapless {
+                    encoder_delay: 576,
+                    samples: 5000
+                }),
+                Some("LAME3.100")
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -556,7 +762,10 @@ mod tests {
         assert!(sniff(&data[15..]), "bare frames sniff too");
         assert!(!sniff(&data[16..]), "mid-frame bytes do not");
         let (track, edit) = read_file(&data).unwrap();
-        assert_eq!((track.samples.len(), track.durations[0], edit), (3, 1152, None));
+        assert_eq!(
+            (track.samples.len(), track.durations[0], edit),
+            (3, 1152, None)
+        );
     }
 
     /// Whether an input has video decides audio-only, not whether the video
@@ -564,7 +773,8 @@ mod tests {
     /// audio alone.
     #[test]
     fn audio_only_means_no_video_track() {
-        let fixture = |p: &str| std::fs::read(format!("{}/{p}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let fixture =
+            |p: &str| std::fs::read(format!("{}/{p}", env!("CARGO_MANIFEST_DIR"))).unwrap();
         let mkv = fixture("tests/fixtures/colour/h264_601.mkv");
         let mp4 = fixture("tests/fixtures/colour/h264_601.mp4");
         let mka = fixture("../rivet/tests/data/audio/tones_51_ac3.mka");
@@ -574,7 +784,9 @@ mod tests {
         assert!(!crate::demux::mkv::has_video_track(&mka).unwrap());
         assert!(!crate::demux::mp4::has_video_track(&m4a).unwrap());
         for audio_only in [mka, m4a] {
-            let src = crate::streaming::demux_audio(bytes::Bytes::from(audio_only)).unwrap().expect("the audio");
+            let src = crate::streaming::demux_audio(bytes::Bytes::from(audio_only))
+                .unwrap()
+                .expect("the audio");
             assert!(!src.has_video);
             assert_eq!(src.track.channels, 6);
         }
@@ -585,10 +797,30 @@ mod tests {
     #[test]
     fn a_bare_mp3_is_an_audio_only_source() {
         let frames: Vec<Vec<u8>> = (0..10).map(|_| frame(9, 1, false, false)).collect();
-        let file = write_file(&frames, Some(Gapless { encoder_delay: 576, samples: 10_000 }), Some("LAME3.100")).unwrap();
-        let src = crate::streaming::demux_audio(bytes::Bytes::from(file)).unwrap().expect("audio");
+        let file = write_file(
+            &frames,
+            Some(Gapless {
+                encoder_delay: 576,
+                samples: 10_000,
+            }),
+            Some("LAME3.100"),
+        )
+        .unwrap();
+        let src = crate::streaming::demux_audio(bytes::Bytes::from(file))
+            .unwrap()
+            .expect("audio");
         assert!(!src.has_video);
-        assert_eq!((src.track.codec.as_str(), src.track.sample_rate, src.track.samples.len()), ("mp3", 48_000, 10));
-        assert_eq!(src.edit.map(|e| (e.media_start, e.media_end)), Some((1105, Some(11_105))));
+        assert_eq!(
+            (
+                src.track.codec.as_str(),
+                src.track.sample_rate,
+                src.track.samples.len()
+            ),
+            ("mp3", 48_000, 10)
+        );
+        assert_eq!(
+            src.edit.map(|e| (e.media_start, e.media_end)),
+            Some((1105, Some(11_105)))
+        );
     }
 }

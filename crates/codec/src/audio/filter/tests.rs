@@ -10,7 +10,12 @@ fn ident_frame(channels: u8, frames: usize) -> AudioFrame {
     let samples = (0..frames)
         .flat_map(|_| (0..channels).map(|c| (c + 1) as f32))
         .collect();
-    AudioFrame { samples, sample_rate: 48_000, channels, pts: 0 }
+    AudioFrame {
+        samples,
+        sample_rate: 48_000,
+        channels,
+        pts: 0,
+    }
 }
 
 /// The per-channel constants a filtered frame carries, one entry per output
@@ -20,7 +25,11 @@ fn channel_values(f: &AudioFrame) -> Vec<f32> {
     let frames = f.samples.len() / ch;
     let first: Vec<f32> = f.samples[..ch].to_vec();
     for i in 1..frames {
-        assert_eq!(&f.samples[i * ch..(i + 1) * ch], first.as_slice(), "frame {i} differs");
+        assert_eq!(
+            &f.samples[i * ch..(i + 1) * ch],
+            first.as_slice(),
+            "frame {i} differs"
+        );
     }
     first
 }
@@ -57,7 +66,10 @@ fn default_layouts_match_ffmpeg_native_order() {
     // If they drift, a 5.1 encode silently swaps speakers.
     assert_eq!(ChannelLayout::default_for(1).unwrap().labels(), &[FC]);
     assert_eq!(ChannelLayout::default_for(2).unwrap().labels(), &[FL, FR]);
-    assert_eq!(ChannelLayout::default_for(6).unwrap().labels(), &[FL, FR, FC, LFE, BL, BR]);
+    assert_eq!(
+        ChannelLayout::default_for(6).unwrap().labels(),
+        &[FL, FR, FC, LFE, BL, BR]
+    );
     assert_eq!(
         ChannelLayout::default_for(8).unwrap().labels(),
         &[FL, FR, FC, LFE, BL, BR, SL, SR]
@@ -68,15 +80,36 @@ fn default_layouts_match_ffmpeg_native_order() {
 
 #[test]
 fn layout_parses_and_displays() {
-    assert_eq!("5.1".parse::<ChannelLayout>().unwrap().labels(), &[FL, FR, FC, LFE, BL, BR]);
-    assert_eq!("5.1(side)".parse::<ChannelLayout>().unwrap().labels(), &[FL, FR, FC, LFE, SL, SR]);
+    assert_eq!(
+        "5.1".parse::<ChannelLayout>().unwrap().labels(),
+        &[FL, FR, FC, LFE, BL, BR]
+    );
+    assert_eq!(
+        "5.1(side)".parse::<ChannelLayout>().unwrap().labels(),
+        &[FL, FR, FC, LFE, SL, SR]
+    );
     // A bare count is the default layout for that count.
-    assert_eq!("6".parse::<ChannelLayout>().unwrap(), "5.1".parse().unwrap());
+    assert_eq!(
+        "6".parse::<ChannelLayout>().unwrap(),
+        "5.1".parse().unwrap()
+    );
     // The explicit form round-trips, and a named layout renders by name.
-    assert_eq!("FL+FR".parse::<ChannelLayout>().unwrap().to_string(), "stereo");
-    assert_eq!("FC+FL".parse::<ChannelLayout>().unwrap().to_string(), "FC+FL");
-    assert_eq!("FC+FL".parse::<ChannelLayout>().unwrap(), "FC+FL".parse().unwrap());
-    assert!("FL+FL".parse::<ChannelLayout>().is_err(), "duplicate channel");
+    assert_eq!(
+        "FL+FR".parse::<ChannelLayout>().unwrap().to_string(),
+        "stereo"
+    );
+    assert_eq!(
+        "FC+FL".parse::<ChannelLayout>().unwrap().to_string(),
+        "FC+FL"
+    );
+    assert_eq!(
+        "FC+FL".parse::<ChannelLayout>().unwrap(),
+        "FC+FL".parse().unwrap()
+    );
+    assert!(
+        "FL+FL".parse::<ChannelLayout>().is_err(),
+        "duplicate channel"
+    );
     assert!("nonsense".parse::<ChannelLayout>().is_err());
 }
 
@@ -93,7 +126,10 @@ fn channelmap_parses_the_ffmpeg_spelling() {
         }
     );
     // …and round-trips through its textual form.
-    assert_eq!(chain_to_string(&c), "channelmap=FL-FL|FR-FR|FC-FC|LFE-LFE|SL-BL|SR-BR:5.1");
+    assert_eq!(
+        chain_to_string(&c),
+        "channelmap=FL-FL|FR-FR|FC-FC|LFE-LFE|SL-BL|SR-BR:5.1"
+    );
     assert_eq!(parse_chain(&chain_to_string(&c)).unwrap(), c);
 }
 
@@ -114,9 +150,15 @@ fn channelmap_parses_positional_entries() {
 #[test]
 fn channelmap_rejects_incoherent_maps() {
     assert!(parse_chain("channelmap=").is_err(), "no map");
-    assert!(parse_chain("channelmap=FL-FL|FR-FL").is_err(), "output written twice");
+    assert!(
+        parse_chain("channelmap=FL-FL|FR-FL").is_err(),
+        "output written twice"
+    );
     assert!(parse_chain("channelmap=XX-FL").is_err(), "unknown channel");
-    assert!(parse_chain("channelmap=FL|FR").is_err(), "positional without a layout");
+    assert!(
+        parse_chain("channelmap=FL|FR").is_err(),
+        "positional without a layout"
+    );
     assert!(parse_chain("bogus=1").is_err(), "unknown filter");
     assert!(parse_chain("").is_err(), "empty chain");
 }
@@ -167,7 +209,10 @@ fn unmapped_output_channels_are_silent() {
 fn layout_is_inferred_from_the_pairs_when_omitted() {
     let chain = parse_chain("channelmap=FL-FL|FR-FR").unwrap();
     assert_eq!(output_channels(&chain, 6).unwrap(), 2);
-    assert_eq!(channel_values(&apply_chain(&ident_frame(6, 2), &chain).unwrap()), vec![1.0, 2.0]);
+    assert_eq!(
+        channel_values(&apply_chain(&ident_frame(6, 2), &chain).unwrap()),
+        vec![1.0, 2.0]
+    );
 }
 
 #[test]

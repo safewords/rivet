@@ -86,8 +86,12 @@ pub(super) fn has_avc_sample_entry(data: &[u8]) -> bool {
     };
     let mut pos = 8; // skip version/flags/entry_count
     while pos + 8 <= stsd_body.len() {
-        let entry_size =
-            u32::from_be_bytes([stsd_body[pos], stsd_body[pos + 1], stsd_body[pos + 2], stsd_body[pos + 3]]) as usize;
+        let entry_size = u32::from_be_bytes([
+            stsd_body[pos],
+            stsd_body[pos + 1],
+            stsd_body[pos + 2],
+            stsd_body[pos + 3],
+        ]) as usize;
         if matches!(&stsd_body[pos + 4..pos + 8], b"avc1" | b"avc3") {
             return true;
         }
@@ -168,7 +172,9 @@ pub(crate) fn has_h263_sample_entry(data: &[u8]) -> bool {
 /// MPEG-2's sequence header and extension; often empty for MPEG-2, which
 /// carries them in band). `None` for any other entry or object type.
 pub(crate) fn mp4v_config(data: &[u8]) -> Option<(&'static str, Vec<u8>)> {
-    use super::super::audio::aac::{decoder_config_descriptor, find_esds_body_recursive, read_descriptor};
+    use super::super::audio::aac::{
+        decoder_config_descriptor, find_esds_body_recursive, read_descriptor,
+    };
     let (fourcc, entry) = first_video_sample_entry(data)?;
     if &fourcc != b"mp4v" {
         return None;

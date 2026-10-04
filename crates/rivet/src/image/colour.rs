@@ -7,11 +7,11 @@
 //! and the profile travels into the outputs that can carry one; AVIF output is
 //! converted all the same, since its encoder here writes no ICC.
 
-use anyhow::Result;
 use super::raster::RgbaImage;
+use anyhow::Result;
 use moxcms::{
-    CicpColorPrimaries, CicpProfile, ColorProfile, Layout, MatrixCoefficients, TransferCharacteristics,
-    TransformOptions,
+    CicpColorPrimaries, CicpProfile, ColorProfile, Layout, MatrixCoefficients,
+    TransferCharacteristics, TransformOptions,
 };
 
 use super::ImageFormat;
@@ -34,9 +34,10 @@ impl Profile {
     /// display is assumed to apply to video-range content anyway.
     fn is_srgb(&self) -> bool {
         match self {
-            Profile::Cicp { primaries, transfer } => {
-                matches!(primaries, 1 | 2) && matches!(transfer, 1 | 2 | 6 | 13 | 14 | 15)
-            }
+            Profile::Cicp {
+                primaries,
+                transfer,
+            } => matches!(primaries, 1 | 2) && matches!(transfer, 1 | 2 | 6 | 13 | 14 | 15),
             Profile::Icc(_) => false,
         }
     }
@@ -44,7 +45,10 @@ impl Profile {
     fn to_moxcms(&self) -> Option<ColorProfile> {
         match self {
             Profile::Icc(bytes) => ColorProfile::new_from_slice(bytes).ok(),
-            Profile::Cicp { primaries, transfer } => {
+            Profile::Cicp {
+                primaries,
+                transfer,
+            } => {
                 let primaries = CicpColorPrimaries::try_from(*primaries).ok()?;
                 let transfer = TransferCharacteristics::try_from(*transfer).ok()?;
                 Some(ColorProfile::new_from_cicp(CicpProfile {
@@ -89,7 +93,10 @@ impl Prepared {
         if !tagged {
             let mut picture = picture;
             picture.profile = None;
-            return Ok(Self { kept: None, srgb: Some(picture) });
+            return Ok(Self {
+                kept: None,
+                srgb: Some(picture),
+            });
         }
         let needs_srgb = !keep_icc || formats.contains(&ImageFormat::Avif);
         let needs_kept = keep_icc && formats.iter().any(|f| *f != ImageFormat::Avif);
@@ -103,11 +110,15 @@ impl Prepared {
 
     pub(crate) fn for_format(&self, format: ImageFormat) -> Source<'_> {
         match (&self.kept, &self.srgb) {
-            (Some((picture, icc)), _) if format != ImageFormat::Avif => {
-                Source { picture, icc: icc.as_deref() }
-            }
+            (Some((picture, icc)), _) if format != ImageFormat::Avif => Source {
+                picture,
+                icc: icc.as_deref(),
+            },
             (_, Some(picture)) => Source { picture, icc: None },
-            (Some((picture, icc)), None) => Source { picture, icc: icc.as_deref() },
+            (Some((picture, icc)), None) => Source {
+                picture,
+                icc: icc.as_deref(),
+            },
             (None, None) => unreachable!("Prepared always holds one of the two"),
         }
     }
@@ -118,16 +129,26 @@ impl Prepared {
 /// corrupt one) leaves the pixels as they are, as a browser would show them:
 /// a warning, not a failed job.
 fn to_srgb(picture: &Picture) -> Picture {
-    let mut out = Picture { profile: None, ..picture.clone() };
+    let mut out = Picture {
+        profile: None,
+        ..picture.clone()
+    };
     let Some(profile) = picture.profile.as_ref() else {
         return out;
     };
     let transform = profile.to_moxcms().and_then(|src| {
-        src.create_transform_8bit(Layout::Rgba, &ColorProfile::new_srgb(), Layout::Rgba, TransformOptions::default())
-            .ok()
+        src.create_transform_8bit(
+            Layout::Rgba,
+            &ColorProfile::new_srgb(),
+            Layout::Rgba,
+            TransformOptions::default(),
+        )
+        .ok()
     });
     let Some(transform) = transform else {
-        tracing::warn!("the source's colour profile could not be read; its pixels are used as they are");
+        tracing::warn!(
+            "the source's colour profile could not be read; its pixels are used as they are"
+        );
         return out;
     };
     let mut converted = vec![0u8; picture.rgba.as_raw().len()];

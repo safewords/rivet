@@ -6,12 +6,15 @@ use super::spec::{SpecBody, TranscodeParams, base64_decode};
 /// union got wrong: it said 10-bit HDR, and this set has no AV1 encoder at all.
 #[test]
 fn health_output_caps_carry_each_codecs_own_answer() {
-    use codec::encode::EncoderBackend::{Av1, H26x, Nvenc};
-    use crate::spec::{CodecOutputCaps, OUTPUT_CODECS};
     use super::handlers::output_caps_json;
+    use crate::spec::{CodecOutputCaps, OUTPUT_CODECS};
+    use codec::encode::EncoderBackend::{Av1, H26x, Nvenc};
 
     let over = |set: &[codec::encode::EncoderBackend]| -> Vec<CodecOutputCaps> {
-        OUTPUT_CODECS.iter().map(|&c| CodecOutputCaps::over(c, set)).collect()
+        OUTPUT_CODECS
+            .iter()
+            .map(|&c| CodecOutputCaps::over(c, set))
+            .collect()
     };
     let want: serde_json::Value = serde_json::from_str(
         r#"{"max_bit_depth":8,"hdr":false,"by_codec":[
@@ -28,7 +31,10 @@ fn health_output_caps_carry_each_codecs_own_answer() {
     assert_eq!(output_caps_json(&over(&[H26x])), want);
     // NVENC alone: 10-bit HDR AV1 and H.265, 8-bit SDR H.264 — not every codec.
     let nvenc = output_caps_json(&over(&[Nvenc]));
-    assert_eq!((nvenc["max_bit_depth"].clone(), nvenc["hdr"].clone()), (8.into(), false.into()));
+    assert_eq!(
+        (nvenc["max_bit_depth"].clone(), nvenc["hdr"].clone()),
+        (8.into(), false.into())
+    );
 
     // The same block `rivet capabilities --json` prints as `encode.by_codec`
     // for this set (its test in commands/capabilities.rs pins the string).
@@ -64,14 +70,23 @@ fn health_output_caps_carry_each_codecs_own_answer() {
 #[test]
 fn health_reports_this_builds_caps_per_codec() {
     use crate::spec::{OUTPUT_CODECS, output_codec_label};
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     let super::Json(v) = rt.block_on(super::handlers::health());
     let caps = &v["output_caps"];
     // The codec-agnostic fields are over the web set (AV1, H.264, H.265), as
     // `every_codec_output_caps` takes them.
-    let each: Vec<_> =
-        OUTPUT_CODECS.iter().filter(|c| c.is_web_set()).map(|&c| codec::encode::build_output_caps_for(c)).collect();
-    assert_eq!(caps["max_bit_depth"], each.iter().map(|c| c.max_bit_depth).min().unwrap());
+    let each: Vec<_> = OUTPUT_CODECS
+        .iter()
+        .filter(|c| c.is_web_set())
+        .map(|&c| codec::encode::build_output_caps_for(c))
+        .collect();
+    assert_eq!(
+        caps["max_bit_depth"],
+        each.iter().map(|c| c.max_bit_depth).min().unwrap()
+    );
     assert_eq!(caps["hdr"], each.iter().all(|c| c.hdr));
     let by_codec = caps["by_codec"].as_array().expect("by_codec is an array");
     assert_eq!(by_codec.len(), OUTPUT_CODECS.len());
@@ -140,19 +155,35 @@ fn video_rates_on_both_http_forms() {
     };
     let s = p.to_settings().unwrap();
     assert_eq!(s.rungs[0].bitrate, Some(2_500_000));
-    assert_eq!((s.video_bitrate, s.video_buffer_ms), (Some(800_000), Some(1000)));
+    assert_eq!(
+        (s.video_bitrate, s.video_buffer_ms),
+        (Some(800_000), Some(1000))
+    );
     let spec = s.into_spec(1280, 720).unwrap().with_rung_policy_resolved();
-    let rates: Vec<_> = spec.rungs.iter().map(|r| r.quality.overrides.bitrate).collect();
+    let rates: Vec<_> = spec
+        .rungs
+        .iter()
+        .map(|r| r.quality.overrides.bitrate)
+        .collect();
     assert_eq!(rates, vec![Some(2_500_000), Some(800_000)]);
     let sb: SpecBody = serde_json::from_value(serde_json::json!({
         "codec": "h264", "rungs": ["1920x1080@5M"], "video_buffer": "500ms"
     }))
     .unwrap();
     let s = sb.into_params().to_settings().unwrap();
-    assert_eq!((s.rungs[0].bitrate, s.video_buffer_ms), (Some(5_000_000), Some(500)));
-    let bad = TranscodeParams { video_buffer: Some("1000".into()), ..Default::default() };
+    assert_eq!(
+        (s.rungs[0].bitrate, s.video_buffer_ms),
+        (Some(5_000_000), Some(500))
+    );
+    let bad = TranscodeParams {
+        video_buffer: Some("1000".into()),
+        ..Default::default()
+    };
     assert!(bad.to_settings().is_err(), "a buffer needs a unit");
-    let bad = TranscodeParams { rungs: Some("1280x720@fast".into()), ..Default::default() };
+    let bad = TranscodeParams {
+        rungs: Some("1280x720@fast".into()),
+        ..Default::default()
+    };
     assert!(bad.to_settings().is_err(), "not a rate");
 }
 
@@ -161,12 +192,24 @@ fn video_rates_on_both_http_forms() {
 #[test]
 fn subtitles_key_is_the_shared_vocabulary_on_both_http_forms() {
     use crate::spec::SubtitlePolicy;
-    let p = TranscodeParams { subtitles: Some("eng,deu".into()), ..Default::default() };
+    let p = TranscodeParams {
+        subtitles: Some("eng,deu".into()),
+        ..Default::default()
+    };
     let s = p.to_settings().unwrap();
-    assert_eq!(s.subtitles, Some(SubtitlePolicy::Only(vec!["eng".into(), "deu".into()])));
+    assert_eq!(
+        s.subtitles,
+        Some(SubtitlePolicy::Only(vec!["eng".into(), "deu".into()]))
+    );
     let sb: SpecBody = serde_json::from_value(serde_json::json!({ "subtitles": "none" })).unwrap();
-    assert_eq!(sb.into_params().to_settings().unwrap().subtitles, Some(SubtitlePolicy::Drop));
-    let bad = TranscodeParams { subtitles: Some("english".into()), ..Default::default() };
+    assert_eq!(
+        sb.into_params().to_settings().unwrap().subtitles,
+        Some(SubtitlePolicy::Drop)
+    );
+    let bad = TranscodeParams {
+        subtitles: Some("english".into()),
+        ..Default::default()
+    };
     assert!(bad.to_settings().is_err(), "not a language code");
 }
 
@@ -225,18 +268,34 @@ fn a_failed_rungs_status_carries_its_error_chain() {
 #[test]
 fn rate_mode_on_both_http_forms() {
     use codec::encode::tuning::RateMode;
-    let p = TranscodeParams { codec: Some("av1".into()), rate_mode: Some("cbr".into()), ..Default::default() };
+    let p = TranscodeParams {
+        codec: Some("av1".into()),
+        rate_mode: Some("cbr".into()),
+        ..Default::default()
+    };
     assert_eq!(p.to_settings().unwrap().rate_mode, Some(RateMode::Constant));
     let sb: SpecBody = serde_json::from_value(serde_json::json!({
         "codec": "h264", "rungs": ["1280x720"], "rate_mode": "constant", "video_bitrate": "2M"
     }))
     .unwrap();
     let s = sb.into_params().to_settings().unwrap();
-    assert_eq!((s.rate_mode, s.video_bitrate), (Some(RateMode::Constant), Some(2_000_000)));
-    let spec = s.into_spec(1280, 720).unwrap().with_constant_rates_resolved(30.0);
-    assert_eq!(spec.rungs[0].quality.overrides.rate_mode, Some(RateMode::Constant));
+    assert_eq!(
+        (s.rate_mode, s.video_bitrate),
+        (Some(RateMode::Constant), Some(2_000_000))
+    );
+    let spec = s
+        .into_spec(1280, 720)
+        .unwrap()
+        .with_constant_rates_resolved(30.0);
+    assert_eq!(
+        spec.rungs[0].quality.overrides.rate_mode,
+        Some(RateMode::Constant)
+    );
     assert_eq!(spec.rungs[0].quality.overrides.bitrate, Some(2_000_000));
-    let bad = TranscodeParams { rate_mode: Some("vbr".into()), ..Default::default() };
+    let bad = TranscodeParams {
+        rate_mode: Some("vbr".into()),
+        ..Default::default()
+    };
     assert!(bad.to_settings().is_err(), "not a rate mode");
 }
 
@@ -245,7 +304,10 @@ fn rate_mode_on_both_http_forms() {
 // ---------------------------------------------------------------------------
 
 fn hooked_router() -> axum::Router {
-    use crate::hooks::{DigestAlgorithm, HookContext, HookOutcome, HookPolicy, Hooks, ProbeEvent, ProbeHook, SourceDigest};
+    use crate::hooks::{
+        DigestAlgorithm, HookContext, HookOutcome, HookPolicy, Hooks, ProbeEvent, ProbeHook,
+        SourceDigest,
+    };
     struct Gate;
     impl ProbeHook for Gate {
         fn on_probe(&self, _: &HookContext, _: &ProbeEvent) -> anyhow::Result<HookOutcome> {
@@ -258,21 +320,36 @@ fn hooked_router() -> axum::Router {
     super::build_router_with_hooks(hooks)
 }
 
-async fn call(router: axum::Router, req: axum::http::Request<axum::body::Body>) -> (u16, serde_json::Value) {
+async fn call(
+    router: axum::Router,
+    req: axum::http::Request<axum::body::Body>,
+) -> (u16, serde_json::Value) {
     use tower::ServiceExt;
     let resp = router.oneshot(req).await.unwrap();
     let status = resp.status().as_u16();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    (status, serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null))
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
+    )
 }
 
 /// `GET /v1/hooks` lists the configured hooks with their policies.
 #[tokio::test]
 async fn hooks_endpoint_lists_the_configured_hooks() {
-    let req = axum::http::Request::get("/v1/hooks").body(axum::body::Body::empty()).unwrap();
+    let req = axum::http::Request::get("/v1/hooks")
+        .body(axum::body::Body::empty())
+        .unwrap();
     let (status, v) = call(hooked_router(), req).await;
     assert_eq!(status, 200);
-    let names: Vec<&str> = v["hooks"].as_array().unwrap().iter().map(|h| h["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = v["hooks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["name"].as_str().unwrap())
+        .collect();
     assert_eq!(names, ["digest", "gate"]);
     assert_eq!(v["hooks"][0]["kind"], "source");
     assert_eq!(v["hooks"][1]["kind"], "probe");
@@ -282,10 +359,15 @@ async fn hooks_endpoint_lists_the_configured_hooks() {
 /// A request naming a hook that is not configured is refused.
 #[tokio::test]
 async fn naming_an_unknown_hook_is_a_bad_request() {
-    let Ok(media) = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_media/bbb_h264_360p_short.mp4")) else {
+    let Ok(media) = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test_media/bbb_h264_360p_short.mp4"
+    )) else {
         return;
     };
-    let req = axum::http::Request::post("/v1/transcode?hooks=nope&sync=true").body(axum::body::Body::from(media)).unwrap();
+    let req = axum::http::Request::post("/v1/transcode?hooks=nope&sync=true")
+        .body(axum::body::Body::from(media))
+        .unwrap();
     let (status, v) = call(hooked_router(), req).await;
     assert_eq!(status, 400);
     assert!(v["error"].as_str().unwrap().contains("nope"));
@@ -295,7 +377,10 @@ async fn naming_an_unknown_hook_is_a_bad_request() {
 /// 422, and the job's status says `rejected` and carries the hook report.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rejected_job_is_422_and_reports_its_hooks() {
-    let Ok(media) = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_media/bbb_h264_360p_short.mp4")) else {
+    let Ok(media) = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test_media/bbb_h264_360p_short.mp4"
+    )) else {
         return;
     };
     let router = hooked_router();
@@ -308,14 +393,22 @@ async fn a_rejected_job_is_422_and_reports_its_hooks() {
 
     // The async form: the status of the job reports the rejection and the
     // required digest hook's record.
-    let media = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_media/bbb_h264_360p_short.mp4")).unwrap();
-    let req = axum::http::Request::post("/v1/transcode?hooks=gate").body(axum::body::Body::from(media)).unwrap();
+    let media = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test_media/bbb_h264_360p_short.mp4"
+    ))
+    .unwrap();
+    let req = axum::http::Request::post("/v1/transcode?hooks=gate")
+        .body(axum::body::Body::from(media))
+        .unwrap();
     let (status, v) = call(router.clone(), req).await;
     assert_eq!(status, 202);
     let id = v["job_id"].as_str().unwrap().to_string();
     let mut job = serde_json::Value::Null;
     for _ in 0..200 {
-        let req = axum::http::Request::get(format!("/v1/jobs/{id}")).body(axum::body::Body::empty()).unwrap();
+        let req = axum::http::Request::get(format!("/v1/jobs/{id}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
         job = call(router.clone(), req).await.1;
         if job["status"] != "queued" && job["status"] != "running" {
             break;
@@ -327,7 +420,9 @@ async fn a_rejected_job_is_422_and_reports_its_hooks() {
     assert_eq!(job["hooks"]["rejection"]["hook"], "gate");
     assert_eq!(job["hooks"]["rejection"]["kind"], "probe");
     let records = job["hooks"]["records"].as_array().unwrap();
-    assert!(records.iter().any(|r| r["hook"] == "digest" && r["kind"] == "source" && r["annotations"]["sha256"].is_string()));
+    assert!(records.iter().any(|r| r["hook"] == "digest"
+        && r["kind"] == "source"
+        && r["annotations"]["sha256"].is_string()));
 }
 
 /// The words that state a default reach the HTTP forms too: `gop` in frames
@@ -341,25 +436,55 @@ fn explicit_default_words_on_both_http_forms() {
             .0;
     let s = query.to_settings().unwrap();
     assert!(s.is_empty(), "every value stated is the default");
-    let query: TranscodeParams =
-        axum::extract::Query::try_from_uri(&"http://x/?gop=48&max_fps=29.97&max_short_side=720".parse().unwrap()).unwrap().0;
+    let query: TranscodeParams = axum::extract::Query::try_from_uri(
+        &"http://x/?gop=48&max_fps=29.97&max_short_side=720"
+            .parse()
+            .unwrap(),
+    )
+    .unwrap()
+    .0;
     let s = query.to_settings().unwrap();
-    assert_eq!((s.gop, s.max_fps, s.max_short_side), (Some(48), Some(29.97), Some(720)));
-    let query: TranscodeParams = axum::extract::Query::try_from_uri(&"http://x/?gop=1.5s".parse().unwrap()).unwrap().0;
+    assert_eq!(
+        (s.gop, s.max_fps, s.max_short_side),
+        (Some(48), Some(29.97), Some(720))
+    );
+    let query: TranscodeParams =
+        axum::extract::Query::try_from_uri(&"http://x/?gop=1.5s".parse().unwrap())
+            .unwrap()
+            .0;
     assert_eq!(query.to_settings().unwrap().gop_seconds, Some(1.5));
-    let query: TranscodeParams = axum::extract::Query::try_from_uri(&"http://x/?gop=0s".parse().unwrap()).unwrap().0;
+    let query: TranscodeParams =
+        axum::extract::Query::try_from_uri(&"http://x/?gop=0s".parse().unwrap())
+            .unwrap()
+            .0;
     assert!(query.to_settings().is_err());
 
-    let body = |v: serde_json::Value| serde_json::from_value::<SpecBody>(v).unwrap().into_params().to_settings();
-    let s = body(serde_json::json!({ "gop": 48, "max_fps": 29.97, "max_short_side": 720 })).unwrap();
-    assert_eq!((s.gop, s.max_fps, s.max_short_side), (Some(48), Some(29.97), Some(720)), "numbers as before");
+    let body = |v: serde_json::Value| {
+        serde_json::from_value::<SpecBody>(v)
+            .unwrap()
+            .into_params()
+            .to_settings()
+    };
+    let s =
+        body(serde_json::json!({ "gop": 48, "max_fps": 29.97, "max_short_side": 720 })).unwrap();
+    assert_eq!(
+        (s.gop, s.max_fps, s.max_short_side),
+        (Some(48), Some(29.97), Some(720)),
+        "numbers as before"
+    );
     let s = body(serde_json::json!({ "gop": "2s", "max_fps": "source", "max_short_side": "standard", "audio_bitrate": "standard", "video_bitrate": "standard" })).unwrap();
     assert!(s.is_empty());
     let s = body(serde_json::json!({ "gop": "0.5s", "max_fps": 30 })).unwrap();
-    assert_eq!((s.gop, s.gop_seconds, s.max_fps), (None, Some(0.5), Some(30.0)));
+    assert_eq!(
+        (s.gop, s.gop_seconds, s.max_fps),
+        (None, Some(0.5), Some(30.0))
+    );
     assert!(body(serde_json::json!({ "gop": "-1s" })).is_err());
     assert!(body(serde_json::json!({ "max_fps": "fast" })).is_err());
-    assert!(serde_json::from_value::<SpecBody>(serde_json::json!({ "gop": [2] })).is_err(), "neither a number nor a word");
+    assert!(
+        serde_json::from_value::<SpecBody>(serde_json::json!({ "gop": [2] })).is_err(),
+        "neither a number nor a word"
+    );
     let s = body(serde_json::json!({ "codec": "h264", "rungs": ["1920x1080@standard", "1280x720"], "video_bitrate": "2M" })).unwrap();
     assert!(s.rungs[0].standard_rate && !s.rungs[1].standard_rate);
 }
@@ -391,11 +516,24 @@ fn completed_single_file_job(labels: &[&str]) -> std::sync::Arc<super::JobHandle
     handle
 }
 
-async fn sync_body(handle: &std::sync::Arc<super::JobHandle>) -> (u16, Option<String>, axum::body::Bytes) {
-    let resp = super::handlers::sync_response(handle).map_err(|_| "sync_response failed").unwrap();
+async fn sync_body(
+    handle: &std::sync::Arc<super::JobHandle>,
+) -> (u16, Option<String>, axum::body::Bytes) {
+    let resp = super::handlers::sync_response(handle)
+        .map_err(|_| "sync_response failed")
+        .unwrap();
     let status = resp.status().as_u16();
-    let ct = resp.headers().get(axum::http::header::CONTENT_TYPE).map(|v| v.to_str().unwrap().to_string());
-    (status, ct, axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap())
+    let ct = resp
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .map(|v| v.to_str().unwrap().to_string());
+    (
+        status,
+        ct,
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
 }
 
 /// A sync request for one single-file rung gets that file back.
@@ -418,8 +556,19 @@ async fn sync_with_several_rungs_returns_the_status_json() {
     assert_eq!(ct.as_deref(), Some("application/json"));
     let v: serde_json::Value = serde_json::from_slice(&body).expect("the status JSON");
     assert_eq!(v["status"], "completed");
-    let urls: Vec<&str> = v["artifacts"].as_array().unwrap().iter().map(|a| a["url"].as_str().unwrap()).collect();
-    assert_eq!(urls, [format!("/v1/jobs/{}/artifacts/720p", handle.id), format!("/v1/jobs/{}/artifacts/360p", handle.id)]);
+    let urls: Vec<&str> = v["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["url"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        urls,
+        [
+            format!("/v1/jobs/{}/artifacts/720p", handle.id),
+            format!("/v1/jobs/{}/artifacts/360p", handle.id)
+        ]
+    );
 }
 
 /// End to end through the router (when the test media is present, on a build
@@ -429,7 +578,10 @@ async fn sync_with_several_rungs_returns_the_status_json() {
 #[tokio::test(flavor = "multi_thread")]
 async fn sync_transcode_one_rung_is_the_file_and_several_are_the_status() {
     use tower::ServiceExt;
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_media/bbb_h264_360p_short.mp4");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test_media/bbb_h264_360p_short.mp4"
+    );
     let Ok(media) = std::fs::read(path) else {
         return;
     };
@@ -441,7 +593,9 @@ async fn sync_transcode_one_rung_is_the_file_and_several_are_the_status() {
     let resp = router.clone().oneshot(req).await.unwrap();
     let status = resp.status().as_u16();
     let ct = resp.headers()[axum::http::header::CONTENT_TYPE].clone();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     assert_eq!(ct, "video/mp4");
     assert_eq!(&body[4..8], b"ftyp");
@@ -456,7 +610,9 @@ async fn sync_transcode_one_rung_is_the_file_and_several_are_the_status() {
     assert_eq!(arts.len(), 2, "{v}");
     for a in arts {
         let url = a["url"].as_str().unwrap();
-        let req = axum::http::Request::get(url).body(axum::body::Body::empty()).unwrap();
+        let req = axum::http::Request::get(url)
+            .body(axum::body::Body::empty())
+            .unwrap();
         let resp = router.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status().as_u16(), 200, "{url}");
     }
@@ -468,15 +624,27 @@ async fn sync_transcode_one_rung_is_the_file_and_several_are_the_status() {
 #[test]
 fn the_job_limit_is_unset_unless_the_operator_sets_it() {
     use super::job_limit;
-    assert_eq!(job_limit(None, None), None, "by default every accepted job starts at once");
+    assert_eq!(
+        job_limit(None, None),
+        None,
+        "by default every accepted job starts at once"
+    );
     assert_eq!(job_limit(None, Some("3")), Some(3));
     assert_eq!(job_limit(None, Some(" 2 ")), Some(2));
-    assert_eq!(job_limit(Some(4), Some("2")), Some(4), "--jobs wins over the environment");
+    assert_eq!(
+        job_limit(Some(4), Some("2")),
+        Some(4),
+        "--jobs wins over the environment"
+    );
     assert_eq!(job_limit(Some(1), None), Some(1));
     assert_eq!(job_limit(None, Some("0")), None, "not a limit: none");
     assert_eq!(job_limit(None, Some("lots")), None);
     assert_eq!(job_limit(None, Some("")), None);
-    assert!(super::AppState::with_limit(crate::hooks::Hooks::default(), None).running.is_none());
+    assert!(
+        super::AppState::with_limit(crate::hooks::Hooks::default(), None)
+            .running
+            .is_none()
+    );
     assert_eq!(
         super::AppState::with_limit(crate::hooks::Hooks::default(), Some(2))
             .running
@@ -490,8 +658,9 @@ fn the_job_limit_is_unset_unless_the_operator_sets_it() {
 #[tokio::test]
 async fn without_a_limit_every_job_starts_at_once() {
     let state = super::AppState::with_limit(crate::hooks::Hooks::default(), None);
-    let handles: Vec<_> =
-        (0..4).map(|_| std::sync::Arc::new(super::JobHandle::new(uuid::Uuid::new_v4(), "single"))).collect();
+    let handles: Vec<_> = (0..4)
+        .map(|_| std::sync::Arc::new(super::JobHandle::new(uuid::Uuid::new_v4(), "single")))
+        .collect();
     let tasks: Vec<_> = handles
         .iter()
         .map(|h| {
@@ -506,10 +675,17 @@ async fn without_a_limit_every_job_starts_at_once() {
         })
         .collect();
     for t in tasks {
-        tokio::time::timeout(std::time::Duration::from_secs(30), t).await.expect("no job waits").unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(30), t)
+            .await
+            .expect("no job waits")
+            .unwrap();
     }
     for h in &handles {
-        assert_eq!(h.status_json()["status"], "failed", "each ran (and failed on its bytes)");
+        assert_eq!(
+            h.status_json()["status"],
+            "failed",
+            "each ran (and failed on its bytes)"
+        );
     }
 }
 
@@ -531,12 +707,20 @@ fn a_server_jobs_cards_are_all_the_hosts_cards() {
         host_pci_address: String::new(),
         vendor_id_hex: String::new(),
     };
-    let host = [card(0, GpuVendor::Intel), card(1, GpuVendor::Intel), card(2, GpuVendor::Nvidia)];
+    let host = [
+        card(0, GpuVendor::Intel),
+        card(1, GpuVendor::Intel),
+        card(2, GpuVendor::Nvidia),
+    ];
     for limit in [None, Some(1), Some(2), Some(3)] {
         // The state the server would run with; the spec does not consult it.
         let _state = super::AppState::with_limit(crate::hooks::Hooks::default(), limit);
         for spec in [
-            TranscodeParams::default().to_settings().unwrap().into_spec(1280, 720).unwrap(),
+            TranscodeParams::default()
+                .to_settings()
+                .unwrap()
+                .into_spec(1280, 720)
+                .unwrap(),
             serde_json::from_value::<SpecBody>(serde_json::json!({}))
                 .unwrap()
                 .into_params()
@@ -545,11 +729,25 @@ fn a_server_jobs_cards_are_all_the_hosts_cards() {
                 .into_spec(1280, 720)
                 .unwrap(),
         ] {
-            assert_eq!(spec.encode_policy, crate::spec::EncodePolicy::AllGpus, "{limit:?}");
-            let cards: Vec<u32> =
-                crate::multigpu::cards_for_policy(&host, spec.encode_policy).iter().map(|c| c.index).collect();
-            assert_eq!(cards, [0, 1, 2], "every card, whatever the job limit ({limit:?})");
-            assert_eq!(crate::multigpu::serial_gpu_for_policy(spec.encode_policy), None, "not pinned to a card");
+            assert_eq!(
+                spec.encode_policy,
+                crate::spec::EncodePolicy::AllGpus,
+                "{limit:?}"
+            );
+            let cards: Vec<u32> = crate::multigpu::cards_for_policy(&host, spec.encode_policy)
+                .iter()
+                .map(|c| c.index)
+                .collect();
+            assert_eq!(
+                cards,
+                [0, 1, 2],
+                "every card, whatever the job limit ({limit:?})"
+            );
+            assert_eq!(
+                crate::multigpu::serial_gpu_for_policy(spec.encode_policy),
+                None,
+                "not pinned to a card"
+            );
         }
     }
 }
@@ -560,7 +758,10 @@ fn a_server_jobs_cards_are_all_the_hosts_cards() {
 async fn a_job_stays_queued_until_a_slot_is_free() {
     let state = super::AppState::with_limit(crate::hooks::Hooks::default(), Some(1));
     let running = state.running.clone().unwrap();
-    let held = std::sync::Arc::clone(&running).acquire_owned().await.unwrap();
+    let held = std::sync::Arc::clone(&running)
+        .acquire_owned()
+        .await
+        .unwrap();
     let handle = std::sync::Arc::new(super::JobHandle::new(uuid::Uuid::new_v4(), "single"));
     let task = tokio::spawn(super::handlers::run_job_task(
         std::sync::Arc::clone(&handle),
@@ -574,9 +775,17 @@ async fn a_job_stays_queued_until_a_slot_is_free() {
         tokio::task::yield_now().await;
     }
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert_eq!(handle.status_json()["status"], "queued", "no slot: the job waits");
+    assert_eq!(
+        handle.status_json()["status"],
+        "queued",
+        "no slot: the job waits"
+    );
     drop(held);
     task.await.unwrap();
-    assert_eq!(handle.status_json()["status"], "failed", "with the slot it ran (and failed on its bytes)");
+    assert_eq!(
+        handle.status_json()["status"],
+        "failed",
+        "with the slot it ran (and failed on its bytes)"
+    );
     assert_eq!(running.available_permits(), 1, "and gave the slot back");
 }

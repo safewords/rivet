@@ -15,16 +15,31 @@ use std::sync::{Arc, Mutex};
 
 use common::synth;
 use rivet::job::RungArtifact;
-use rivet::{AudioCodecPolicy, OutputSpec, Rung, RungStatus, VideoCodecPolicy, fn_sink, run_job_blocking};
+use rivet::{
+    AudioCodecPolicy, OutputSpec, Rung, RungStatus, VideoCodecPolicy, fn_sink, run_job_blocking,
+};
 
 /// One second of 64×64 H.264 video with a 5.1 DTS track, in `container`
 /// (`mkv` or `mp4`).
 fn make_input(container: &str) -> Vec<u8> {
     let cfg = synth::H264::new(64, 64, 24);
-    let video = synth::encode_h264(&cfg, (0..24).map(|t| synth::test_pattern(64, 64, t, h26x::ChromaFormat::Yuv420)));
+    let video = synth::encode_h264(
+        &cfg,
+        (0..24).map(|t| synth::test_pattern(64, 64, t, h26x::ChromaFormat::Yuv420)),
+    );
     let audio = synth::dts_5_1(1.0);
     match container {
-        "mkv" => synth::mkv(&video, 64, 64, 24, None, Some(synth::MkvAudio { codec_id: "A_DTS", track: &audio })),
+        "mkv" => synth::mkv(
+            &video,
+            64,
+            64,
+            24,
+            None,
+            Some(synth::MkvAudio {
+                codec_id: "A_DTS",
+                track: &audio,
+            }),
+        ),
         "mp4" => synth::mp4(&video, 64, 64, 24, Some(&audio), None),
         other => panic!("no {other} writer here"),
     }
@@ -64,18 +79,27 @@ fn transcode_to_opus(container: &str) {
                 !msg.to_ascii_lowercase().contains("audio"),
                 "{container}: the audio half of the job failed: {msg}"
             );
-            eprintln!("dts_audio ({container}): SKIP, the video half has no path on this host/build: {msg}");
+            eprintln!(
+                "dts_audio ({container}): SKIP, the video half has no path on this host/build: {msg}"
+            );
             return;
         }
     };
-    assert_eq!(out.audio_handling, "dts → opus (6ch)", "{container}: audio handling");
+    assert_eq!(
+        out.audio_handling, "dts → opus (6ch)",
+        "{container}: audio handling"
+    );
     let rung = out.rungs.first().expect("one rung");
     let RungArtifact::File(mp4) = &rung.artifact else {
         panic!("{container}: single-file job should yield file bytes");
     };
-    let (channels, family) = dops_of(mp4).unwrap_or_else(|| panic!("{container}: no dOps in the output"));
+    let (channels, family) =
+        dops_of(mp4).unwrap_or_else(|| panic!("{container}: no dOps in the output"));
     assert_eq!(channels, 6, "{container}: Opus channel count");
-    assert_eq!(family, 1, "{container}: 5.1 Opus must use channel-mapping family 1");
+    assert_eq!(
+        family, 1,
+        "{container}: 5.1 Opus must use channel-mapping family 1"
+    );
 }
 
 #[test]

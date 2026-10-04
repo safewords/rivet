@@ -70,7 +70,10 @@ pub(crate) fn normalize_alac_cookie(raw: &[u8]) -> Option<Vec<u8>> {
 /// the source's tags, not what a decoder needs, and a copy of the stream
 /// must not carry them into an output.
 pub(crate) fn normalize_flac_blocks(raw: &[u8]) -> Option<Vec<u8>> {
-    let blocks = raw.strip_prefix(b"fLaC").or_else(|| raw.strip_prefix(&[0, 0, 0, 0])).unwrap_or(raw);
+    let blocks = raw
+        .strip_prefix(b"fLaC")
+        .or_else(|| raw.strip_prefix(&[0, 0, 0, 0]))
+        .unwrap_or(raw);
     flac_stream_params(blocks)?;
     let mut streaminfo = blocks.get(..38)?.to_vec();
     streaminfo[..4].copy_from_slice(&[0x80, 0, 0, 34]);
@@ -132,15 +135,17 @@ pub(crate) fn extract_mp4_lossless(data: &[u8]) -> Option<AudioTrack> {
             })?;
             let (rate, channels, _, _) = flac_stream_params(&blocks)?;
             ("flac", blocks, rate, channels)
-        } else if let Some(raw) = super::ac3::extract_mp4_audio_config_body(data, b"alac", b"alac") {
+        } else {
+            let raw = super::ac3::extract_mp4_audio_config_body(data, b"alac", b"alac")?;
             let cookie = normalize_alac_cookie(&raw).or_else(|| {
-                tracing::warn!(len = raw.len(), "MP4 alac: magic cookie is not 24 bytes; dropping audio");
+                tracing::warn!(
+                    len = raw.len(),
+                    "MP4 alac: magic cookie is not 24 bytes; dropping audio"
+                );
                 None
             })?;
             let (rate, channels, _) = alac_stream_params(&cookie)?;
             ("alac", cookie, rate, channels)
-        } else {
-            return None;
         };
     let size = data.len() as u64;
     let mut reader = Mp4Reader::read_header(Cursor::new(data), size).ok()?;
@@ -181,12 +186,21 @@ pub(crate) fn extract_mp4_lossless(data: &[u8]) -> Option<AudioTrack> {
 
 /// Durations (in samples) for packets whose clock came from a container
 /// that rounds: each frame's own sample count.
-pub(crate) fn frame_durations(codec: &str, codec_private: &[u8], samples: &[Vec<u8>]) -> Option<Vec<u32>> {
+pub(crate) fn frame_durations(
+    codec: &str,
+    codec_private: &[u8],
+    samples: &[Vec<u8>],
+) -> Option<Vec<u32>> {
     match codec {
         "flac" => samples.iter().map(|f| flac_frame_samples(f)).collect(),
         "alac" => {
             let (_, _, frame_length) = alac_stream_params(codec_private)?;
-            Some(samples.iter().map(|f| alac_frame_samples(f, frame_length)).collect())
+            Some(
+                samples
+                    .iter()
+                    .map(|f| alac_frame_samples(f, frame_length))
+                    .collect(),
+            )
         }
         _ => None,
     }
@@ -200,7 +214,9 @@ pub fn read_native_flac(data: &[u8]) -> Result<AudioTrack> {
     // Walk the metadata blocks to the first frame.
     let mut at = 0usize;
     loop {
-        let h = body.get(at..at + 4).context("FLAC metadata ends inside a block header")?;
+        let h = body
+            .get(at..at + 4)
+            .context("FLAC metadata ends inside a block header")?;
         let len = (usize::from(h[1]) << 16) | (usize::from(h[2]) << 8) | usize::from(h[3]);
         at += 4 + len;
         if at > body.len() {
@@ -214,7 +230,8 @@ pub fn read_native_flac(data: &[u8]) -> Result<AudioTrack> {
     // padding describe this file, not the stream a muxer writes.
     let mut blocks = body[..4 + 34].to_vec();
     blocks[0] = 0x80;
-    let (rate, channels, _, _) = flac_stream_params(&blocks).context("FLAC stream has no STREAMINFO")?;
+    let (rate, channels, _, _) =
+        flac_stream_params(&blocks).context("FLAC stream has no STREAMINFO")?;
     let frames = split_flac_frames(&body[at..]);
     if frames.is_empty() {
         bail!("FLAC stream holds no frames");
@@ -245,7 +262,9 @@ pub(crate) fn native_flac_offset(data: &[u8]) -> Option<usize> {
     if data.len() >= 10 && data.starts_with(b"ID3") {
         // Syncsafe size, plus the 10-byte header and a 10-byte footer when
         // the footer flag is set.
-        let size = data[6..10].iter().fold(0usize, |v, &b| (v << 7) | usize::from(b & 0x7F));
+        let size = data[6..10]
+            .iter()
+            .fold(0usize, |v, &b| (v << 7) | usize::from(b & 0x7F));
         let at = 10 + size + if data[5] & 0x10 != 0 { 10 } else { 0 };
         if data.get(at..at + 4) == Some(b"fLaC") {
             return Some(at);
@@ -326,7 +345,11 @@ fn crc8(data: &[u8]) -> u8 {
     data.iter().fold(0u8, |mut c, &b| {
         c ^= b;
         for _ in 0..8 {
-            c = if c & 0x80 != 0 { (c << 1) ^ 0x07 } else { c << 1 };
+            c = if c & 0x80 != 0 {
+                (c << 1) ^ 0x07
+            } else {
+                c << 1
+            };
         }
         c
     })
@@ -343,7 +366,11 @@ fn crc16_step(c: u16, b: u8) -> u16 {
         for (i, e) in t.iter_mut().enumerate() {
             let mut c = (i as u16) << 8;
             for _ in 0..8 {
-                c = if c & 0x8000 != 0 { (c << 1) ^ 0x8005 } else { c << 1 };
+                c = if c & 0x8000 != 0 {
+                    (c << 1) ^ 0x8005
+                } else {
+                    c << 1
+                };
             }
             *e = c;
         }
@@ -359,11 +386,20 @@ mod tests {
     #[test]
     fn frame_sample_counts() {
         // 4096-sample block (code 12), frame number 0.
-        assert_eq!(flac_frame_samples(&[0xFF, 0xF8, 0xC9, 0x18, 0x00, 0x00]), Some(4096));
+        assert_eq!(
+            flac_frame_samples(&[0xFF, 0xF8, 0xC9, 0x18, 0x00, 0x00]),
+            Some(4096)
+        );
         // 16-bit explicit size (code 7): 1234 + 1, after a 1-byte number.
-        assert_eq!(flac_frame_samples(&[0xFF, 0xF8, 0x79, 0x18, 0x05, 0x04, 0xD2, 0]), Some(1235));
+        assert_eq!(
+            flac_frame_samples(&[0xFF, 0xF8, 0x79, 0x18, 0x05, 0x04, 0xD2, 0]),
+            Some(1235)
+        );
         // A two-byte coded number moves the explicit size along.
-        assert_eq!(flac_frame_samples(&[0xFF, 0xF9, 0x69, 0x18, 0xC2, 0x80, 0x09, 0]), Some(10));
+        assert_eq!(
+            flac_frame_samples(&[0xFF, 0xF9, 0x69, 0x18, 0xC2, 0x80, 0x09, 0]),
+            Some(10)
+        );
         // ALAC: a partial frame of 1000 samples.
         let mut alac = vec![0u8; 8];
         // bit 19 set; count 1000 in bits 23..55.
@@ -425,7 +461,13 @@ mod tests {
                 comment.extend_from_slice(&2u32.to_le_bytes());
             }
         }
-        let tagged = [block(0, false, &si), block(4, false, &comment), block(6, false, b"picture"), block(2, true, b"appl")].concat();
+        let tagged = [
+            block(0, false, &si),
+            block(4, false, &comment),
+            block(6, false, b"picture"),
+            block(2, true, b"appl"),
+        ]
+        .concat();
         let expect = block(0, true, &si);
         let mut mkv = b"fLaC".to_vec();
         mkv.extend_from_slice(&tagged);

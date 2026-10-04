@@ -55,6 +55,12 @@ fn prores_is_advertised_exactly_when_create_decoder_builds_it() {
             );
         }
     }
-    assert!(built.is_ok(), "the ProRes tier is always compiled, so create_decoder must build it");
-    assert!(backends.contains(&"prores"), "capabilities must list the prores backend: {backends:?}");
+    assert!(
+        built.is_ok(),
+        "the ProRes tier is always compiled, so create_decoder must build it"
+    );
+    assert!(
+        backends.contains(&"prores"),
+        "capabilities must list the prores backend: {backends:?}"
+    );
 }

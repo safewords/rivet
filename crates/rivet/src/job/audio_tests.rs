@@ -14,10 +14,14 @@ use bytes::Bytes;
 use container::demux::AudioTrack;
 use container::streaming::demux_audio;
 
-use super::audio::{AudioOutput, AudioRequest, PreparedAudio, audio_codec_string, build_audio_rendition, prepare_audio};
+use super::audio::{
+    AudioOutput, AudioRequest, PreparedAudio, audio_codec_string, build_audio_rendition,
+    prepare_audio,
+};
 use crate::progress::NullSink;
 use crate::spec::{
-    AudioChannels, AudioCodecPolicy, AudioDecodeDeny, Container, HeAacPolicy, OutputMode, OutputSpec, Rung,
+    AudioChannels, AudioCodecPolicy, AudioDecodeDeny, Container, HeAacPolicy, OutputMode,
+    OutputSpec, Rung,
 };
 
 const FL: f32 = 400.0;
@@ -35,7 +39,10 @@ fn fixture(name: &str) -> Bytes {
 }
 
 fn track(name: &str) -> AudioTrack {
-    demux_audio(fixture(name)).expect("demux").expect("an audio track").track
+    demux_audio(fixture(name))
+        .expect("demux")
+        .expect("an audio track")
+        .track
 }
 
 /// A stream from the AAC codec's own test corpus (`crates/aac/tests/data`,
@@ -43,7 +50,10 @@ fn track(name: &str) -> AudioTrack {
 fn aac_corpus_track(name: &str) -> AudioTrack {
     let path = format!("{}/../aac/tests/data/{name}", env!("CARGO_MANIFEST_DIR"));
     let bytes = Bytes::from(std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}")));
-    demux_audio(bytes).expect("demux").expect("an audio track").track
+    demux_audio(bytes)
+        .expect("demux")
+        .expect("an audio track")
+        .track
 }
 
 /// A bare `.mp3` (no tag frame): half a second of a 1 kHz tone, 48 kHz
@@ -56,22 +66,47 @@ fn mp3_tone() -> Vec<u8> {
         64_000,
     ))
     .unwrap();
-    let samples = (0..24_000).map(|i| 0.4 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 48_000.0).sin()).collect();
-    let mut frames = enc.encode(&codec::audio::AudioFrame { samples, sample_rate: 48_000, channels: 1, pts: 0 }).unwrap();
+    let samples = (0..24_000)
+        .map(|i| 0.4 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 48_000.0).sin())
+        .collect();
+    let mut frames = enc
+        .encode(&codec::audio::AudioFrame {
+            samples,
+            sample_rate: 48_000,
+            channels: 1,
+            pts: 0,
+        })
+        .unwrap();
     frames.extend(enc.flush().unwrap());
     frames.into_iter().flat_map(|p| p.data).collect()
 }
 
-fn request(policy: AudioCodecPolicy, channels: AudioChannels, output: AudioOutput) -> AudioRequest<'static> {
-    AudioRequest { policy, bitrate: None, filters: &[], channels, output, ..AudioRequest::plain(policy) }
+fn request(
+    policy: AudioCodecPolicy,
+    channels: AudioChannels,
+    output: AudioOutput,
+) -> AudioRequest<'static> {
+    AudioRequest {
+        policy,
+        bitrate: None,
+        filters: &[],
+        channels,
+        output,
+        ..AudioRequest::plain(policy)
+    }
 }
 
 /// The prepared track decoded back to interleaved PCM, with its channel count.
 fn decode(a: &PreparedAudio) -> (Vec<f32>, usize) {
     let ch = a.info.channels as u8;
-    let private = if a.info.codec == "aac" { &a.info.asc_bytes } else { &a.info.codec_private };
+    let private = if a.info.codec == "aac" {
+        &a.info.asc_bytes
+    } else {
+        &a.info.codec_private
+    };
     let extra = (!private.is_empty()).then_some(private.as_slice());
-    let mut dec = codec::audio::create_decoder(&a.info.codec, extra, a.info.sample_rate, ch).expect("decoder");
+    let mut dec = codec::audio::create_decoder(&a.info.codec, extra, a.info.sample_rate, ch)
+        .expect("decoder");
     let mut pcm = Vec::new();
     for (packet, _) in &a.samples {
         for f in dec.decode(packet, 0).expect("decode") {
@@ -91,7 +126,10 @@ fn decode(a: &PreparedAudio) -> (Vec<f32>, usize) {
 fn amplitude(pcm: &[f32], ch: usize, c: usize, freq: f32, rate: f32) -> f32 {
     let frames = pcm.len() / ch;
     // Skip the codecs' lead-in and tail; keep a whole number of 20 ms.
-    let (start, len) = (frames / 4, ((frames / 2) as f32 / (rate / 50.0)).floor() as usize * (rate / 50.0) as usize);
+    let (start, len) = (
+        frames / 4,
+        ((frames / 2) as f32 / (rate / 50.0)).floor() as usize * (rate / 50.0) as usize,
+    );
     let w = 2.0 * std::f32::consts::PI * freq / rate;
     let (mut s1, mut s2) = (0.0f32, 0.0f32);
     for i in start..start + len {
@@ -104,7 +142,10 @@ fn amplitude(pcm: &[f32], ch: usize, c: usize, freq: f32, rate: f32) -> f32 {
 }
 
 fn close(got: f32, want: f32, what: &str) {
-    assert!((got - want).abs() <= want * 0.1 + 0.002, "{what}: {got:.4}, want {want:.4}");
+    assert!(
+        (got - want).abs() <= want * 0.1 + 0.002,
+        "{what}: {got:.4}, want {want:.4}"
+    );
 }
 
 /// [`close`] for a source that is AAC: a lossy encoder may code the back
@@ -112,16 +153,28 @@ fn close(got: f32, want: f32, what: &str) {
 /// level by tens of percent in any decode of it (an earlier fixture's 1000
 /// and 1200 Hz tones decoded 8-17 % high), so levels are checked to 20 %.
 fn close_aac(got: f32, want: f32, what: &str) {
-    assert!((got - want).abs() <= want * 0.2 + 0.002, "{what}: {got:.4}, want {want:.4}");
+    assert!(
+        (got - want).abs() <= want * 0.2 + 0.002,
+        "{what}: {got:.4}, want {want:.4}"
+    );
 }
 
 #[test]
 fn ac3_5_1_to_opus_keeps_every_channel_in_its_place() {
     let t = track("tones_51_ac3.mka");
     assert_eq!((t.codec.as_str(), t.channels), ("ac3", 6));
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceOpus,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "ac3 → opus (6ch)");
     assert_eq!((a.info.codec.as_str(), a.info.channels), ("opus", 6));
     // dOps family 1, four streams (two coupled), the RFC 7845 5.1 mapping.
@@ -145,10 +198,22 @@ fn ac3_5_1_to_opus_keeps_every_channel_in_its_place() {
 #[test]
 fn ac3_5_1_downmixes_to_stereo_at_bs775_levels() {
     let t = track("tones_51_ac3.mka");
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Stereo, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
-    assert_eq!(a.handling, "ac3 → opus (6ch → 2ch)", "a layout change forces the transcode");
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Stereo,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        a.handling, "ac3 → opus (6ch → 2ch)",
+        "a layout change forces the transcode"
+    );
     assert_eq!(a.info.channels, 2);
     let (pcm, ch) = decode(&a);
     let front = 1.0 / (1.0 + std::f32::consts::SQRT_2);
@@ -160,7 +225,14 @@ fn ac3_5_1_downmixes_to_stereo_at_bs775_levels() {
     close(amp(1, FC), LEVEL * centre, "FC in R");
     close(amp(0, SL), LEVEL * centre, "SL in L");
     close(amp(1, SR), LEVEL * centre, "SR in R");
-    for (c, f, what) in [(0, FR, "FR in L"), (1, FL, "FL in R"), (0, SR, "SR in L"), (1, SL, "SL in R"), (0, LFE, "LFE in L"), (1, LFE, "LFE in R")] {
+    for (c, f, what) in [
+        (0, FR, "FR in L"),
+        (1, FL, "FL in R"),
+        (0, SR, "SR in L"),
+        (1, SL, "SL in R"),
+        (0, LFE, "LFE in L"),
+        (1, LFE, "LFE in R"),
+    ] {
         assert!(amp(c, f) < 0.005, "{what}: {}", amp(c, f));
     }
 }
@@ -168,14 +240,27 @@ fn ac3_5_1_downmixes_to_stereo_at_bs775_levels() {
 #[test]
 fn ac3_5_1_to_mono_folds_the_stereo_downmix() {
     let t = track("tones_51_ac3.mka");
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Mono, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Mono,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.info.channels, 1);
     let (pcm, _) = decode(&a);
     // 0.707·(L + R) + C + 0.5·(Ls + Rs), over 3.414.
     let n = std::f32::consts::SQRT_2 + 2.0;
-    close(amplitude(&pcm, 1, 0, FL, 48_000.0), LEVEL * std::f32::consts::FRAC_1_SQRT_2 / n, "FL");
+    close(
+        amplitude(&pcm, 1, 0, FL, 48_000.0),
+        LEVEL * std::f32::consts::FRAC_1_SQRT_2 / n,
+        "FL",
+    );
     close(amplitude(&pcm, 1, 0, FC, 48_000.0), LEVEL / n, "FC");
     close(amplitude(&pcm, 1, 0, SR, 48_000.0), LEVEL * 0.5 / n, "SR");
 }
@@ -183,35 +268,86 @@ fn ac3_5_1_to_mono_folds_the_stereo_downmix() {
 #[test]
 fn rivet_does_not_upmix() {
     let t = track("tones_51_ac3.mka");
-    let err = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Surround71, AudioOutput::Mp4))
-        .err()
-        .expect("7.1 from 5.1 is refused");
+    let err = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Surround71,
+            AudioOutput::Mp4,
+        ),
+    )
+    .err()
+    .expect("7.1 from 5.1 is refused");
     assert!(err.to_string().contains("rivet does not upmix"), "{err:#}");
     // Asking for the layout the source already has changes nothing.
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Surround51, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Surround51,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "ac3 passthrough");
 }
 
 #[test]
 fn aac_5_1_passes_through_with_its_layout_and_is_decoded_to_change_it() {
     let t = track("tones_51_aac.m4a");
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Source, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
-    assert_eq!((a.handling.as_str(), a.info.channels), ("aac passthrough", 6));
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        (a.handling.as_str(), a.info.channels),
+        ("aac passthrough", 6)
+    );
     let asc = container::aac_asc::parse_aac_asc(&a.info.asc_bytes).expect("the ASC");
-    assert_eq!(asc.channel_configuration, 6, "5.1 signalled as Table 1.19's configuration 6");
+    assert_eq!(
+        asc.channel_configuration, 6,
+        "5.1 signalled as Table 1.19's configuration 6"
+    );
     assert_eq!(audio_codec_string(&a.info), "mp4a.40.2");
     // Keeping the width is still a passthrough; changing it decodes.
-    let kept = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Surround51, AudioOutput::Mp4));
+    let kept = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Surround51,
+            AudioOutput::Mp4,
+        ),
+    );
     assert_eq!(kept.unwrap().unwrap().handling, "aac passthrough");
     // The AAC 5.1 fixture is FL FR FC LFE BL BR: the "side" tones are in the
     // back pair, which BS.775 folds in as it does a side pair.
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Stereo, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Stereo,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "aac → opus (6ch → 2ch)");
     let (pcm, ch) = decode(&a);
     let front = 1.0 / (1.0 + std::f32::consts::SQRT_2);
@@ -222,7 +358,12 @@ fn aac_5_1_passes_through_with_its_layout_and_is_decoded_to_change_it() {
     close_aac(amp(0, FC), LEVEL * centre, "FC in L");
     close_aac(amp(0, SL), LEVEL * centre, "BL in L");
     close_aac(amp(1, SR), LEVEL * centre, "BR in R");
-    for (c, f, what) in [(0, FR, "FR in L"), (1, FL, "FL in R"), (0, SR, "BR in L"), (1, SL, "BL in R")] {
+    for (c, f, what) in [
+        (0, FR, "FR in L"),
+        (1, FL, "FL in R"),
+        (0, SR, "BR in L"),
+        (1, SL, "BL in R"),
+    ] {
         assert!(amp(c, f) < 0.005, "{what}: {}", amp(c, f));
     }
 }
@@ -230,13 +371,26 @@ fn aac_5_1_passes_through_with_its_layout_and_is_decoded_to_change_it() {
 #[test]
 fn aac_5_1_to_opus_keeps_every_channel_in_its_place() {
     let t = track("tones_51_aac.m4a");
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceOpus,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "aac → opus (6ch)");
     let (pcm, ch) = decode(&a);
     for (c, &tone) in TONES.iter().enumerate() {
-        close_aac(amplitude(&pcm, ch, c, tone, 48_000.0), LEVEL, &format!("channel {c}'s own {tone} Hz"));
+        close_aac(
+            amplitude(&pcm, ch, c, tone, 48_000.0),
+            LEVEL,
+            &format!("channel {c}'s own {tone} Hz"),
+        );
         // A channel in the wrong place would carry another's tone at full
         // level (0.25). What is left at another channel's frequency is the
         // channel's own coding noise: at most 0.0096 (BL at FC's 800 Hz,
@@ -256,21 +410,52 @@ fn aac_5_1_to_opus_keeps_every_channel_in_its_place() {
 #[test]
 fn aac_is_decoded_into_outputs_that_cannot_hold_it() {
     let t = track("tones_51_aac.m4a");
-    let flac = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Flac, AudioChannels::Source, AudioOutput::FlacFile))
-        .unwrap()
-        .unwrap();
+    let flac = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Flac,
+            AudioChannels::Source,
+            AudioOutput::FlacFile,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(flac.handling, "aac → flac (6ch, 16-bit)");
     let (pcm, ch) = decode(&flac);
     for (c, &tone) in TONES.iter().enumerate() {
-        close_aac(amplitude(&pcm, ch, c, tone, 48_000.0), LEVEL, &format!("FLAC channel {c}'s own {tone} Hz"));
+        close_aac(
+            amplitude(&pcm, ch, c, tone, 48_000.0),
+            LEVEL,
+            &format!("FLAC channel {c}'s own {tone} Hz"),
+        );
     }
-    let alac = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Alac, AudioChannels::Stereo, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let alac = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Alac,
+            AudioChannels::Stereo,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(alac.handling, "aac → alac (6ch → 2ch, 16-bit)");
-    let mp3 = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Source, AudioOutput::Mp3File))
-        .unwrap()
-        .unwrap();
+    let mp3 = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Source,
+            AudioOutput::Mp3File,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(mp3.handling, "aac → mp3 (6ch → 2ch)");
 }
 
@@ -282,66 +467,130 @@ fn aac_is_decoded_into_outputs_that_cannot_hold_it() {
 fn he_aac_decodes_in_full_unless_the_job_says_otherwise() {
     let t = aac_corpus_track("he-aac-48000-stereo-explicit.m4a");
     assert_eq!(t.codec, "aac");
-    let req = |policy, channels, output, he_aac| AudioRequest { he_aac, ..request(policy, channels, output) };
+    let req = |policy, channels, output, he_aac| AudioRequest {
+        he_aac,
+        ..request(policy, channels, output)
+    };
     let run = |r| prepare_audio(Some(&t), None, &[], r);
     // Nothing asked of it: kept.
-    let a = run(req(AudioCodecPolicy::Auto, AudioChannels::Source, AudioOutput::Mp4, HeAacPolicy::Auto))
-        .unwrap()
-        .unwrap();
+    let a = run(req(
+        AudioCodecPolicy::Auto,
+        AudioChannels::Source,
+        AudioOutput::Mp4,
+        HeAacPolicy::Auto,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "aac passthrough");
     assert_eq!(audio_codec_string(&a.info), "mp4a.40.5");
     // A codec change: decoded in full and encoded.
-    let a = run(req(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Mp4, HeAacPolicy::Auto))
-        .unwrap()
-        .unwrap();
+    let a = run(req(
+        AudioCodecPolicy::ForceOpus,
+        AudioChannels::Source,
+        AudioOutput::Mp4,
+        HeAacPolicy::Auto,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "he-aac → opus (2ch)");
     // he-aac=passthrough keeps it whole instead.
-    let a = run(req(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Mp4, HeAacPolicy::Passthrough))
-        .unwrap()
-        .unwrap();
-    assert_eq!(a.handling, "aac passthrough (opus requested; HE-AAC kept whole, not decoded)");
+    let a = run(req(
+        AudioCodecPolicy::ForceOpus,
+        AudioChannels::Source,
+        AudioOutput::Mp4,
+        HeAacPolicy::Passthrough,
+    ))
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        a.handling,
+        "aac passthrough (opus requested; HE-AAC kept whole, not decoded)"
+    );
     assert_eq!(a.samples.len(), t.samples.len());
     // A downmix needs PCM: decoded in full.
-    let a = run(req(AudioCodecPolicy::Auto, AudioChannels::Mono, AudioOutput::Mp4, HeAacPolicy::Auto))
-        .unwrap()
-        .unwrap();
+    let a = run(req(
+        AudioCodecPolicy::Auto,
+        AudioChannels::Mono,
+        AudioOutput::Mp4,
+        HeAacPolicy::Auto,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "he-aac → opus (2ch → 1ch)");
     // he-aac=core decodes its core alone, at half the rate.
-    let a = run(req(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Mp4, HeAacPolicy::Core))
-        .unwrap()
-        .unwrap();
+    let a = run(req(
+        AudioCodecPolicy::ForceOpus,
+        AudioChannels::Source,
+        AudioOutput::Mp4,
+        HeAacPolicy::Core,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "he-aac (lc core) → opus (2ch)");
     // A native FLAC file: the full rate, and the core's under he-aac=core.
-    let f = run(req(AudioCodecPolicy::Flac, AudioChannels::Source, AudioOutput::FlacFile, HeAacPolicy::Auto))
-        .unwrap()
-        .unwrap();
+    let f = run(req(
+        AudioCodecPolicy::Flac,
+        AudioChannels::Source,
+        AudioOutput::FlacFile,
+        HeAacPolicy::Auto,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(f.handling, "he-aac → flac (2ch, 16-bit)");
     assert_eq!(f.info.sample_rate, 48_000);
     let (pcm, _) = decode(&f);
     let rms = (pcm.iter().map(|&v| f64::from(v).powi(2)).sum::<f64>() / pcm.len() as f64).sqrt();
     assert!(rms > 0.05, "decoded to near silence ({rms})");
-    let core = run(req(AudioCodecPolicy::Flac, AudioChannels::Source, AudioOutput::FlacFile, HeAacPolicy::Core))
-        .unwrap()
-        .unwrap();
-    assert_eq!((core.handling.as_str(), core.info.sample_rate), ("he-aac (lc core) → flac (2ch, 16-bit)", 24_000));
+    let core = run(req(
+        AudioCodecPolicy::Flac,
+        AudioChannels::Source,
+        AudioOutput::FlacFile,
+        HeAacPolicy::Core,
+    ))
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        (core.handling.as_str(), core.info.sample_rate),
+        ("he-aac (lc core) → flac (2ch, 16-bit)", 24_000)
+    );
     // he-aac=passthrough never decodes it: what would need the decode is refused.
-    let err = run(req(AudioCodecPolicy::Auto, AudioChannels::Mono, AudioOutput::Mp4, HeAacPolicy::Passthrough))
-        .err()
-        .expect("a downmix needs the decode");
+    let err = run(req(
+        AudioCodecPolicy::Auto,
+        AudioChannels::Mono,
+        AudioOutput::Mp4,
+        HeAacPolicy::Passthrough,
+    ))
+    .err()
+    .expect("a downmix needs the decode");
     assert!(err.to_string().contains("he-aac=passthrough"), "{err:#}");
-    let err = run(req(AudioCodecPolicy::Flac, AudioChannels::Source, AudioOutput::FlacFile, HeAacPolicy::Passthrough))
-        .err()
-        .expect("a FLAC file needs the decode");
+    let err = run(req(
+        AudioCodecPolicy::Flac,
+        AudioChannels::Source,
+        AudioOutput::FlacFile,
+        HeAacPolicy::Passthrough,
+    ))
+    .err()
+    .expect("a FLAC file needs the decode");
     assert!(err.to_string().contains("he-aac=passthrough"), "{err:#}");
     // audio=he-aac keeps it; audio=he-aacv2 does not (no parametric stereo
     // in it), and encodes it to HE-AAC v2.
-    let a = run(req(AudioCodecPolicy::ForceHeAac, AudioChannels::Source, AudioOutput::Mp4, HeAacPolicy::Auto))
-        .unwrap()
-        .unwrap();
+    let a = run(req(
+        AudioCodecPolicy::ForceHeAac,
+        AudioChannels::Source,
+        AudioOutput::Mp4,
+        HeAacPolicy::Auto,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "aac passthrough");
-    let a = run(req(AudioCodecPolicy::ForceHeAacV2, AudioChannels::Source, AudioOutput::Mp4, HeAacPolicy::Auto))
-        .unwrap()
-        .unwrap();
+    let a = run(req(
+        AudioCodecPolicy::ForceHeAacV2,
+        AudioChannels::Source,
+        AudioOutput::Mp4,
+        HeAacPolicy::Auto,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "he-aac → he-aacv2 (2ch)");
     assert_eq!(audio_codec_string(&a.info), "mp4a.40.29");
 }
@@ -353,19 +602,48 @@ fn he_aac_decodes_in_full_unless_the_job_says_otherwise() {
 #[test]
 fn handling_names_a_core_only_he_aac_decode_exactly() {
     let lc = aac_corpus_track("fdk-lc-44100-stereo-vbr.m4a");
-    let a = prepare_audio(Some(&lc), None, &[], request(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&lc),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceOpus,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "aac → opus (2ch)");
     let he = aac_corpus_track("he-aac-48000-stereo-explicit.m4a");
-    let core = AudioRequest { he_aac: HeAacPolicy::Core, ..request(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Mp4) };
+    let core = AudioRequest {
+        he_aac: HeAacPolicy::Core,
+        ..request(
+            AudioCodecPolicy::ForceOpus,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        )
+    };
     let a = prepare_audio(Some(&he), None, &[], core).unwrap().unwrap();
     assert_eq!(a.handling, "he-aac (lc core) → opus (2ch)");
-    let kept = prepare_audio(Some(&he), None, &[], request(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let kept = prepare_audio(
+        Some(&he),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceOpus,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     let lower = kept.handling.to_lowercase();
-    assert!(!(lower.contains("lc core") || lower.contains("core only")), "{}", kept.handling);
+    assert!(
+        !(lower.contains("lc core") || lower.contains("core only")),
+        "{}",
+        kept.handling
+    );
 }
 
 /// HE-AAC signalled the backward-compatible way (an AAC-LC configuration with
@@ -375,10 +653,22 @@ fn handling_names_a_core_only_he_aac_decode_exactly() {
 #[test]
 fn backward_compatible_he_aac_signalling_is_recognised() {
     let t = aac_corpus_track("he-aac-44100-stereo-backcompat.m4a");
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Flac, AudioChannels::Source, AudioOutput::FlacFile))
-        .unwrap()
-        .unwrap();
-    assert_eq!((a.handling.as_str(), a.info.sample_rate), ("he-aac → flac (2ch, 16-bit)", 44_100));
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Flac,
+            AudioChannels::Source,
+            AudioOutput::FlacFile,
+        ),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        (a.handling.as_str(), a.info.sample_rate),
+        ("he-aac → flac (2ch, 16-bit)", 44_100)
+    );
 }
 
 fn deny(names: &str) -> AudioDecodeDeny {
@@ -387,7 +677,9 @@ fn deny(names: &str) -> AudioDecodeDeny {
 
 /// The refusal a denied codec gets where the output needs its PCM.
 fn denied(codec: &str, why: &str) -> String {
-    format!("decoding {codec} audio is denied by the audio-decode-deny setting; the output needs decoded audio ({why})")
+    format!(
+        "decoding {codec} audio is denied by the audio-decode-deny setting; the output needs decoded audio ({why})"
+    )
 }
 
 /// `audio-decode-deny=aac`: the AAC track is never decoded. Where the
@@ -398,25 +690,44 @@ fn denied(codec: &str, why: &str) -> String {
 fn a_denied_aac_track_is_passed_through_or_refused() {
     let t = track("tones_51_aac.m4a");
     assert_eq!((t.codec.as_str(), t.channels), ("aac", 6));
-    let req = |policy, channels, output| AudioRequest { decode_deny: deny("aac"), ..request(policy, channels, output) };
+    let req = |policy, channels, output| AudioRequest {
+        decode_deny: deny("aac"),
+        ..request(policy, channels, output)
+    };
     let run = |r| prepare_audio(Some(&t), None, &[], r);
     let copied = |a: &PreparedAudio| {
         assert_eq!(a.info.codec, "aac");
         assert_eq!(a.info.asc_bytes, t.asc, "the source's AudioSpecificConfig");
         assert_eq!(a.samples.len(), t.samples.len());
-        for (i, ((got, dur), (want, want_dur))) in a.samples.iter().zip(t.samples.iter().zip(&t.durations)).enumerate() {
-            assert!(got == want && dur == want_dur, "packet {i} is not the source's");
+        for (i, ((got, dur), (want, want_dur))) in a
+            .samples
+            .iter()
+            .zip(t.samples.iter().zip(&t.durations))
+            .enumerate()
+        {
+            assert!(
+                got == want && dur == want_dur,
+                "packet {i} is not the source's"
+            );
         }
     };
 
     // Nothing asked of it: the passthrough it always was.
     for output in [AudioOutput::Mp4, AudioOutput::Cmaf] {
-        let a = run(req(AudioCodecPolicy::Auto, AudioChannels::Source, output)).unwrap().unwrap();
+        let a = run(req(AudioCodecPolicy::Auto, AudioChannels::Source, output))
+            .unwrap()
+            .unwrap();
         assert_eq!(a.handling, "aac passthrough");
         copied(&a);
     }
     // A layout it already has changes nothing.
-    let a = run(req(AudioCodecPolicy::Auto, AudioChannels::Surround51, AudioOutput::Mp4)).unwrap().unwrap();
+    let a = run(req(
+        AudioCodecPolicy::Auto,
+        AudioChannels::Surround51,
+        AudioOutput::Mp4,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "aac passthrough");
     // Another codec asked, into an output that holds AAC: kept, as it was
     // before AAC had a decoder, and the handling says why.
@@ -426,44 +737,96 @@ fn a_denied_aac_track_is_passed_through_or_refused() {
         (AudioCodecPolicy::Flac, "flac"),
         (AudioCodecPolicy::Alac, "alac"),
     ] {
-        let a = run(req(policy, AudioChannels::Source, AudioOutput::Mp4)).unwrap().unwrap();
-        assert_eq!(a.handling, format!("aac passthrough ({name} requested; decoding aac is denied)"));
+        let a = run(req(policy, AudioChannels::Source, AudioOutput::Mp4))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            a.handling,
+            format!("aac passthrough ({name} requested; decoding aac is denied)")
+        );
         copied(&a);
     }
-    let a = run(req(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Cmaf)).unwrap().unwrap();
-    assert_eq!(a.handling, "aac passthrough (opus requested; decoding aac is denied)");
+    let a = run(req(
+        AudioCodecPolicy::ForceOpus,
+        AudioChannels::Source,
+        AudioOutput::Cmaf,
+    ))
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        a.handling,
+        "aac passthrough (opus requested; decoding aac is denied)"
+    );
 
     // What needs the PCM is refused, naming the reason.
     let refused = |r: AudioRequest<'static>| format!("{:#}", run(r).err().expect("refused"));
     assert_eq!(
-        refused(req(AudioCodecPolicy::Auto, AudioChannels::Stereo, AudioOutput::Mp4)),
+        refused(req(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Stereo,
+            AudioOutput::Mp4
+        )),
         denied("aac", "audio-channels=stereo of a 6-channel track")
     );
     assert_eq!(
-        refused(req(AudioCodecPolicy::ForceOpus, AudioChannels::Mono, AudioOutput::Cmaf)),
+        refused(req(
+            AudioCodecPolicy::ForceOpus,
+            AudioChannels::Mono,
+            AudioOutput::Cmaf
+        )),
         denied("aac", "audio-channels=mono of a 6-channel track")
     );
     let filters = codec::audio::filter::parse_chain("channelmap=FL-FL|FR-FR:stereo").unwrap();
-    let filtered = AudioRequest { filters: &filters, ..req(AudioCodecPolicy::Auto, AudioChannels::Source, AudioOutput::Mp4) };
-    let err = prepare_audio(Some(&t), None, &[], filtered).err().expect("refused");
+    let filtered = AudioRequest {
+        filters: &filters,
+        ..req(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        )
+    };
+    let err = prepare_audio(Some(&t), None, &[], filtered)
+        .err()
+        .expect("refused");
     assert_eq!(
         format!("{err:#}"),
-        denied("aac", &format!("audio filters: {}", codec::audio::filter::chain_to_string(&filters)))
+        denied(
+            "aac",
+            &format!(
+                "audio filters: {}",
+                codec::audio::filter::chain_to_string(&filters)
+            )
+        )
     );
     assert_eq!(
-        refused(req(AudioCodecPolicy::Auto, AudioChannels::Source, AudioOutput::Mp3File)),
+        refused(req(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Source,
+            AudioOutput::Mp3File
+        )),
         denied("aac", "an .mp3 file holds MP3")
     );
     assert_eq!(
-        refused(req(AudioCodecPolicy::Flac, AudioChannels::Source, AudioOutput::FlacFile)),
+        refused(req(
+            AudioCodecPolicy::Flac,
+            AudioChannels::Source,
+            AudioOutput::FlacFile
+        )),
         denied("aac", "a native FLAC file holds FLAC")
     );
     // Denying other codecs leaves AAC decodable.
     let other = AudioRequest {
         decode_deny: deny("opus,mp3"),
-        ..request(AudioCodecPolicy::Auto, AudioChannels::Stereo, AudioOutput::Mp4)
+        ..request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Stereo,
+            AudioOutput::Mp4,
+        )
     };
-    assert_eq!(run(other).unwrap().unwrap().handling, "aac → opus (6ch → 2ch)");
+    assert_eq!(
+        run(other).unwrap().unwrap().handling,
+        "aac → opus (6ch → 2ch)"
+    );
 }
 
 /// With `aac` denied an HE-AAC track has no core to decode, whatever
@@ -471,22 +834,51 @@ fn a_denied_aac_track_is_passed_through_or_refused() {
 #[test]
 fn a_denied_aac_track_ignores_he_aac() {
     let t = aac_corpus_track("he-aac-48000-stereo-explicit.m4a");
-    for policy in [HeAacPolicy::Auto, HeAacPolicy::Passthrough, HeAacPolicy::Core] {
+    for policy in [
+        HeAacPolicy::Auto,
+        HeAacPolicy::Passthrough,
+        HeAacPolicy::Core,
+    ] {
         let req = |p, channels, output| AudioRequest {
             he_aac: policy,
             decode_deny: deny("aac"),
             ..request(p, channels, output)
         };
-        let a = prepare_audio(Some(&t), None, &[], req(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Mp4))
-            .unwrap()
-            .unwrap();
-        assert_eq!(a.handling, "aac passthrough (opus requested; decoding aac is denied)", "{policy:?}");
+        let a = prepare_audio(
+            Some(&t),
+            None,
+            &[],
+            req(
+                AudioCodecPolicy::ForceOpus,
+                AudioChannels::Source,
+                AudioOutput::Mp4,
+            ),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            a.handling, "aac passthrough (opus requested; decoding aac is denied)",
+            "{policy:?}"
+        );
         assert_eq!(audio_codec_string(&a.info), "mp4a.40.5", "{policy:?}");
         assert_eq!(a.samples.len(), t.samples.len());
-        let err = prepare_audio(Some(&t), None, &[], req(AudioCodecPolicy::Auto, AudioChannels::Mono, AudioOutput::Mp4))
-            .err()
-            .expect("a downmix needs the decode");
-        assert_eq!(format!("{err:#}"), denied("aac", "audio-channels=mono of a 2-channel track"), "{policy:?}");
+        let err = prepare_audio(
+            Some(&t),
+            None,
+            &[],
+            req(
+                AudioCodecPolicy::Auto,
+                AudioChannels::Mono,
+                AudioOutput::Mp4,
+            ),
+        )
+        .err()
+        .expect("a downmix needs the decode");
+        assert_eq!(
+            format!("{err:#}"),
+            denied("aac", "audio-channels=mono of a 2-channel track"),
+            "{policy:?}"
+        );
     }
 }
 
@@ -494,21 +886,62 @@ fn a_denied_aac_track_ignores_he_aac() {
 #[test]
 fn the_deny_list_covers_the_other_decoders() {
     let t = track("tones_51_ac3.mka");
-    let req = |d, policy, output| AudioRequest { decode_deny: deny(d), ..request(policy, AudioChannels::Source, output) };
+    let req = |d, policy, output| AudioRequest {
+        decode_deny: deny(d),
+        ..request(policy, AudioChannels::Source, output)
+    };
     // AC-3 passes into an MP4 as it is; Opus asked of it is not made.
-    let a = prepare_audio(Some(&t), None, &[], req("ac3", AudioCodecPolicy::ForceOpus, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
-    assert_eq!(a.handling, "ac3 passthrough (opus requested; decoding ac3 is denied)");
-    let err = prepare_audio(Some(&t), None, &[], req("ac3", AudioCodecPolicy::Flac, AudioOutput::FlacFile)).err().unwrap();
-    assert_eq!(format!("{err:#}"), denied("ac3", "a native FLAC file holds FLAC"));
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        req("ac3", AudioCodecPolicy::ForceOpus, AudioOutput::Mp4),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        a.handling,
+        "ac3 passthrough (opus requested; decoding ac3 is denied)"
+    );
+    let err = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        req("ac3", AudioCodecPolicy::Flac, AudioOutput::FlacFile),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        format!("{err:#}"),
+        denied("ac3", "a native FLAC file holds FLAC")
+    );
     // An MP3 source into HLS, whose CMAF has no MP3: refused rather than
     // dropped, since it needs decoding.
     let bytes = mp3_tone();
     let mp3 = demux_audio(Bytes::from(bytes)).unwrap().unwrap().track;
-    let err = prepare_audio(Some(&mp3), None, &[], req("mp3", AudioCodecPolicy::Auto, AudioOutput::Cmaf)).err().unwrap();
-    assert_eq!(format!("{err:#}"), denied("mp3", "opus output, which passing the mp3 track through cannot give"));
-    let kept = prepare_audio(Some(&mp3), None, &[], req("mp3", AudioCodecPolicy::Auto, AudioOutput::Mp4)).unwrap().unwrap();
+    let err = prepare_audio(
+        Some(&mp3),
+        None,
+        &[],
+        req("mp3", AudioCodecPolicy::Auto, AudioOutput::Cmaf),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        format!("{err:#}"),
+        denied(
+            "mp3",
+            "opus output, which passing the mp3 track through cannot give"
+        )
+    );
+    let kept = prepare_audio(
+        Some(&mp3),
+        None,
+        &[],
+        req("mp3", AudioCodecPolicy::Auto, AudioOutput::Mp4),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(kept.handling, "mp3 passthrough");
 }
 
@@ -520,13 +953,29 @@ fn the_deny_list_covers_the_other_decoders() {
 fn audio_only_jobs_under_a_denied_aac() {
     let src = fixture("tones_51_aac.m4a");
     let t = track("tones_51_aac.m4a");
-    let spec = |container, audio| OutputSpec { audio, audio_decode_deny: deny("aac"), ..OutputSpec::audio_only_in(container) };
-    let out = super::run_job_blocking(&src, &spec(Container::M4a, AudioCodecPolicy::Auto), None, Arc::new(NullSink))
-        .expect("the passthrough job");
+    let spec = |container, audio| OutputSpec {
+        audio,
+        audio_decode_deny: deny("aac"),
+        ..OutputSpec::audio_only_in(container)
+    };
+    let out = super::run_job_blocking(
+        &src,
+        &spec(Container::M4a, AudioCodecPolicy::Auto),
+        None,
+        Arc::new(NullSink),
+    )
+    .expect("the passthrough job");
     assert_eq!(out.audio_handling, "aac passthrough");
-    let [r] = &out.rungs[..] else { panic!("one output") };
-    let super::RungArtifact::File(bytes) = &r.artifact else { panic!("a file") };
-    let copy = demux_audio(Bytes::from(bytes.clone())).expect("demux").expect("an audio track").track;
+    let [r] = &out.rungs[..] else {
+        panic!("one output")
+    };
+    let super::RungArtifact::File(bytes) = &r.artifact else {
+        panic!("a file")
+    };
+    let copy = demux_audio(Bytes::from(bytes.clone()))
+        .expect("demux")
+        .expect("an audio track")
+        .track;
     assert_eq!((copy.codec.as_str(), copy.channels), ("aac", 6));
     assert_eq!(copy.asc, t.asc);
     // The source's packets, byte for byte (its edit may leave out whole
@@ -536,22 +985,46 @@ fn audio_only_jobs_under_a_denied_aac() {
     for p in &mut source {
         container::metadata::scrub::aac_frame(p);
     }
-    let first = source.iter().position(|p| *p == copy.samples[0]).expect("the first packet is the source's");
-    assert!(copy.samples.len() + 2 >= source.len(), "{} of {} packets", copy.samples.len(), source.len());
+    let first = source
+        .iter()
+        .position(|p| *p == copy.samples[0])
+        .expect("the first packet is the source's");
+    assert!(
+        copy.samples.len() + 2 >= source.len(),
+        "{} of {} packets",
+        copy.samples.len(),
+        source.len()
+    );
     for (i, p) in copy.samples.iter().enumerate() {
-        assert!(source.get(first + i) == Some(p), "packet {i} is not the source's");
+        assert!(
+            source.get(first + i) == Some(p),
+            "packet {i} is not the source's"
+        );
     }
 
     for (container, audio, why) in [
-        (Container::Flac, AudioCodecPolicy::Flac, "a native FLAC file holds FLAC"),
-        (Container::Mp3, AudioCodecPolicy::Auto, "an .mp3 file holds MP3"),
+        (
+            Container::Flac,
+            AudioCodecPolicy::Flac,
+            "a native FLAC file holds FLAC",
+        ),
+        (
+            Container::Mp3,
+            AudioCodecPolicy::Auto,
+            "an .mp3 file holds MP3",
+        ),
     ] {
-        let err = super::run_job_blocking(&src, &spec(container, audio), None, Arc::new(NullSink)).expect_err("refused");
+        let err = super::run_job_blocking(&src, &spec(container, audio), None, Arc::new(NullSink))
+            .expect_err("refused");
         assert!(format!("{err:#}").contains(&denied("aac", why)), "{err:#}");
     }
 
-    let allowed = OutputSpec { audio: AudioCodecPolicy::Flac, ..OutputSpec::audio_only_in(Container::Flac) };
-    let out = super::run_job_blocking(&src, &allowed, None, Arc::new(NullSink)).expect("the decode job");
+    let allowed = OutputSpec {
+        audio: AudioCodecPolicy::Flac,
+        ..OutputSpec::audio_only_in(Container::Flac)
+    };
+    let out =
+        super::run_job_blocking(&src, &allowed, None, Arc::new(NullSink)).expect("the decode job");
     assert_eq!(out.audio_handling, "aac → flac (6ch, 16-bit)");
 }
 
@@ -565,10 +1038,21 @@ fn opus_5_1_downmixes_to_stereo() {
             LEVEL * (2.0 * std::f32::consts::PI * TONES[c] * t as f32 / 48_000.0).sin()
         })
         .collect();
-    let mut enc =
-        codec::audio::create_encoder(codec::audio::AudioEncoderConfig::new(codec::audio::AudioCodec::Opus, 48_000, 6, 0))
-            .unwrap();
-    let mut packets = enc.encode(&codec::audio::AudioFrame { samples, sample_rate: 48_000, channels: 6, pts: 0 }).unwrap();
+    let mut enc = codec::audio::create_encoder(codec::audio::AudioEncoderConfig::new(
+        codec::audio::AudioCodec::Opus,
+        48_000,
+        6,
+        0,
+    ))
+    .unwrap();
+    let mut packets = enc
+        .encode(&codec::audio::AudioFrame {
+            samples,
+            sample_rate: 48_000,
+            channels: 6,
+            pts: 0,
+        })
+        .unwrap();
     packets.extend(enc.flush().unwrap());
     let t = AudioTrack {
         codec: "opus".into(),
@@ -580,41 +1064,103 @@ fn opus_5_1_downmixes_to_stereo() {
         timescale: 48_000,
         durations: vec![960; packets.len()],
     };
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Stereo, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Stereo,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "opus → opus (6ch → 2ch)");
     // The source's pre-skip is hidden (from its OpusHead), not encoded: what
     // is presented is every packet's samples after it (the encoder's last
     // packets cover the pre-skip and every input sample).
     let pre_skip = u64::from(enc.pre_skip());
-    assert_eq!(a.edit.duration, Some((frames as u64 + pre_skip).div_ceil(960) * 960 - pre_skip));
+    assert_eq!(
+        a.edit.duration,
+        Some((frames as u64 + pre_skip).div_ceil(960) * 960 - pre_skip)
+    );
     let (pcm, ch) = decode(&a);
     let front = 1.0 / (1.0 + std::f32::consts::SQRT_2);
-    close(amplitude(&pcm, ch, 0, FL, 48_000.0), LEVEL * front, "FL in L");
-    close(amplitude(&pcm, ch, 1, FR, 48_000.0), LEVEL * front, "FR in R");
+    close(
+        amplitude(&pcm, ch, 0, FL, 48_000.0),
+        LEVEL * front,
+        "FL in L",
+    );
+    close(
+        amplitude(&pcm, ch, 1, FR, 48_000.0),
+        LEVEL * front,
+        "FR in R",
+    );
     assert!(amplitude(&pcm, ch, 0, FR, 48_000.0) < 0.005);
 }
 
 #[test]
 fn ac3_5_1_to_mp3_is_a_stereo_downmix() {
     let t = track("tones_51_ac3.mka");
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::ForceMp3, AudioChannels::Source, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceMp3,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "ac3 → mp3 (6ch → 2ch)");
-    assert_eq!((a.info.codec.as_str(), a.info.sample_rate, a.info.channels, a.info.timescale), ("mp3", 48_000, 2, 48_000));
-    assert!(a.file_header.as_ref().is_some_and(|t| t.windows(8).any(|w| w == b"rivetmp3")), "the encoder's own tag frame");
-    assert_eq!(a.edit.media_time, 528 + 529, "the encoder's delay and the decoder's, hidden by the edit");
+    assert_eq!(
+        (
+            a.info.codec.as_str(),
+            a.info.sample_rate,
+            a.info.channels,
+            a.info.timescale
+        ),
+        ("mp3", 48_000, 2, 48_000)
+    );
+    assert!(
+        a.file_header
+            .as_ref()
+            .is_some_and(|t| t.windows(8).any(|w| w == b"rivetmp3")),
+        "the encoder's own tag frame"
+    );
+    assert_eq!(
+        a.edit.media_time,
+        528 + 529,
+        "the encoder's delay and the decoder's, hidden by the edit"
+    );
     let coded = a.samples.len() as u64 * 1152;
     let presented = a.edit.duration.unwrap();
-    assert!(coded >= presented + 1057 && coded < presented + 1057 + 2 * 1152, "{coded} coded, {presented} presented");
-    assert!(a.samples.iter().all(|(f, d)| *d == 1152 && f[..2] == [0xFF, 0xFB] && f[2] >> 4 == 9), "128k MPEG-1 L3 frames");
+    assert!(
+        coded >= presented + 1057 && coded < presented + 1057 + 2 * 1152,
+        "{coded} coded, {presented} presented"
+    );
+    assert!(
+        a.samples
+            .iter()
+            .all(|(f, d)| *d == 1152 && f[..2] == [0xFF, 0xFB] && f[2] >> 4 == 9),
+        "128k MPEG-1 L3 frames"
+    );
     assert_eq!(audio_codec_string(&a.info), "mp3");
     let (pcm, ch) = decode(&a);
     let front = 1.0 / (1.0 + std::f32::consts::SQRT_2);
-    close(amplitude(&pcm, ch, 0, FL, 48_000.0), LEVEL * front, "FL in L");
-    close(amplitude(&pcm, ch, 1, FR, 48_000.0), LEVEL * front, "FR in R");
+    close(
+        amplitude(&pcm, ch, 0, FL, 48_000.0),
+        LEVEL * front,
+        "FL in L",
+    );
+    close(
+        amplitude(&pcm, ch, 1, FR, 48_000.0),
+        LEVEL * front,
+        "FR in R",
+    );
     assert!(amplitude(&pcm, ch, 0, FR, 48_000.0) < 0.005);
     // The MP4 muxer takes the track.
     container::mux::Av1Mp4Muxer::check_audio(&a.info).expect("MP3 in MP4");
@@ -628,17 +1174,47 @@ fn an_mp3_source_passes_into_an_mp4_but_not_into_hls() {
     let src = demux_audio(Bytes::from(bytes)).unwrap().unwrap();
     assert!(!src.has_video);
     assert!(src.edit.is_none(), "bare frames, no tag frame");
-    let mp4 = prepare_audio(Some(&src.track), src.edit, &[], request(AudioCodecPolicy::Auto, AudioChannels::Source, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
-    assert_eq!((mp4.handling.as_str(), mp4.info.codec.as_str()), ("mp3 passthrough", "mp3"));
-    let hls = prepare_audio(Some(&src.track), src.edit, &[], request(AudioCodecPolicy::Auto, AudioChannels::Source, AudioOutput::Cmaf))
-        .unwrap()
-        .unwrap();
+    let mp4 = prepare_audio(
+        Some(&src.track),
+        src.edit,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        (mp4.handling.as_str(), mp4.info.codec.as_str()),
+        ("mp3 passthrough", "mp3")
+    );
+    let hls = prepare_audio(
+        Some(&src.track),
+        src.edit,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Source,
+            AudioOutput::Cmaf,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(hls.handling, "mp3 → opus (1ch)");
-    let file = prepare_audio(Some(&src.track), src.edit, &[], request(AudioCodecPolicy::Auto, AudioChannels::Source, AudioOutput::Mp3File))
-        .unwrap()
-        .unwrap();
+    let file = prepare_audio(
+        Some(&src.track),
+        src.edit,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Source,
+            AudioOutput::Mp3File,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(file.handling, "mp3 passthrough");
 }
 
@@ -647,30 +1223,59 @@ fn an_mp3_source_passes_into_an_mp4_but_not_into_hls() {
 /// many samples are audio.
 #[test]
 fn an_audio_only_job_writes_a_gapless_mp3() {
-    let out = super::run_job_blocking(&fixture("tones_51_ac3.mka"), &OutputSpec::audio_only(), None, Arc::new(NullSink))
-        .expect("the job");
+    let out = super::run_job_blocking(
+        &fixture("tones_51_ac3.mka"),
+        &OutputSpec::audio_only(),
+        None,
+        Arc::new(NullSink),
+    )
+    .expect("the job");
     assert_eq!(out.audio_codecs.as_deref(), Some("mp3"));
     assert_eq!(out.audio_handling, "ac3 → mp3 (6ch → 2ch)");
-    let [r] = &out.rungs[..] else { panic!("one output") };
-    let super::RungArtifact::File(bytes) = &r.artifact else { panic!("a file") };
-    assert_eq!(container::sniff_container(bytes), container::ContainerKind::Mp3);
+    let [r] = &out.rungs[..] else {
+        panic!("one output")
+    };
+    let super::RungArtifact::File(bytes) = &r.artifact else {
+        panic!("a file")
+    };
+    assert_eq!(
+        container::sniff_container(bytes),
+        container::ContainerKind::Mp3
+    );
     let (mp3, edit) = container::mp3::read_file(bytes).expect("the .mp3 reads back");
-    assert_eq!((mp3.codec.as_str(), mp3.sample_rate, mp3.channels), ("mp3", 48_000, 2));
+    assert_eq!(
+        (mp3.codec.as_str(), mp3.sample_rate, mp3.channels),
+        ("mp3", 48_000, 2)
+    );
     // Every sample the AC-3 decodes to is presented, after the 1057-sample delay.
     let t = track("tones_51_ac3.mka");
     let mut dec = codec::audio::create_decoder("ac3", None, 48_000, 6).unwrap();
     let mut decoded = 0u64;
     for p in &t.samples {
-        decoded += dec.decode(p, 0).unwrap().iter().map(|f| (f.samples.len() / 6) as u64).sum::<u64>();
+        decoded += dec
+            .decode(p, 0)
+            .unwrap()
+            .iter()
+            .map(|f| (f.samples.len() / 6) as u64)
+            .sum::<u64>();
     }
     let edit = edit.expect("the tag's gapless info");
-    assert_eq!((edit.media_start, edit.media_end), (1057, Some(1057 + decoded)));
-    assert_eq!(mp3.codec_private, b"rivetmp3", "the encoder's name, which no reader is asked to know");
+    assert_eq!(
+        (edit.media_start, edit.media_end),
+        (1057, Some(1057 + decoded))
+    );
+    assert_eq!(
+        mp3.codec_private, b"rivetmp3",
+        "the encoder's name, which no reader is asked to know"
+    );
     // That .mp3 through another audio-only job: a passthrough, which states
     // the same gapless information under the same encoder name.
-    let again = super::run_job_blocking(bytes, &OutputSpec::audio_only(), None, Arc::new(NullSink)).expect("the job");
+    let again = super::run_job_blocking(bytes, &OutputSpec::audio_only(), None, Arc::new(NullSink))
+        .expect("the job");
     assert_eq!(again.audio_handling, "mp3 passthrough");
-    let super::RungArtifact::File(copy) = &again.rungs[0].artifact else { panic!("a file") };
+    let super::RungArtifact::File(copy) = &again.rungs[0].artifact else {
+        panic!("a file")
+    };
     let (_, copy_edit) = container::mp3::read_file(copy).unwrap();
     assert_eq!(copy_edit, Some(edit));
 }
@@ -680,15 +1285,33 @@ fn an_audio_only_job_writes_a_gapless_mp3() {
 #[test]
 fn a_video_less_input_under_a_single_file_spec_writes_audio_only() {
     let spec = OutputSpec::single_file(vec![Rung::new(640, 360)]);
-    let out = super::run_job_blocking(&fixture("tones_51_ac3.mka"), &spec, None, Arc::new(NullSink)).expect("the job");
+    let out = super::run_job_blocking(
+        &fixture("tones_51_ac3.mka"),
+        &spec,
+        None,
+        Arc::new(NullSink),
+    )
+    .expect("the job");
     assert_eq!(out.rungs.len(), 1);
     assert_eq!(out.rungs[0].label, "audio");
     // Opus: an Ogg Opus file.
-    let opus = OutputSpec::single_file(vec![Rung::new(640, 360)]).with_audio(AudioCodecPolicy::ForceOpus);
-    let out = super::run_job_blocking(&fixture("tones_51_ac3.mka"), &opus, None, Arc::new(NullSink)).expect("the job");
+    let opus =
+        OutputSpec::single_file(vec![Rung::new(640, 360)]).with_audio(AudioCodecPolicy::ForceOpus);
+    let out = super::run_job_blocking(
+        &fixture("tones_51_ac3.mka"),
+        &opus,
+        None,
+        Arc::new(NullSink),
+    )
+    .expect("the job");
     assert_eq!(out.audio_handling, "ac3 → opus (6ch)");
-    let super::RungArtifact::File(bytes) = &out.rungs[0].artifact else { panic!("a file") };
-    assert_eq!(container::sniff_container(bytes), container::ContainerKind::Ogg);
+    let super::RungArtifact::File(bytes) = &out.rungs[0].artifact else {
+        panic!("a file")
+    };
+    assert_eq!(
+        container::sniff_container(bytes),
+        container::ContainerKind::Ogg
+    );
     assert_eq!(super::single_file_extension(bytes), "opus");
 }
 
@@ -697,23 +1320,66 @@ fn a_video_less_input_under_a_single_file_spec_writes_audio_only() {
 #[test]
 fn hls_signals_surround_channels_and_the_stereo_fallback() {
     let t = track("tones_51_ac3.mka");
-    let surround = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Source, AudioOutput::Cmaf))
-        .unwrap()
-        .unwrap();
-    assert_eq!(surround.handling, "ac3 passthrough", "AC-3 goes into CMAF as it is");
-    let opus = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::ForceOpus, AudioChannels::Source, AudioOutput::Cmaf))
-        .unwrap()
-        .unwrap();
-    let stereo = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::ForceOpus, AudioChannels::Stereo, AudioOutput::Cmaf))
-        .unwrap()
-        .unwrap();
+    let surround = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::Auto,
+            AudioChannels::Source,
+            AudioOutput::Cmaf,
+        ),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        surround.handling, "ac3 passthrough",
+        "AC-3 goes into CMAF as it is"
+    );
+    let opus = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceOpus,
+            AudioChannels::Source,
+            AudioOutput::Cmaf,
+        ),
+    )
+    .unwrap()
+    .unwrap();
+    let stereo = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceOpus,
+            AudioChannels::Stereo,
+            AudioOutput::Cmaf,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let main = build_audio_rendition(dir.path(), &opus, 4.0, "audio", "Surround").unwrap().unwrap();
-    let fallback = build_audio_rendition(dir.path(), &stereo, 4.0, "audio-stereo", "Stereo").unwrap().unwrap();
-    let ac3 = build_audio_rendition(dir.path(), &surround, 4.0, "audio-ac3", "AC-3").unwrap().unwrap();
+    let main = build_audio_rendition(dir.path(), &opus, 4.0, "audio", "Surround")
+        .unwrap()
+        .unwrap();
+    let fallback = build_audio_rendition(dir.path(), &stereo, 4.0, "audio-stereo", "Stereo")
+        .unwrap()
+        .unwrap();
+    let ac3 = build_audio_rendition(dir.path(), &surround, 4.0, "audio-ac3", "AC-3")
+        .unwrap()
+        .unwrap();
     assert_eq!((main.channels, main.codec_string.as_str()), (6, "opus"));
-    assert_eq!((fallback.channels, fallback.codec_string.as_str()), (2, "opus"));
-    assert_eq!((ac3.channels, ac3.codec_string.as_str()), (6, "ac-3"), "not mp4a.40.2, which it used to be called");
+    assert_eq!(
+        (fallback.channels, fallback.codec_string.as_str()),
+        (2, "opus")
+    );
+    assert_eq!(
+        (ac3.channels, ac3.codec_string.as_str()),
+        (6, "ac-3"),
+        "not mp4a.40.2, which it used to be called"
+    );
     let video = container::hls::VideoVariantSpec {
         width: 640,
         height: 360,
@@ -726,12 +1392,16 @@ fn hls_signals_surround_channels_and_the_stereo_fallback() {
         relative_dir: "video/360p".into(),
         manifest: main.manifest.clone(),
     };
-    let paths = container::hls::write_hls_package(dir.path(), &[video], &[fallback, main], &[], 4).unwrap();
+    let paths =
+        container::hls::write_hls_package(dir.path(), &[video], &[fallback, main], &[], 4).unwrap();
     assert_eq!(paths.audio_playlist_paths.len(), 2);
     let master = std::fs::read_to_string(paths.master_path).unwrap();
     assert!(master.contains(r#"NAME="Stereo",DEFAULT=YES,AUTOSELECT=YES,LANGUAGE="und",CHANNELS="2",URI="audio-stereo/audio.m3u8""#), "{master}");
     assert!(master.contains(r#"NAME="Surround",DEFAULT=NO,AUTOSELECT=YES,LANGUAGE="und",CHANNELS="6",URI="audio/audio.m3u8""#), "{master}");
-    assert!(master.contains(r#"CODECS="av01.0.04M.08,opus""#), "{master}");
+    assert!(
+        master.contains(r#"CODECS="av01.0.04M.08,opus""#),
+        "{master}"
+    );
 }
 
 #[test]
@@ -745,8 +1415,14 @@ fn codec_strings_follow_the_track() {
         codec_private: Vec::new(),
     };
     // AAC-LC 48 kHz stereo; HE-AAC explicitly signalled (AOT 5, 24 kHz core).
-    assert_eq!(audio_codec_string(&info("aac", vec![0x11, 0x90])), "mp4a.40.2");
-    assert_eq!(audio_codec_string(&info("aac", vec![0x2B, 0x11, 0x88, 0x00])), "mp4a.40.5");
+    assert_eq!(
+        audio_codec_string(&info("aac", vec![0x11, 0x90])),
+        "mp4a.40.2"
+    );
+    assert_eq!(
+        audio_codec_string(&info("aac", vec![0x2B, 0x11, 0x88, 0x00])),
+        "mp4a.40.5"
+    );
     assert_eq!(audio_codec_string(&info("ac3", Vec::new())), "ac-3");
     assert_eq!(audio_codec_string(&info("eac3", Vec::new())), "ec-3");
     assert_eq!(audio_codec_string(&info("opus", Vec::new())), "opus");
@@ -783,11 +1459,15 @@ struct ReadBack {
 }
 
 fn read_back(file: Bytes) -> ReadBack {
-    let src = demux_audio(file).expect("rivet demuxes its own output").expect("an audio track");
+    let src = demux_audio(file)
+        .expect("rivet demuxes its own output")
+        .expect("an audio track");
     let t = src.track;
     assert_eq!(t.codec, "aac");
     let asc = container::aac_asc::parse_aac_asc(&t.asc).expect("the esds carries an ASC");
-    let mut dec = codec::audio::create_decoder(&t.codec, Some(&t.asc), t.sample_rate, t.channels as u8).expect("decoder");
+    let mut dec =
+        codec::audio::create_decoder(&t.codec, Some(&t.asc), t.sample_rate, t.channels as u8)
+            .expect("decoder");
     let mut pcm = Vec::new();
     for packet in &t.samples {
         for f in dec.decode(packet, 0).expect("every access unit decodes") {
@@ -808,7 +1488,13 @@ fn read_back(file: Bytes) -> ReadBack {
         }
         pcm.drain(..(edit.media_start as usize * channels).min(pcm.len()));
     }
-    ReadBack { aot: asc.aot, channel_configuration: asc.channel_configuration, channels, layout, pcm }
+    ReadBack {
+        aot: asc.aot,
+        channel_configuration: asc.channel_configuration,
+        channels,
+        layout,
+        pcm,
+    }
 }
 
 /// An HLS audio rendition joined as a player fetches it: the init segment
@@ -821,7 +1507,10 @@ fn rendition_bytes(playlist: &std::path::Path) -> Bytes {
         .find_map(|l| l.strip_prefix("#EXT-X-MAP:URI=\"")?.split('"').next())
         .expect("an EXT-X-MAP");
     let mut joined = std::fs::read(dir.join(init)).unwrap();
-    for seg in text.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+    for seg in text
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+    {
         joined.extend(std::fs::read(dir.join(seg.trim())).unwrap());
     }
     Bytes::from(joined)
@@ -837,9 +1526,21 @@ fn mp4_with(a: &PreparedAudio, dir: &std::path::Path, name: &str) -> std::path::
     let header: u8 = (1 << 3) | (1 << 1);
     let mut first = vec![header, 5];
     first.extend_from_slice(&[0u8; 5]);
-    muxer.add_packet(EncodedPacket { data: Bytes::from(first), pts: 0, is_keyframe: true }).unwrap();
+    muxer
+        .add_packet(EncodedPacket {
+            data: Bytes::from(first),
+            pts: 0,
+            is_keyframe: true,
+        })
+        .unwrap();
     for i in 1..15u64 {
-        muxer.add_packet(EncodedPacket { data: Bytes::from(vec![0xAA; 64]), pts: i, is_keyframe: false }).unwrap();
+        muxer
+            .add_packet(EncodedPacket {
+                data: Bytes::from(vec![0xAA; 64]),
+                pts: i,
+                is_keyframe: false,
+            })
+            .unwrap();
     }
     for (sample, dur) in &a.samples {
         muxer.add_audio_sample(sample, 0, *dur).unwrap();
@@ -856,24 +1557,50 @@ fn mp4_with(a: &PreparedAudio, dir: &std::path::Path, name: &str) -> std::path::
 #[test]
 fn ac3_5_1_to_aac_keeps_every_channel_in_its_place() {
     let t = track("tones_51_ac3.mka");
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::ForceAac, AudioChannels::Source, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceAac,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "ac3 → aac (6ch)");
-    assert_eq!((a.info.codec.as_str(), a.info.channels, a.info.sample_rate), ("aac", 6, 48_000));
+    assert_eq!(
+        (a.info.codec.as_str(), a.info.channels, a.info.sample_rate),
+        ("aac", 6, 48_000)
+    );
     let asc = container::aac_asc::parse_aac_asc(&a.info.asc_bytes).expect("the ASC");
     assert_eq!((asc.aot, asc.channel_configuration), (2, 6));
     assert_eq!(audio_codec_string(&a.info), "mp4a.40.2");
-    assert_eq!(a.edit.media_time, 1024, "one frame of priming, hidden by the edit list");
+    assert_eq!(
+        a.edit.media_time, 1024,
+        "one frame of priming, hidden by the edit list"
+    );
     container::mux::Av1Mp4Muxer::check_audio(&a.info).expect("AAC in MP4");
     let dir = tempfile::tempdir().unwrap();
     let path = mp4_with(&a, dir.path(), "surround.mp4");
     let back = read_back(Bytes::from(std::fs::read(&path).unwrap()));
-    assert_eq!((back.aot, back.channel_configuration, back.channels), (2, 6, 6), "AAC-LC, channelConfiguration 6");
-    assert_eq!(back.layout, codec::audio::filter::ChannelLayout::named("5.1"));
+    assert_eq!(
+        (back.aot, back.channel_configuration, back.channels),
+        (2, 6, 6),
+        "AAC-LC, channelConfiguration 6"
+    );
+    assert_eq!(
+        back.layout,
+        codec::audio::filter::ChannelLayout::named("5.1")
+    );
     let pcm = back.pcm;
     let source_len = a.edit.duration.expect("an encode states its length") as usize;
-    assert_eq!(pcm.len() / 6, source_len, "the edit list presents exactly the source's samples");
+    assert_eq!(
+        pcm.len() / 6,
+        source_len,
+        "the edit list presents exactly the source's samples"
+    );
     // The source is 5.1(side); 5.1 carries its side pair in the back slots.
     for (c, &tone) in TONES.iter().enumerate() {
         let own = amplitude(&pcm, 6, c, tone, 48_000.0);
@@ -890,24 +1617,58 @@ fn ac3_5_1_to_aac_keeps_every_channel_in_its_place() {
 #[test]
 fn ac3_5_1_to_stereo_aac_mp4() {
     let t = track("tones_51_ac3.mka");
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::ForceAac, AudioChannels::Stereo, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceAac,
+            AudioChannels::Stereo,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "ac3 → aac (6ch → 2ch)");
-    assert_eq!(container::aac_asc::parse_aac_asc(&a.info.asc_bytes).unwrap().channel_configuration, 2);
+    assert_eq!(
+        container::aac_asc::parse_aac_asc(&a.info.asc_bytes)
+            .unwrap()
+            .channel_configuration,
+        2
+    );
     let dir = tempfile::tempdir().unwrap();
     let path = mp4_with(&a, dir.path(), "stereo.mp4");
     let back = read_back(Bytes::from(std::fs::read(&path).unwrap()));
-    assert_eq!((back.aot, back.channel_configuration, back.channels), (2, 2, 2));
-    assert_eq!(back.layout, codec::audio::filter::ChannelLayout::named("stereo"));
+    assert_eq!(
+        (back.aot, back.channel_configuration, back.channels),
+        (2, 2, 2)
+    );
+    assert_eq!(
+        back.layout,
+        codec::audio::filter::ChannelLayout::named("stereo")
+    );
     let pcm = back.pcm;
     // L = 0.414·FL + 0.293·FC + 0.293·SL, the LFE dropped, nothing across.
     let n = 1.0 + 2.0 * std::f32::consts::FRAC_1_SQRT_2;
     close(amplitude(&pcm, 2, 0, FL, 48_000.0), LEVEL / n, "FL in L");
-    close(amplitude(&pcm, 2, 0, FC, 48_000.0), LEVEL * std::f32::consts::FRAC_1_SQRT_2 / n, "FC in L");
-    close(amplitude(&pcm, 2, 1, SR, 48_000.0), LEVEL * std::f32::consts::FRAC_1_SQRT_2 / n, "SR in R");
-    assert!(amplitude(&pcm, 2, 0, FR, 48_000.0) < 0.01, "FR leaks into L");
-    assert!(amplitude(&pcm, 2, 0, LFE, 48_000.0) < 0.01, "the LFE is dropped");
+    close(
+        amplitude(&pcm, 2, 0, FC, 48_000.0),
+        LEVEL * std::f32::consts::FRAC_1_SQRT_2 / n,
+        "FC in L",
+    );
+    close(
+        amplitude(&pcm, 2, 1, SR, 48_000.0),
+        LEVEL * std::f32::consts::FRAC_1_SQRT_2 / n,
+        "SR in R",
+    );
+    assert!(
+        amplitude(&pcm, 2, 0, FR, 48_000.0) < 0.01,
+        "FR leaks into L"
+    );
+    assert!(
+        amplitude(&pcm, 2, 0, LFE, 48_000.0) < 0.01,
+        "the LFE is dropped"
+    );
 }
 
 /// HLS with AAC: each rendition's CHANNELS and `mp4a.40.2`, and its CMAF
@@ -915,17 +1676,45 @@ fn ac3_5_1_to_stereo_aac_mp4() {
 #[test]
 fn hls_aac_renditions_signal_their_channels() {
     let t = track("tones_51_ac3.mka");
-    let surround = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::ForceAac, AudioChannels::Source, AudioOutput::Cmaf))
-        .unwrap()
-        .unwrap();
-    let stereo = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::ForceAac, AudioChannels::Stereo, AudioOutput::Cmaf))
-        .unwrap()
-        .unwrap();
+    let surround = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceAac,
+            AudioChannels::Source,
+            AudioOutput::Cmaf,
+        ),
+    )
+    .unwrap()
+    .unwrap();
+    let stereo = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceAac,
+            AudioChannels::Stereo,
+            AudioOutput::Cmaf,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let main = build_audio_rendition(dir.path(), &surround, 4.0, "audio", "Surround").unwrap().unwrap();
-    let fallback = build_audio_rendition(dir.path(), &stereo, 4.0, "audio-stereo", "Stereo").unwrap().unwrap();
-    assert_eq!((main.channels, main.codec_string.as_str()), (6, "mp4a.40.2"));
-    assert_eq!((fallback.channels, fallback.codec_string.as_str()), (2, "mp4a.40.2"));
+    let main = build_audio_rendition(dir.path(), &surround, 4.0, "audio", "Surround")
+        .unwrap()
+        .unwrap();
+    let fallback = build_audio_rendition(dir.path(), &stereo, 4.0, "audio-stereo", "Stereo")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (main.channels, main.codec_string.as_str()),
+        (6, "mp4a.40.2")
+    );
+    assert_eq!(
+        (fallback.channels, fallback.codec_string.as_str()),
+        (2, "mp4a.40.2")
+    );
     let video = container::hls::VideoVariantSpec {
         width: 640,
         height: 360,
@@ -938,16 +1727,33 @@ fn hls_aac_renditions_signal_their_channels() {
         relative_dir: "video/360p".into(),
         manifest: main.manifest.clone(),
     };
-    let paths = container::hls::write_hls_package(dir.path(), &[video], &[fallback, main], &[], 4).unwrap();
+    let paths =
+        container::hls::write_hls_package(dir.path(), &[video], &[fallback, main], &[], 4).unwrap();
     let master = std::fs::read_to_string(&paths.master_path).unwrap();
-    assert!(master.contains(r#"CHANNELS="6",URI="audio/audio.m3u8""#), "{master}");
-    assert!(master.contains(r#"CHANNELS="2",URI="audio-stereo/audio.m3u8""#), "{master}");
-    assert!(master.contains(r#"CODECS="av01.0.04M.08,mp4a.40.2""#), "{master}");
+    assert!(
+        master.contains(r#"CHANNELS="6",URI="audio/audio.m3u8""#),
+        "{master}"
+    );
+    assert!(
+        master.contains(r#"CHANNELS="2",URI="audio-stereo/audio.m3u8""#),
+        "{master}"
+    );
+    assert!(
+        master.contains(r#"CODECS="av01.0.04M.08,mp4a.40.2""#),
+        "{master}"
+    );
     let back = read_back(rendition_bytes(&dir.path().join("audio/audio.m3u8")));
-    assert_eq!((back.aot, back.channel_configuration, back.channels), (2, 6, 6));
+    assert_eq!(
+        (back.aot, back.channel_configuration, back.channels),
+        (2, 6, 6)
+    );
     let pcm = back.pcm;
     for (c, &tone) in TONES.iter().enumerate() {
-        close(amplitude(&pcm, 6, c, tone, 48_000.0), LEVEL, &format!("HLS channel {c}'s own {tone} Hz"));
+        close(
+            amplitude(&pcm, 6, c, tone, 48_000.0),
+            LEVEL,
+            &format!("HLS channel {c}'s own {tone} Hz"),
+        );
     }
 }
 
@@ -955,20 +1761,36 @@ fn hls_aac_renditions_signal_their_channels() {
 fn aac_passes_aac_through_and_is_refused_where_it_cannot_go() {
     // An AAC source asked for AAC is a passthrough, not a re-encode.
     let t = track("tones_51_aac.m4a");
-    let a = prepare_audio(Some(&t), None, &[], request(AudioCodecPolicy::ForceAac, AudioChannels::Source, AudioOutput::Mp4))
-        .unwrap()
-        .unwrap();
+    let a = prepare_audio(
+        Some(&t),
+        None,
+        &[],
+        request(
+            AudioCodecPolicy::ForceAac,
+            AudioChannels::Source,
+            AudioOutput::Mp4,
+        ),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(a.handling, "aac passthrough");
     // A bare .mp3 cannot hold AAC.
-    let err = OutputSpec::audio_only().with_audio(AudioCodecPolicy::ForceAac).validate().unwrap_err();
+    let err = OutputSpec::audio_only()
+        .with_audio(AudioCodecPolicy::ForceAac)
+        .validate()
+        .unwrap_err();
     assert!(format!("{err:#}").contains("holds MP3 only"), "{err:#}");
-    let spec = OutputSpec::single_file(vec![Rung::new(640, 360)]).with_audio(AudioCodecPolicy::ForceAac);
+    let spec =
+        OutputSpec::single_file(vec![Rung::new(640, 360)]).with_audio(AudioCodecPolicy::ForceAac);
     assert_eq!(spec.audio_encode_codec(), codec::audio::AudioCodec::Aac);
     spec.validate().expect("AAC into a single-file MP4");
     let mut low = spec.clone();
     low.audio_bitrate = Some(1_000);
     let err = low.validate().unwrap_err();
-    assert!(format!("{err:#}").contains("outside AAC's range"), "{err:#}");
+    assert!(
+        format!("{err:#}").contains("outside AAC's range"),
+        "{err:#}"
+    );
 }
 
 /// A source audio track the output cannot have is never dropped silently:
@@ -989,19 +1811,52 @@ fn an_unusable_audio_track_refuses_the_job_unless_audio_is_dropped() {
         timescale: 8000,
         durations: Vec::new(),
     };
-    let wma = AudioTrack { codec: "wmav2".into(), samples: vec![vec![0; 64]], durations: vec![1024], ..named.clone() };
+    let wma = AudioTrack {
+        codec: "wmav2".into(),
+        samples: vec![vec![0; 64]],
+        durations: vec![1024],
+        ..named.clone()
+    };
     for t in [&named, &wma] {
         for output in [AudioOutput::Mp4, AudioOutput::Cmaf, AudioOutput::WebM] {
-            let run = prepare_audio(Some(t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Source, output));
+            let run = prepare_audio(
+                Some(t),
+                None,
+                &[],
+                request(AudioCodecPolicy::Auto, AudioChannels::Source, output),
+            );
             let err = format!("{:#}", run.err().expect("refused, not written video-only"));
-            assert!(err.contains(&t.codec) && err.contains("--audio drop"), "{output:?}: {err}");
+            assert!(
+                err.contains(&t.codec) && err.contains("--audio drop"),
+                "{output:?}: {err}"
+            );
         }
-        let dropped = prepare_audio(Some(t), None, &[], request(AudioCodecPolicy::Drop, AudioChannels::Source, AudioOutput::Mp4));
-        assert!(dropped.unwrap().is_none(), "audio=drop writes the video alone");
+        let dropped = prepare_audio(
+            Some(t),
+            None,
+            &[],
+            request(
+                AudioCodecPolicy::Drop,
+                AudioChannels::Source,
+                AudioOutput::Mp4,
+            ),
+        );
+        assert!(
+            dropped.unwrap().is_none(),
+            "audio=drop writes the video alone"
+        );
         for output in [AudioOutput::Mp3File, AudioOutput::OggFile] {
-            let run = prepare_audio(Some(t), None, &[], request(AudioCodecPolicy::Auto, AudioChannels::Source, output));
+            let run = prepare_audio(
+                Some(t),
+                None,
+                &[],
+                request(AudioCodecPolicy::Auto, AudioChannels::Source, output),
+            );
             let err = format!("{:#}", run.err().expect("refused"));
-            assert!(err.contains(&t.codec) && !err.contains("--audio drop"), "{output:?}: {err}");
+            assert!(
+                err.contains(&t.codec) && !err.contains("--audio drop"),
+                "{output:?}: {err}"
+            );
         }
     }
 }

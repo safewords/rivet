@@ -115,7 +115,11 @@ pub fn test_pattern(w: u32, h: u32, t: u64, chroma: ChromaFormat) -> Vec<u8> {
     for y in 0..ch {
         for x in 0..cw {
             let (lx, ly) = (x * sx, y * sy);
-            let (u, v) = if ly < hu / 2 { (bar_of(lx).1, bar_of(lx).2) } else { (128, 128) };
+            let (u, v) = if ly < hu / 2 {
+                (bar_of(lx).1, bar_of(lx).2)
+            } else {
+                (128, 128)
+            };
             cb[y * cw + x] = u;
             cr[y * cw + x] = v;
         }
@@ -177,7 +181,16 @@ pub struct H264 {
 
 impl H264 {
     pub fn new(width: u32, height: u32, fps: u32) -> Self {
-        Self { width, height, fps, chroma: ChromaFormat::Yuv420, qp: 20, bitrate: 0, gop: fps.max(1), sar: None }
+        Self {
+            width,
+            height,
+            fps,
+            chroma: ChromaFormat::Yuv420,
+            qp: 20,
+            bitrate: 0,
+            gop: fps.max(1),
+            sar: None,
+        }
     }
 }
 
@@ -193,7 +206,11 @@ pub struct Coded {
 /// Codes `pictures` (planar 8-bit, display order) as H.264 with this
 /// workspace's encoder: no B pictures, so decode order is display order.
 pub fn encode_h264(cfg: &H264, pictures: impl IntoIterator<Item = Vec<u8>>) -> Vec<Coded> {
-    let rate = if cfg.bitrate > 0 { RateControl::Bitrate { bps: cfg.bitrate } } else { RateControl::ConstantQp(cfg.qp) };
+    let rate = if cfg.bitrate > 0 {
+        RateControl::Bitrate { bps: cfg.bitrate }
+    } else {
+        RateControl::ConstantQp(cfg.qp)
+    };
     let mut enc = H264Encoder::new(Config {
         width: cfg.width,
         height: cfg.height,
@@ -212,7 +229,11 @@ pub fn encode_h264(cfg: &H264, pictures: impl IntoIterator<Item = Vec<u8>>) -> V
                 Some(sar) => rewrite_sps(&a.data, sar),
                 None => a.data,
             };
-            out.push(Coded { data, pts: a.display, key: a.keyframe });
+            out.push(Coded {
+                data,
+                pts: a.display,
+                key: a.keyframe,
+            });
         }
     };
     for p in pictures {
@@ -226,7 +247,12 @@ pub fn encode_h264(cfg: &H264, pictures: impl IntoIterator<Item = Vec<u8>>) -> V
 
 /// Codes `pictures` (planar 8-bit 4:2:0, display order) as HEVC with this
 /// workspace's encoder at a fixed quantiser, I and P pictures only.
-pub fn encode_h265(w: u32, h: u32, fps: u32, pictures: impl IntoIterator<Item = Vec<u8>>) -> Vec<Coded> {
+pub fn encode_h265(
+    w: u32,
+    h: u32,
+    fps: u32,
+    pictures: impl IntoIterator<Item = Vec<u8>>,
+) -> Vec<Coded> {
     let mut enc = h26x::encode::h265::H265Encoder::new(Config {
         width: w,
         height: h,
@@ -243,14 +269,26 @@ pub fn encode_h265(w: u32, h: u32, fps: u32, pictures: impl IntoIterator<Item = 
         out.extend(enc.push(&p).expect("encode a picture"));
     }
     out.extend(enc.flush().expect("flush the encoder"));
-    out.into_iter().map(|a| Coded { data: a.data, pts: a.display, key: a.keyframe }).collect()
+    out.into_iter()
+        .map(|a| Coded {
+            data: a.data,
+            pts: a.display,
+            key: a.keyframe,
+        })
+        .collect()
 }
 
 /// Codes `pictures` (planar 4:2:0) as MPEG-2 video with this workspace's
 /// encoder, I and P pictures only, `aspect_ratio_information` as given (1
 /// square, 2 4:3, 3 16:9). Returns one coded picture per frame; the first
 /// carries the sequence header.
-pub fn encode_mpeg2(w: u32, h: u32, fps: u32, aspect: u8, pictures: impl IntoIterator<Item = Vec<u8>>) -> Vec<Coded> {
+pub fn encode_mpeg2(
+    w: u32,
+    h: u32,
+    fps: u32,
+    aspect: u8,
+    pictures: impl IntoIterator<Item = Vec<u8>>,
+) -> Vec<Coded> {
     let mut cfg = mpeg2::EncoderConfig::new(w, h);
     cfg.frame_rate = (fps, 1);
     cfg.aspect_ratio_information = aspect;
@@ -269,13 +307,19 @@ pub fn encode_mpeg2(w: u32, h: u32, fps: u32, aspect: u8, pictures: impl IntoIte
     container::mpeg_es::split_mpeg2_pictures(&es)
         .into_iter()
         .enumerate()
-        .map(|(i, data)| Coded { data, pts: i as u64, key: types.get(i) == Some(&1) })
+        .map(|(i, data)| Coded {
+            data,
+            pts: i as u64,
+            key: types.get(i) == Some(&1),
+        })
         .collect()
 }
 
 /// The NAL units of an Annex B buffer (without start codes).
 pub fn nals(data: &[u8]) -> Vec<&[u8]> {
-    h26x::nal::annexb_nals(data).filter(|n| !n.is_empty()).collect()
+    h26x::nal::annexb_nals(data)
+        .filter(|n| !n.is_empty())
+        .collect()
 }
 
 /// `data` with every H.264 SPS replaced by [`sps_with_sar`]'s.
@@ -318,7 +362,11 @@ impl BitReader<'_> {
 
     fn se(&mut self) -> i32 {
         let k = self.ue();
-        if k % 2 == 1 { k.div_ceil(2) as i32 } else { -((k / 2) as i32) }
+        if k % 2 == 1 {
+            k.div_ceil(2) as i32
+        } else {
+            -((k / 2) as i32)
+        }
     }
 }
 
@@ -330,7 +378,7 @@ struct BitWriter {
 
 impl BitWriter {
     fn bit(&mut self, b: u32) {
-        if self.n % 8 == 0 {
+        if self.n.is_multiple_of(8) {
             self.out.push(0);
         }
         if b != 0 {
@@ -386,13 +434,22 @@ fn escape(rbsp: &[u8]) -> Vec<u8> {
 pub fn sps_with_sar(nal: &[u8], (sar_w, sar_h): (u16, u16)) -> Vec<u8> {
     let rbsp = unescape(&nal[1..]);
     // The stop bit: the last 1 in the payload.
-    let last = rbsp.iter().rposition(|&b| b != 0).expect("an SPS with a stop bit");
+    let last = rbsp
+        .iter()
+        .rposition(|&b| b != 0)
+        .expect("an SPS with a stop bit");
     let stop = last * 8 + 7 - rbsp[last].trailing_zeros() as usize;
-    let mut r = BitReader { data: &rbsp, pos: 0 };
+    let mut r = BitReader {
+        data: &rbsp,
+        pos: 0,
+    };
     let profile = r.bits(8);
     r.bits(16); // constraint flags, level_idc
     r.ue(); // seq_parameter_set_id
-    if matches!(profile, 100 | 110 | 122 | 244 | 44 | 83 | 86 | 118 | 128 | 138 | 139 | 134 | 135) {
+    if matches!(
+        profile,
+        100 | 110 | 122 | 244 | 44 | 83 | 86 | 118 | 128 | 138 | 139 | 134 | 135
+    ) {
         if r.ue() == 3 {
             r.bit(); // separate_colour_plane_flag
         }
@@ -433,7 +490,10 @@ pub fn sps_with_sar(nal: &[u8], (sar_w, sar_h): (u16, u16)) -> Vec<u8> {
     let had_vui = r.bit() == 1;
 
     let mut w = BitWriter::default();
-    let mut copy = BitReader { data: &rbsp, pos: 0 };
+    let mut copy = BitReader {
+        data: &rbsp,
+        pos: 0,
+    };
     for _ in 0..vui_flag_at {
         w.bit(copy.bit());
     }
@@ -443,7 +503,11 @@ pub fn sps_with_sar(nal: &[u8], (sar_w, sar_h): (u16, u16)) -> Vec<u8> {
     w.bits(u32::from(sar_w), 16);
     w.bits(u32::from(sar_h), 16);
     if had_vui {
-        assert_eq!(r.bit(), 0, "sps_with_sar: the SPS already signals an aspect ratio");
+        assert_eq!(
+            r.bit(),
+            0,
+            "sps_with_sar: the SPS already signals an aspect ratio"
+        );
         for _ in r.pos..stop {
             w.bit(r.bit());
         }
@@ -471,8 +535,12 @@ pub struct AudioTrack {
 /// 48 kHz, coded as AAC-LC by rivet's encoder at `bitrate`.
 pub fn aac_sine(freq: f64, seconds: f64, channels: u8, bitrate: u32) -> AudioTrack {
     const RATE: u32 = 48_000;
-    let mut enc =
-        AacEncoder::new(AacConfig { sample_rate: RATE, channels, bitrate }).expect("rivet's AAC encoder");
+    let mut enc = AacEncoder::new(AacConfig {
+        sample_rate: RATE,
+        channels,
+        bitrate,
+    })
+    .expect("rivet's AAC encoder");
     let total = (seconds * f64::from(RATE)) as usize;
     let mut packets = Vec::new();
     let mut at = 0;
@@ -480,18 +548,30 @@ pub fn aac_sine(freq: f64, seconds: f64, channels: u8, bitrate: u32) -> AudioTra
         let n = (total - at).min(1024);
         let mut samples = Vec::with_capacity(n * channels as usize);
         for i in at..at + n {
-            let v = (0.4 * (std::f64::consts::TAU * freq * i as f64 / f64::from(RATE)).sin()) as f32;
+            let v =
+                (0.4 * (std::f64::consts::TAU * freq * i as f64 / f64::from(RATE)).sin()) as f32;
             samples.extend(std::iter::repeat_n(v, channels as usize));
         }
         let pts = (at as i64 * 1_000_000) / i64::from(RATE);
-        packets.extend(enc.encode(&AudioFrame { samples, sample_rate: RATE, channels, pts }).expect("AAC encode"));
+        packets.extend(
+            enc.encode(&AudioFrame {
+                samples,
+                sample_rate: RATE,
+                channels,
+                pts,
+            })
+            .expect("AAC encode"),
+        );
         at += n;
     }
     packets.extend(enc.flush().expect("AAC flush"));
     let asc = enc.extra_data();
     AudioTrack {
         info: AudioInfo::aac_lc(RATE, u16::from(channels), asc),
-        frames: packets.into_iter().map(|p| (p.data, p.duration as u32)).collect(),
+        frames: packets
+            .into_iter()
+            .map(|p| (p.data, p.duration as u32))
+            .collect(),
     }
 }
 
@@ -505,23 +585,45 @@ pub fn tones_51_aac_m4a() -> Vec<u8> {
     const RATE: u32 = 48_000;
     const TONES: [f64; 6] = [400.0, 600.0, 800.0, 50.0, 1000.0, 1200.0];
     let total = RATE as usize / 2;
-    let mut enc = AacEncoder::new(AacConfig { sample_rate: RATE, channels: 6, bitrate: 192_000 }).expect("rivet's AAC encoder");
+    let mut enc = AacEncoder::new(AacConfig {
+        sample_rate: RATE,
+        channels: 6,
+        bitrate: 192_000,
+    })
+    .expect("rivet's AAC encoder");
     let mut packets = Vec::new();
     for start in (0..total).step_by(1024) {
         let n = (total - start).min(1024);
         let mut samples = Vec::with_capacity(n * 6);
         for i in start..start + n {
             for f in TONES {
-                samples.push((0.25 * (std::f64::consts::TAU * f * i as f64 / f64::from(RATE)).sin()) as f32);
+                samples.push(
+                    (0.25 * (std::f64::consts::TAU * f * i as f64 / f64::from(RATE)).sin()) as f32,
+                );
             }
         }
         let pts = (start as i64 * 1_000_000) / i64::from(RATE);
-        packets.extend(enc.encode(&AudioFrame { samples, sample_rate: RATE, channels: 6, pts }).expect("AAC encode"));
+        packets.extend(
+            enc.encode(&AudioFrame {
+                samples,
+                sample_rate: RATE,
+                channels: 6,
+                pts,
+            })
+            .expect("AAC encode"),
+        );
     }
     packets.extend(enc.flush().expect("AAC flush"));
     let info = AudioInfo::aac_lc(RATE, 6, enc.extra_data());
-    let samples: Vec<(Vec<u8>, u32)> = packets.into_iter().map(|p| (p.data, p.duration as u32)).collect();
-    let edit = container::edit::TrackEdit { delay: 0, media_time: u64::from(enc.pre_skip()), duration: Some(total as u64) };
+    let samples: Vec<(Vec<u8>, u32)> = packets
+        .into_iter()
+        .map(|p| (p.data, p.duration as u32))
+        .collect();
+    let edit = container::edit::TrackEdit {
+        delay: 0,
+        media_time: u64::from(enc.pre_skip()),
+        duration: Some(total as u64),
+    };
     container::mux::write_audio_mp4(&info, &samples, edit).expect("the audio-only MP4")
 }
 
@@ -531,7 +633,8 @@ pub fn tones_51_aac_m4a() -> Vec<u8> {
 pub fn dts_5_1(seconds: f64) -> AudioTrack {
     const RATE: u32 = 48_000;
     let layout = dts::Layout::Surround51Side;
-    let mut enc = dts::Encoder::new(dts::EncoderConfig::new(RATE, layout, 768_000)).expect("the DTS encoder");
+    let mut enc =
+        dts::Encoder::new(dts::EncoderConfig::new(RATE, layout, 768_000)).expect("the DTS encoder");
     let speakers = layout.speakers();
     let total = (seconds * f64::from(RATE)) as usize;
     let mut rng = Rng::new(7);
@@ -562,14 +665,24 @@ pub fn dts_5_1(seconds: f64) -> AudioTrack {
         asc_bytes: Vec::new(),
         codec_private: container::mux::ddts_body_from_sync(&core, false),
     };
-    AudioTrack { info, frames: frames.into_iter().map(|f| (f, samples)).collect() }
+    AudioTrack {
+        info,
+        frames: frames.into_iter().map(|f| (f, samples)).collect(),
+    }
 }
 
 // ---- files -----------------------------------------------------------------
 
 /// An MP4 with the H.264 `video` (rivet's muxer, `avc1`), the optional
 /// audio track, and, when `pasp` is given, a `pasp` box in the sample entry.
-pub fn mp4(video: &[Coded], w: u32, h: u32, fps: u32, audio: Option<&AudioTrack>, pasp: Option<(u32, u32)>) -> Vec<u8> {
+pub fn mp4(
+    video: &[Coded],
+    w: u32,
+    h: u32,
+    fps: u32,
+    audio: Option<&AudioTrack>,
+    pasp: Option<(u32, u32)>,
+) -> Vec<u8> {
     mp4_of(VideoCodec::H264, video, w, h, fps, audio, pasp)
 }
 
@@ -588,13 +701,18 @@ pub fn mp4_of(
         mux.with_audio(a.info.clone()).expect("the audio track");
         let mut pts = 0u64;
         for (data, dur) in &a.frames {
-            mux.add_audio_sample(data, pts, *dur).expect("an audio sample");
+            mux.add_audio_sample(data, pts, *dur)
+                .expect("an audio sample");
             pts += u64::from(*dur);
         }
     }
     for c in video {
-        mux.add_packet(EncodedPacket { data: Bytes::from(c.data.clone()), pts: c.pts, is_keyframe: c.key })
-            .expect("a video sample");
+        mux.add_packet(EncodedPacket {
+            data: Bytes::from(c.data.clone()),
+            pts: c.pts,
+            is_keyframe: c.key,
+        })
+        .expect("a video sample");
     }
     let file = mux.finalize().expect("finalize the MP4").to_vec();
     match pasp {
@@ -604,7 +722,11 @@ pub fn mp4_of(
             b.extend_from_slice(b"pasp");
             b.extend_from_slice(&hs.to_be_bytes());
             b.extend_from_slice(&vs.to_be_bytes());
-            let entry: &[u8; 4] = if codec == VideoCodec::H265 { b"hvc1" } else { b"avc1" };
+            let entry: &[u8; 4] = if codec == VideoCodec::H265 {
+                b"hvc1"
+            } else {
+                b"avc1"
+            };
             add_to_sample_entry(&file, entry, &b)
         }
         None => file,
@@ -622,7 +744,10 @@ pub fn add_to_sample_entry(file: &[u8], entry: &[u8; 4], child: &[u8]) -> Vec<u8
         while at + 8 <= data.len() {
             let size = u32::from_be_bytes(data[at..at + 4].try_into().unwrap()) as usize;
             let (size, head) = match size {
-                1 => (u64::from_be_bytes(data[at + 8..at + 16].try_into().unwrap()) as usize, 16),
+                1 => (
+                    u64::from_be_bytes(data[at + 8..at + 16].try_into().unwrap()) as usize,
+                    16,
+                ),
                 0 => (data.len() - at, 8),
                 s => (s, 8),
             };
@@ -661,15 +786,15 @@ pub fn add_to_sample_entry(file: &[u8], entry: &[u8; 4], child: &[u8]) -> Vec<u8
                 }
                 b"stco" if shift > 0 => {
                     let mut b = inner[..8].to_vec();
-                    for o in inner[8..].chunks_exact(4) {
-                        b.extend_from_slice(&(u32::from_be_bytes(o.try_into().unwrap()) + shift as u32).to_be_bytes());
+                    for o in inner[8..].as_chunks::<4>().0 {
+                        b.extend_from_slice(&(u32::from_be_bytes(*o) + shift as u32).to_be_bytes());
                     }
                     out.extend(wrap(kind, &b));
                 }
                 b"co64" if shift > 0 => {
                     let mut b = inner[..8].to_vec();
-                    for o in inner[8..].chunks_exact(8) {
-                        b.extend_from_slice(&(u64::from_be_bytes(o.try_into().unwrap()) + shift).to_be_bytes());
+                    for o in inner[8..].as_chunks::<8>().0 {
+                        b.extend_from_slice(&(u64::from_be_bytes(*o) + shift).to_be_bytes());
                     }
                     out.extend(wrap(kind, &b));
                 }
@@ -683,7 +808,12 @@ pub fn add_to_sample_entry(file: &[u8], entry: &[u8; 4], child: &[u8]) -> Vec<u8
     let moov_first = pos(b"moov") < pos(b"mdat");
     let shift = if moov_first { child.len() as u64 } else { 0 };
     let out = rebuild(file, entry, child, shift);
-    assert_eq!(out.len(), file.len() + child.len(), "add_to_sample_entry: exactly one `{}` entry", String::from_utf8_lossy(entry));
+    assert_eq!(
+        out.len(),
+        file.len() + child.len(),
+        "add_to_sample_entry: exactly one `{}` entry",
+        String::from_utf8_lossy(entry)
+    );
     out
 }
 
@@ -750,7 +880,14 @@ pub struct MkvAudio<'a> {
 /// and displayed at `display` (`DisplayWidth` / `DisplayHeight`, in pixels),
 /// and the optional audio track. One cluster per second; every block a
 /// `SimpleBlock`.
-pub fn mkv(video: &[Coded], w: u32, h: u32, fps: u32, display: Option<(u32, u32)>, audio: Option<MkvAudio>) -> Vec<u8> {
+pub fn mkv(
+    video: &[Coded],
+    w: u32,
+    h: u32,
+    fps: u32,
+    display: Option<(u32, u32)>,
+    audio: Option<MkvAudio>,
+) -> Vec<u8> {
     let header = [
         ebml_uint(0x4286, 1),
         ebml_uint(0x42F7, 1),
@@ -801,20 +938,35 @@ pub fn mkv(video: &[Coded], w: u32, h: u32, fps: u32, display: Option<(u32, u32)
         }
         entry.push(ebml(
             0xE1,
-            &[ebml_float(0xB5, f64::from(a.track.info.sample_rate)), ebml_uint(0x9F, u64::from(a.track.info.channels))]
-                .concat(),
+            &[
+                ebml_float(0xB5, f64::from(a.track.info.sample_rate)),
+                ebml_uint(0x9F, u64::from(a.track.info.channels)),
+            ]
+            .concat(),
         ));
         tracks.extend(ebml(0xAE, &entry.concat()));
     }
     // Blocks by time, in milliseconds: (ms, track, key, payload).
     let mut blocks: Vec<(u64, u8, bool, Vec<u8>)> = video
         .iter()
-        .map(|c| (c.pts * 1000 / u64::from(fps), 1, c.key, length_prefixed(&c.data)))
+        .map(|c| {
+            (
+                c.pts * 1000 / u64::from(fps),
+                1,
+                c.key,
+                length_prefixed(&c.data),
+            )
+        })
         .collect();
     if let Some(a) = &audio {
         let mut t = 0u64;
         for (data, dur) in &a.track.frames {
-            blocks.push((t * 1000 / u64::from(a.track.info.timescale), 2, true, data.clone()));
+            blocks.push((
+                t * 1000 / u64::from(a.track.info.timescale),
+                2,
+                true,
+                data.clone(),
+            ));
             t += u64::from(*dur);
         }
     }
@@ -845,7 +997,11 @@ fn crc32_mpeg(data: &[u8]) -> u32 {
     for &b in data {
         crc ^= u32::from(b) << 24;
         for _ in 0..8 {
-            crc = if crc & 0x8000_0000 != 0 { (crc << 1) ^ 0x04C1_1DB7 } else { crc << 1 };
+            crc = if crc & 0x8000_0000 != 0 {
+                (crc << 1) ^ 0x04C1_1DB7
+            } else {
+                crc << 1
+            };
         }
     }
     crc
@@ -980,7 +1136,14 @@ pub fn ts_av(video: &[Coded], stream_type: u8, fps: u32, audio: Option<TsAudio>)
     for c in video {
         let pts = 126_000 + c.pts * 90_000 / u64::from(fps);
         if c.key || out.is_empty() {
-            psi(&mut out, 0, &mut cc_pat, 0x00, 1, &[0, 1, 0xE0 | (PMT >> 8) as u8, PMT as u8]);
+            psi(
+                &mut out,
+                0,
+                &mut cc_pat,
+                0x00,
+                1,
+                &[0, 1, 0xE0 | (PMT >> 8) as u8, PMT as u8],
+            );
             let mut pmt = vec![
                 0xE0 | (VIDEO >> 8) as u8,
                 VIDEO as u8,
@@ -993,7 +1156,13 @@ pub fn ts_av(video: &[Coded], stream_type: u8, fps: u32, audio: Option<TsAudio>)
                 0x00, // ES_info_length 0
             ];
             if let Some(a) = &audio {
-                pmt.extend_from_slice(&[a.stream_type, 0xE0 | (AUDIO >> 8) as u8, AUDIO as u8, 0xF0, 0x00]);
+                pmt.extend_from_slice(&[
+                    a.stream_type,
+                    0xE0 | (AUDIO >> 8) as u8,
+                    AUDIO as u8,
+                    0xF0,
+                    0x00,
+                ]);
             }
             psi(&mut out, PMT, &mut cc_pmt, 0x02, 1, &pmt);
         }
@@ -1022,7 +1191,15 @@ pub fn ts_av(video: &[Coded], stream_type: u8, fps: u32, audio: Option<TsAudio>)
 /// `fps`, noise of `noise` (0 for none), H.264 at `bitrate` (0 for a fixed
 /// quantiser of 20), with `audio` seconds of a 440 Hz stereo AAC track when
 /// asked for. An MP4.
-pub fn clip(w: u32, h: u32, fps: u32, seconds: f64, noise: u8, bitrate: u32, audio: bool) -> Vec<u8> {
+pub fn clip(
+    w: u32,
+    h: u32,
+    fps: u32,
+    seconds: f64,
+    noise: u8,
+    bitrate: u32,
+    audio: bool,
+) -> Vec<u8> {
     let n = (seconds * f64::from(fps)).round() as u64;
     let mut rng = Rng::new(1);
     let pictures = (0..n).map(|t| {
@@ -1030,7 +1207,10 @@ pub fn clip(w: u32, h: u32, fps: u32, seconds: f64, noise: u8, bitrate: u32, aud
         add_noise(&mut p, noise, &mut rng);
         p
     });
-    let cfg = H264 { bitrate, ..H264::new(w, h, fps) };
+    let cfg = H264 {
+        bitrate,
+        ..H264::new(w, h, fps)
+    };
     let video = encode_h264(&cfg, pictures);
     let track = audio.then(|| aac_sine(440.0, seconds, 2, 128_000));
     mp4(&video, w, h, fps, track.as_ref(), None)

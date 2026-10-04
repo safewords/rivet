@@ -31,7 +31,10 @@ fn config(codec: VideoCodec, pixel_format: PixelFormat) -> EncoderConfig {
 }
 
 /// Drive one property sequence against the mock and index the result.
-fn run(apply: unsafe fn(*mut c_void, &EncoderConfig) -> anyhow::Result<String>, cfg: &EncoderConfig) -> Recorded {
+fn run(
+    apply: unsafe fn(*mut c_void, &EncoderConfig) -> anyhow::Result<String>,
+    cfg: &EncoderConfig,
+) -> Recorded {
     // The mock records into a thread-local; clear it via the pair helper's
     // reset by taking a fresh snapshot after the run.
     super::tests::RECORDED.with(|r| r.borrow_mut().clear());
@@ -43,7 +46,11 @@ fn run(apply: unsafe fn(*mut c_void, &EncoderConfig) -> anyhow::Result<String>, 
     for (name, v) in &list {
         map.insert(name.clone(), *v);
     }
-    Recorded { order: list.into_iter().map(|(n, _)| n).collect(), map, summary }
+    Recorded {
+        order: list.into_iter().map(|(n, _)| n).collect(),
+        map,
+        summary,
+    }
 }
 
 struct Recorded {
@@ -90,8 +97,16 @@ fn h264_levels_by_size_and_rate() {
     assert_eq!(h264_level_for(3840, 2160, 30.0).amf_value, 51);
     assert_eq!(h264_level_for(3840, 2160, 60.0).amf_value, 52);
     assert_eq!(h264_level_for(1280, 720, 30.0).amf_value, 31);
-    assert_eq!(h264_level_for(640, 480, 30.0).amf_value, 30, "the table starts at 3.0");
-    assert_eq!(h264_level_for(7680, 4320, 120.0).amf_value, 62, "8K120 tops out at 6.2");
+    assert_eq!(
+        h264_level_for(640, 480, 30.0).amf_value,
+        30,
+        "the table starts at 3.0"
+    );
+    assert_eq!(
+        h264_level_for(7680, 4320, 120.0).amf_value,
+        62,
+        "8K120 tops out at 6.2"
+    );
     // High profile's ceiling is 1.25 × the Main figure: 4.0 → 25 Mbit/s.
     assert_eq!(h264_level_for(1920, 1080, 30.0).max_bitrate, 25_000_000);
 }
@@ -105,8 +120,16 @@ fn h265_levels_by_size_and_rate() {
     assert_eq!(h265_level_for(3840, 2160, 30.0).amf_value, 150);
     assert_eq!(h265_level_for(3840, 2160, 60.0).amf_value, 153);
     assert_eq!(h265_level_for(1280, 720, 30.0).amf_value, 93);
-    assert_eq!(h265_level_for(7680, 4320, 120.0).amf_value, 186, "8K120 tops out at 6.2");
-    assert_eq!(h265_level_for(3840, 2160, 60.0).max_bitrate, 40_000_000, "5.1 Main tier");
+    assert_eq!(
+        h265_level_for(7680, 4320, 120.0).amf_value,
+        186,
+        "8K120 tops out at 6.2"
+    );
+    assert_eq!(
+        h265_level_for(3840, 2160, 60.0).max_bitrate,
+        40_000_000,
+        "5.1 Main tier"
+    );
 }
 
 /// The QVBR ceiling: 0.25 bit/pixel/s, floored at 2 Mbit/s, capped by the
@@ -114,10 +137,22 @@ fn h265_levels_by_size_and_rate() {
 #[test]
 fn qvbr_ceiling_scales_floors_and_caps() {
     assert_eq!(qvbr_bitrate_ceiling(1920, 1080, 30.0, None), 15_552_000);
-    assert_eq!(qvbr_bitrate_ceiling(320, 240, 15.0, None), 2_000_000, "floor");
+    assert_eq!(
+        qvbr_bitrate_ceiling(320, 240, 15.0, None),
+        2_000_000,
+        "floor"
+    );
     assert_eq!(qvbr_bitrate_ceiling(3840, 2160, 60.0, None), 124_416_000);
-    assert_eq!(qvbr_bitrate_ceiling(3840, 2160, 60.0, Some(40_000_000)), 40_000_000, "level cap");
-    assert_eq!(qvbr_bitrate_ceiling(1920, 1080, f64::NAN, None), 15_552_000, "bad fps → 30");
+    assert_eq!(
+        qvbr_bitrate_ceiling(3840, 2160, 60.0, Some(40_000_000)),
+        40_000_000,
+        "level cap"
+    );
+    assert_eq!(
+        qvbr_bitrate_ceiling(1920, 1080, f64::NAN, None),
+        15_552_000,
+        "bad fps → 30"
+    );
 }
 
 // ── Parameter folding ─────────────────────────────────────────
@@ -129,16 +164,28 @@ fn qvbr_ceiling_scales_floors_and_caps() {
 fn h26x_quant_from_target_and_tier() {
     let q = h26x_quant(&config(VideoCodec::H264, PixelFormat::Yuv420p));
     assert_eq!(q.rc, AmfRateControl::QualityVbr);
-    assert_eq!((q.qp_i, q.qp_p, q.qvbr_level), (26, 28, 26), "QP 26 sits at level 52 - 26");
+    assert_eq!(
+        (q.qp_i, q.qp_p, q.qvbr_level),
+        (26, 28, 26),
+        "QP 26 sits at level 52 - 26"
+    );
     assert_eq!(q.preset, AmfQualityPreset::Quality);
 
     let mut cfg = config(VideoCodec::H264, PixelFormat::Yuv420p);
     cfg.target = QualityTarget::Low;
     let q = h26x_quant(&cfg);
-    assert_eq!((q.qp_i, q.qvbr_level), (32, 20), "a coarser QP is a LOWER level");
+    assert_eq!(
+        (q.qp_i, q.qvbr_level),
+        (32, 20),
+        "a coarser QP is a LOWER level"
+    );
     cfg.target = QualityTarget::High;
     let q = h26x_quant(&cfg);
-    assert_eq!((q.qp_i, q.qvbr_level), (22, 30), "a finer QP is a HIGHER level");
+    assert_eq!(
+        (q.qp_i, q.qvbr_level),
+        (22, 30),
+        "a finer QP is a HIGHER level"
+    );
 
     let mut cfg = config(VideoCodec::H265, PixelFormat::Yuv420p);
     cfg.target = QualityTarget::VisuallyLossless;
@@ -160,15 +207,27 @@ fn h26x_quant_legacy_crf_and_constant_qp() {
     cfg.quality = 20;
     let q = h26x_quant(&cfg);
     assert_eq!((q.qp_i, q.qp_p, q.qvbr_level), (20, 22, 32));
-    assert_eq!(q.rc, AmfRateControl::QualityVbr, "a CRF alone does not change the mode");
+    assert_eq!(
+        q.rc,
+        AmfRateControl::QualityVbr,
+        "a CRF alone does not change the mode"
+    );
 
     cfg.quality = 0;
     let q = h26x_quant(&cfg);
-    assert_eq!((q.qp_i, q.qp_p, q.qvbr_level), (0, 2, 51), "QVBR level is 1-51, QP may be 0");
+    assert_eq!(
+        (q.qp_i, q.qp_p, q.qvbr_level),
+        (0, 2, 51),
+        "QVBR level is 1-51, QP may be 0"
+    );
 
     cfg.quality = 80;
     let q = h26x_quant(&cfg);
-    assert_eq!((q.qp_i, q.qvbr_level), (51, 1), "clamped to the codec's scale");
+    assert_eq!(
+        (q.qp_i, q.qvbr_level),
+        (51, 1),
+        "clamped to the codec's scale"
+    );
 
     cfg.quality = AUTO_FROM_TARGET;
     cfg.constant_qp = true;
@@ -181,10 +240,18 @@ fn h26x_quant_applies_overrides() {
     let mut cfg = config(VideoCodec::H265, PixelFormat::Yuv420p);
     cfg.overrides.quality_delta = 4;
     let q = h26x_quant(&cfg);
-    assert_eq!((q.qp_i, q.qp_p, q.qvbr_level), (30, 32, 22), "softer: QP up, level down");
+    assert_eq!(
+        (q.qp_i, q.qp_p, q.qvbr_level),
+        (30, 32, 22),
+        "softer: QP up, level down"
+    );
     cfg.overrides.quality_delta = -40;
     let q = h26x_quant(&cfg);
-    assert_eq!((q.qp_i, q.qp_p, q.qvbr_level), (0, 0, 51), "clamped, QVBR ceiling is 51");
+    assert_eq!(
+        (q.qp_i, q.qp_p, q.qvbr_level),
+        (0, 0, 51),
+        "clamped, QVBR ceiling is 51"
+    );
     cfg.overrides.quality_delta = 0;
     cfg.overrides.speed_tier = Some(SpeedTier::Archive);
     assert_eq!(h26x_quant(&cfg).preset, AmfQualityPreset::HighQuality);
@@ -198,7 +265,10 @@ fn h26x_quant_main10_is_constant_qp() {
     let q = h26x_quant(&cfg);
     assert_eq!(q.rc, AmfRateControl::Cqp);
     assert_eq!((q.qp_i, q.qp_p), (26, 28), "the QP still tracks the target");
-    assert_eq!(h26x_quant(&config(VideoCodec::H265, PixelFormat::Yuv420p)).rc, AmfRateControl::QualityVbr);
+    assert_eq!(
+        h26x_quant(&config(VideoCodec::H265, PixelFormat::Yuv420p)).rc,
+        AmfRateControl::QualityVbr
+    );
 }
 
 #[test]
@@ -227,9 +297,18 @@ fn effective_keyframe_interval_defaults_zero_to_240() {
 #[test]
 fn quality_presets_are_numbered_per_codec() {
     use AmfQualityPreset::*;
-    assert_eq!([HighQuality, Quality, Balanced, Speed].map(avc_quality_preset), [3, 2, 0, 1]);
-    assert_eq!([HighQuality, Quality, Balanced, Speed].map(hevc_quality_preset), [15, 0, 5, 10]);
-    assert_eq!([HighQuality, Quality, Balanced, Speed].map(av1_quality_preset), [0, 30, 70, 100]);
+    assert_eq!(
+        [HighQuality, Quality, Balanced, Speed].map(avc_quality_preset),
+        [3, 2, 0, 1]
+    );
+    assert_eq!(
+        [HighQuality, Quality, Balanced, Speed].map(hevc_quality_preset),
+        [15, 0, 5, 10]
+    );
+    assert_eq!(
+        [HighQuality, Quality, Balanced, Speed].map(av1_quality_preset),
+        [0, 30, 70, 100]
+    );
 }
 
 // ── Recorded property sequences ───────────────────────────────
@@ -241,17 +320,32 @@ fn avc_property_sequence_matches_header() {
     let cfg = config(VideoCodec::H264, PixelFormat::Yuv420p);
     let r = run(apply_avc_properties, &cfg);
 
-    assert_eq!(r.order[0], "Usage", "USAGE first: it fully configures the parameter set");
+    assert_eq!(
+        r.order[0], "Usage",
+        "USAGE first: it fully configures the parameter set"
+    );
     assert_eq!(r.int("Usage"), 0, "AMF_VIDEO_ENCODER_USAGE_TRANSCODING");
     assert_eq!(r.int("Profile"), 100, "AMF_VIDEO_ENCODER_PROFILE_HIGH");
     assert_eq!(r.int("ProfileLevel"), 40, "AMF_H264_LEVEL__4");
-    assert_eq!(r.int("QualityPreset"), 2, "AMF_VIDEO_ENCODER_QUALITY_PRESET_QUALITY");
+    assert_eq!(
+        r.int("QualityPreset"),
+        2,
+        "AMF_VIDEO_ENCODER_QUALITY_PRESET_QUALITY"
+    );
     assert_eq!(r.int("CABACEnable"), 1, "AMF_VIDEO_ENCODER_CABAC");
     assert_eq!(r.rate("FrameRate"), (30, 1));
     assert_eq!(r.int("BPicturesPattern"), 0, "no B frames");
     assert_eq!(r.int("IDRPeriod"), 120);
-    assert_eq!(r.int("OutputMode"), 0, "AMF_VIDEO_ENCODER_OUTPUT_MODE_FRAME");
-    assert_eq!(r.int("RateControlMethod"), 4, "AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_QUALITY_VBR");
+    assert_eq!(
+        r.int("OutputMode"),
+        0,
+        "AMF_VIDEO_ENCODER_OUTPUT_MODE_FRAME"
+    );
+    assert_eq!(
+        r.int("RateControlMethod"),
+        4,
+        "AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_QUALITY_VBR"
+    );
     assert_eq!(r.int("QvbrQualityLevel"), 26);
     assert_eq!(r.int("TargetBitrate"), 15_552_000);
     assert_eq!(r.int("PeakBitrate"), 15_552_000);
@@ -259,15 +353,26 @@ fn avc_property_sequence_matches_header() {
     assert!(r.bool_("EnforceHRD"), "the ceiling is enforced");
     assert!(!r.bool_("FillerDataEnable"));
     assert_eq!((r.int("QPI"), r.int("QPP"), r.int("QPB")), (26, 28, 28));
-    assert_eq!(r.int("ColorBitDepth"), 8, "AMF_COLOR_BIT_DEPTH_8 is the literal 8");
+    assert_eq!(
+        r.int("ColorBitDepth"),
+        8,
+        "AMF_COLOR_BIT_DEPTH_8 is the literal 8"
+    );
     assert!(!r.bool_("FullRangeColor"));
-    assert_eq!(r.int("InColorProfile"), 1, "AMF_VIDEO_CONVERTER_COLOR_PROFILE_709");
+    assert_eq!(
+        r.int("InColorProfile"),
+        1,
+        "AMF_VIDEO_CONVERTER_COLOR_PROFILE_709"
+    );
     assert_eq!(r.int("OutColorProfile"), 1);
     assert_eq!(r.int("InColorTransferChar"), 1);
     assert_eq!(r.int("OutColorTransferChar"), 1);
     assert_eq!(r.int("InColorPrimaries"), 1);
     assert_eq!(r.int("OutColorPrimaries"), 1);
-    assert!(!r.has("HevcUsage") && !r.has("Av1Usage"), "no other codec's names");
+    assert!(
+        !r.has("HevcUsage") && !r.has("Av1Usage"),
+        "no other codec's names"
+    );
     assert!(r.summary.contains("level=40"), "{}", r.summary);
 }
 
@@ -279,7 +384,11 @@ fn avc_cqp_sets_no_bitrate_constraints() {
     let mut cfg = config(VideoCodec::H264, PixelFormat::Yuv420p);
     cfg.target = QualityTarget::VisuallyLossless;
     let r = run(apply_avc_properties, &cfg);
-    assert_eq!(r.int("RateControlMethod"), 0, "AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_CONSTANT_QP");
+    assert_eq!(
+        r.int("RateControlMethod"),
+        0,
+        "AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_CONSTANT_QP"
+    );
     assert!(!r.has("QvbrQualityLevel"));
     assert!(!r.has("TargetBitrate") && !r.has("PeakBitrate") && !r.has("VBVBufferSize"));
     assert!(!r.has("EnforceHRD"));
@@ -305,17 +414,33 @@ fn hevc_property_sequence_matches_header() {
     let r = run(apply_hevc_properties, &cfg);
 
     assert_eq!(r.order[0], "HevcUsage");
-    assert_eq!(r.int("HevcUsage"), 0, "AMF_VIDEO_ENCODER_HEVC_USAGE_TRANSCODING");
-    assert_eq!(r.int("HevcProfile"), 1, "AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN");
+    assert_eq!(
+        r.int("HevcUsage"),
+        0,
+        "AMF_VIDEO_ENCODER_HEVC_USAGE_TRANSCODING"
+    );
+    assert_eq!(
+        r.int("HevcProfile"),
+        1,
+        "AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN"
+    );
     assert_eq!(r.int("HevcTier"), 0, "AMF_VIDEO_ENCODER_HEVC_TIER_MAIN");
     assert_eq!(r.int("HevcProfileLevel"), 120, "AMF_LEVEL_4");
-    assert_eq!(r.int("HevcQualityPreset"), 0, "AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET_QUALITY");
+    assert_eq!(
+        r.int("HevcQualityPreset"),
+        0,
+        "AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET_QUALITY"
+    );
     assert_eq!(r.rate("HevcFrameRate"), (30, 1));
     assert_eq!(r.int("HevcGOPSize"), 120);
     assert_eq!(r.int("HevcGOPSPerIDR"), 1);
     assert_eq!(r.int("HevcHeaderInsertionMode"), 2, "IDR_ALIGNED");
     assert_eq!(r.int("HevcOutputMode"), 0);
-    assert_eq!(r.int("HevcRateControlMethod"), 4, "AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_QUALITY_VBR");
+    assert_eq!(
+        r.int("HevcRateControlMethod"),
+        4,
+        "AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_QUALITY_VBR"
+    );
     assert_eq!(r.int("HevcQvbrQualityLevel"), 26);
     // Level 4.0 Main tier caps the ceiling at 12 Mbit/s.
     assert_eq!(r.int("HevcTargetBitrate"), 12_000_000);
@@ -354,10 +479,18 @@ fn hevc_main10_hdr_property_sequence() {
         content_light_level: None,
     };
     let r = run(apply_hevc_properties, &cfg);
-    assert_eq!(r.int("HevcProfile"), 2, "AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN_10");
+    assert_eq!(
+        r.int("HevcProfile"),
+        2,
+        "AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN_10"
+    );
     assert_eq!(r.int("HevcColorBitDepth"), 10);
     assert_eq!(r.int("HevcProfileLevel"), 153, "AMF_LEVEL_5_1");
-    assert_eq!(r.int("HevcRateControlMethod"), 0, "Main 10 is CQP (measured)");
+    assert_eq!(
+        r.int("HevcRateControlMethod"),
+        0,
+        "Main 10 is CQP (measured)"
+    );
     assert!(!r.has("HevcPeakBitrate") && !r.has("HevcQvbrQualityLevel"));
     assert_eq!((r.int("HevcQP_I"), r.int("HevcQP_P")), (26, 28));
     assert_eq!(r.int("HevcNominalRange"), 1, "FULL");
@@ -377,9 +510,17 @@ fn av1_property_sequence_matches_header() {
     assert_eq!(r.int("Av1Usage"), 0);
     assert_eq!(r.int("Av1RateControlMethod"), 4, "QUALITY_VBR is 4, not 5");
     assert_eq!(r.int("Av1QualityPreset"), 30, "QUALITY is 30");
-    assert_eq!(r.int("Av1QIndex_Intra"), 120, "the tuning table's Standard q-index");
+    assert_eq!(
+        r.int("Av1QIndex_Intra"),
+        120,
+        "the tuning table's Standard q-index"
+    );
     assert_eq!(r.int("Av1QIndex_Inter"), 128);
-    assert_eq!(r.int("Av1QvbrQualityLevel"), 22, "1-51 scale, higher = better: 52 - q-index / 4");
+    assert_eq!(
+        r.int("Av1QvbrQualityLevel"),
+        22,
+        "1-51 scale, higher = better: 52 - q-index / 4"
+    );
     assert_eq!(r.rate("Av1FrameRate"), (30, 1));
     assert_eq!(r.int("Av1GOPSize"), 120);
     assert_eq!(r.int("Av1AQMode"), 1, "CAQ");
@@ -403,7 +544,11 @@ fn av1_q_index_floor_is_one() {
     cfg.quality = 0;
     let r = run(apply_av1_properties, &cfg);
     assert_eq!(r.int("Av1QIndex_Intra"), 1);
-    assert_eq!(r.int("Av1QvbrQualityLevel"), 51, "best q-index is the best level");
+    assert_eq!(
+        r.int("Av1QvbrQualityLevel"),
+        51,
+        "best q-index is the best level"
+    );
 }
 
 // ── End to end on this machine ────────────────────────────────
@@ -467,7 +612,14 @@ fn h26x_roundtrip_on_this_machine(codec: VideoCodec) {
         for c in data[(w * h) as usize..].iter_mut() {
             *c = 128;
         }
-        let frame = VideoFrame::new(bytes::Bytes::from(data), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, i);
+        let frame = VideoFrame::new(
+            bytes::Bytes::from(data),
+            w,
+            h,
+            PixelFormat::Yuv420p,
+            ColorSpace::Bt709,
+            i,
+        );
         if i == forced_at {
             enc.force_keyframe_next().unwrap();
         }
@@ -478,7 +630,11 @@ fn h26x_roundtrip_on_this_machine(codec: VideoCodec) {
     while let Some(p) = enc.receive_packet().unwrap() {
         packets.push(p);
     }
-    assert_eq!(packets.len(), n as usize, "one access unit per frame, none lost at the flush");
+    assert_eq!(
+        packets.len(),
+        n as usize,
+        "one access unit per frame, none lost at the flush"
+    );
     let (sps, pps, idr_types, p_types): (u8, u8, &[u8], &[u8]) = if hevc {
         (33, 34, &[19, 20], &[0, 1])
     } else {
@@ -491,18 +647,29 @@ fn h26x_roundtrip_on_this_machine(codec: VideoCodec) {
         let expect_idr = i == 0 || i as u64 == forced_at || (i as u64).is_multiple_of(12);
         let has_idr = types.iter().any(|t| idr_types.contains(t));
         let has_ps = types.contains(&sps) && types.contains(&pps);
-        assert_eq!(p.is_keyframe, expect_idr, "packet {i} keyframe tag; NALs {types:?}");
+        assert_eq!(
+            p.is_keyframe, expect_idr,
+            "packet {i} keyframe tag; NALs {types:?}"
+        );
         assert_eq!(has_idr, expect_idr, "packet {i} IDR slice; NALs {types:?}");
         if expect_idr {
             assert!(has_ps, "packet {i} carries SPS+PPS in band; NALs {types:?}");
             if hevc {
-                assert!(types.contains(&32), "packet {i} carries the VPS; NALs {types:?}");
+                assert!(
+                    types.contains(&32),
+                    "packet {i} carries the VPS; NALs {types:?}"
+                );
             }
         } else {
-            assert!(types.iter().any(|t| p_types.contains(t)), "packet {i} is a P slice; NALs {types:?}");
+            assert!(
+                types.iter().any(|t| p_types.contains(t)),
+                "packet {i} is a P slice; NALs {types:?}"
+            );
         }
     }
-    eprintln!("{codec:?} roundtrip on this machine: {n} frames, IDR at 0/{forced_at}/12/24 with in-band parameter sets");
+    eprintln!(
+        "{codec:?} roundtrip on this machine: {n} frames, IDR at 0/{forced_at}/12/24 with in-band parameter sets"
+    );
 }
 
 #[test]
@@ -533,18 +700,30 @@ fn cbr(mut cfg: EncoderConfig, bps: u32, buffer_ms: Option<u32>) -> EncoderConfi
 /// set: CBR does not read it.
 #[test]
 fn avc_cbr_property_sequence() {
-    let cfg = cbr(config(VideoCodec::H264, PixelFormat::Yuv420p), 4_000_000, None);
+    let cfg = cbr(
+        config(VideoCodec::H264, PixelFormat::Yuv420p),
+        4_000_000,
+        None,
+    );
     let r = run(apply_avc_properties, &cfg);
     assert_eq!(AVC_RC_CBR, 1);
     assert_eq!(r.int("RateControlMethod"), AVC_RC_CBR);
     assert_eq!(r.int("TargetBitrate"), 4_000_000);
     assert_eq!(r.int("PeakBitrate"), 4_000_000);
     assert_eq!(r.int("VBVBufferSize"), 4_000_000, "one second of the rate");
-    assert_eq!(r.int("InitialVBVBufferFullness"), 48, "three quarters of 64");
+    assert_eq!(
+        r.int("InitialVBVBufferFullness"),
+        48,
+        "three quarters of 64"
+    );
     assert!(r.bool_("EnforceHRD"));
     assert!(r.bool_("FillerDataEnable"), "CBR pads to hold the rate");
     assert!(!r.has("QvbrQualityLevel"));
-    assert!(r.summary.contains("Cbr(4000000 bps, 1000 ms)"), "{}", r.summary);
+    assert!(
+        r.summary.contains("Cbr(4000000 bps, 1000 ms)"),
+        "{}",
+        r.summary
+    );
 }
 
 /// H.265 at a constant rate: the CBR method (3 in the HEVC order), and a
@@ -571,7 +750,11 @@ fn hevc_cbr_property_sequence() {
 /// fullness, HRD and filler.
 #[test]
 fn av1_cbr_property_sequence() {
-    let cfg = cbr(config(VideoCodec::Av1, PixelFormat::Yuv420p), 2_000_000, None);
+    let cfg = cbr(
+        config(VideoCodec::Av1, PixelFormat::Yuv420p),
+        2_000_000,
+        None,
+    );
     let r = run(apply_av1_properties, &cfg);
     assert_eq!(r.int("Av1RateControlMethod"), 3);
     assert_eq!(r.int("Av1TargetBitrate"), 2_000_000);
@@ -587,11 +770,17 @@ fn av1_cbr_property_sequence() {
 /// initial fullness, filler off under QVBR.
 #[test]
 fn quality_rungs_are_untouched_by_cbr() {
-    let r = run(apply_avc_properties, &config(VideoCodec::H264, PixelFormat::Yuv420p));
+    let r = run(
+        apply_avc_properties,
+        &config(VideoCodec::H264, PixelFormat::Yuv420p),
+    );
     assert_eq!(r.int("RateControlMethod"), AVC_RC_QUALITY_VBR);
     assert!(!r.bool_("FillerDataEnable"));
     assert!(!r.has("InitialVBVBufferFullness"));
-    let r = run(apply_av1_properties, &config(VideoCodec::Av1, PixelFormat::Yuv420p));
+    let r = run(
+        apply_av1_properties,
+        &config(VideoCodec::Av1, PixelFormat::Yuv420p),
+    );
     assert!(!r.has("Av1InitialVBVBufferFullness"));
 }
 
@@ -601,10 +790,29 @@ fn quality_rungs_are_untouched_by_cbr() {
 /// Mb/s); at 15 Mb/s it is 4.1 (20 Mb/s).
 #[test]
 fn a_constant_rate_raises_the_level_to_admit_it() {
-    assert_eq!(h264_level_for_rate(1280, 720, 30.0, 0), h264_level_for(1280, 720, 30.0));
-    assert_eq!(h264_level_for_rate(1280, 720, 30.0, 17_500_000).amf_value, 31);
-    assert_eq!(h264_level_for_rate(1280, 720, 30.0, 20_000_000).amf_value, 32);
-    assert_eq!(h265_level_for_rate(1280, 720, 30.0, 15_000_000).amf_value, 123);
-    let r = run(apply_avc_properties, &cbr(config(VideoCodec::H264, PixelFormat::Yuv420p), 30_000_000, None));
+    assert_eq!(
+        h264_level_for_rate(1280, 720, 30.0, 0),
+        h264_level_for(1280, 720, 30.0)
+    );
+    assert_eq!(
+        h264_level_for_rate(1280, 720, 30.0, 17_500_000).amf_value,
+        31
+    );
+    assert_eq!(
+        h264_level_for_rate(1280, 720, 30.0, 20_000_000).amf_value,
+        32
+    );
+    assert_eq!(
+        h265_level_for_rate(1280, 720, 30.0, 15_000_000).amf_value,
+        123
+    );
+    let r = run(
+        apply_avc_properties,
+        &cbr(
+            config(VideoCodec::H264, PixelFormat::Yuv420p),
+            30_000_000,
+            None,
+        ),
+    );
     assert_eq!(r.int("ProfileLevel"), 41, "1080p30 at 30 Mb/s needs 4.1");
 }

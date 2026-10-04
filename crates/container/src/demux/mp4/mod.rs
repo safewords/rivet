@@ -34,22 +34,27 @@ mod subtitle;
 // `demux/mod.rs` (the parent) can in turn re-export it as `pub`.
 // `FragSample` stays pub(super) — matching the original visibility in
 // the flat mp4.rs where it was `pub(super)` (visible only to `demux`).
-pub use streaming::Mp4StreamingDemuxer;
 #[allow(unused_imports)] // used only by demux/tests.rs under #[cfg(test)]
 pub(super) use streaming::FragSample;
+pub use streaming::Mp4StreamingDemuxer;
 pub(crate) use streaming::demux_mp4_streaming_init;
 
 // Internal re-exports: `demux` siblings (`audio.rs`, `tests.rs`) reach these
 // helpers via `super::mp4::<item>` without the items appearing in the
 // crate's public API.
-pub(crate) use sample_entry::{has_av01_sample_entry, has_h263_sample_entry, has_vp08_sample_entry, mp4v_config, prores_sample_entry_fourcc};
 #[allow(unused_imports)] // used only by demux/tests.rs under #[cfg(test)]
 pub(crate) use sample_entry::parse_avcc_param_sets;
+pub(crate) use sample_entry::{
+    has_av01_sample_entry, has_h263_sample_entry, has_vp08_sample_entry, mp4v_config,
+    prores_sample_entry_fourcc,
+};
 pub(crate) use streaming::build_fragmented_sample_table;
 pub(crate) use subtitle::extract_mp4_subtitle_tracks;
 
 // Private imports from submodules needed directly inside `demux_mp4` below.
-use sample_entry::{extract_avc_config, extract_hevc_config, has_avc_sample_entry, hevc_sample_entry_fourcc};
+use sample_entry::{
+    extract_avc_config, extract_hevc_config, has_avc_sample_entry, hevc_sample_entry_fourcc,
+};
 
 // ---------------------------------------------------------------------------
 // Public demux entry point
@@ -330,14 +335,19 @@ fn extract_sps_pps(reader: &Mp4Reader<Cursor<&[u8]>>, track_id: u32) -> Vec<Vec<
 /// Whether an MP4 has a video track at all — what tells an audio-only file
 /// from one whose video the demuxer refused.
 pub(crate) fn has_video_track(data: &[u8]) -> Result<bool> {
-    let reader = Mp4Reader::read_header(Cursor::new(data), data.len() as u64).context("reading the MP4 header")?;
-    Ok(reader.tracks().values().any(|t| t.track_type().ok() == Some(mp4::TrackType::Video)))
+    let reader = Mp4Reader::read_header(Cursor::new(data), data.len() as u64)
+        .context("reading the MP4 header")?;
+    Ok(reader
+        .tracks()
+        .values()
+        .any(|t| t.track_type().ok() == Some(mp4::TrackType::Video)))
 }
 
 /// The track ids of every audio track in an MP4, for
 /// [`edit_list::resolve_audio_edit`] on a file read without its video.
 pub(crate) fn audio_track_ids(data: &[u8]) -> Result<Vec<u32>> {
-    let reader = Mp4Reader::read_header(Cursor::new(data), data.len() as u64).context("reading the MP4 header")?;
+    let reader = Mp4Reader::read_header(Cursor::new(data), data.len() as u64)
+        .context("reading the MP4 header")?;
     Ok(reader
         .tracks()
         .values()

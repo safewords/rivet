@@ -31,17 +31,17 @@ mod tests;
 
 // ─── Re-exports: param structs, enums, and constants ────────────────────────
 pub use params::{
-    AmfAv1Params, AmfH26xParams, AmfQualityPreset, AmfRateControl, H26xSwParams, MFX_CODINGOPTION_OFF,
-    MFX_CODINGOPTION_ON, NvencAv1Params, NvencRateControl, QsvAv1Params, QsvRateControl,
-    Av1SwParams,
+    AmfAv1Params, AmfH26xParams, AmfQualityPreset, AmfRateControl, Av1SwParams, H26xSwParams,
+    MFX_CODINGOPTION_OFF, MFX_CODINGOPTION_ON, NvencAv1Params, NvencRateControl, QsvAv1Params,
+    QsvRateControl,
 };
 
 // ─── Re-exports: public adapter functions ───────────────────────────────────
 pub use adapters::{
-    H26X_SW_BITRATE_BUFFER_MS, amf_av1_params, amf_av1_params_with, amf_h26x_params, amf_h26x_params_with,
-    h26x_sw_params, qvbr_level_for_qp, h26x_sw_params_with, native_sw_quantizer,
-    nvenc_av1_params, nvenc_av1_params_with, qsv_av1_params, qsv_av1_params_with, qsv_params,
-    qsv_params_with, av1_sw_params, av1_sw_params_with,
+    H26X_SW_BITRATE_BUFFER_MS, amf_av1_params, amf_av1_params_with, amf_h26x_params,
+    amf_h26x_params_with, av1_sw_params, av1_sw_params_with, h26x_sw_params, h26x_sw_params_with,
+    native_sw_quantizer, nvenc_av1_params, nvenc_av1_params_with, qsv_av1_params,
+    qsv_av1_params_with, qsv_params, qsv_params_with, qvbr_level_for_qp,
 };
 
 // ─── Re-exports: the override vocabulary ────────────────────────────────────
@@ -49,17 +49,18 @@ pub use adapters::{
 // What a caller uses to say "this rung, not that one". See `overrides.rs` for
 // why the knobs live in one backend-agnostic set rather than per encoder.
 pub use overrides::{
-    EncodeOverrides, RungPolicy, RungContext, RungRule, RungSelector, TileGrid,
-    MAX_LADDER_DEPTH,
+    EncodeOverrides, MAX_LADDER_DEPTH, RungContext, RungPolicy, RungRule, RungSelector, TileGrid,
 };
 // The text grammar (`RungPolicy::parse` / `FromStr`) and the recommended
 // ladder policy (`RungPolicy::recommended`, `LadderPolicy`).
-pub use policy_grammar::{LadderPolicy, parse_bitrate, parse_bool, parse_buffer_ms, parse_target, parse_tier};
+pub use policy_grammar::{
+    LadderPolicy, parse_bitrate, parse_bool, parse_buffer_ms, parse_target, parse_tier,
+};
 // How a bitrate rung spends its rate — an average or a constant rate (CBR) —
 // and the default rate of a constant-rate rung that names none.
 pub use rate::{
-    CBR_DEFAULT_BUFFER_MS, CBR_INITIAL_FULLNESS_64THS, ConstantRate, RateMode, constant_rate_refusal,
-    default_cbr_bitrate, parse_rate_mode,
+    CBR_DEFAULT_BUFFER_MS, CBR_INITIAL_FULLNESS_64THS, ConstantRate, RateMode,
+    constant_rate_refusal, default_cbr_bitrate, parse_rate_mode,
 };
 
 // ─── Public types ────────────────────────────────────────────────
@@ -184,8 +185,7 @@ const LIBAOM_ANCHORS: &[(i32, i32)] = &[
 /// Anchor points for NVENC AV1 VMAF↔CQ. Calibrated down from libaom
 /// to compensate for NVENC's documented compression-efficiency gap
 /// (research §2.4). Same VMAF → lower CQ than libaom.
-const NVENC_ANCHORS: &[(i32, i32)] =
-    &[(100, 10), (98, 19), (95, 25), (90, 30), (85, 36), (70, 52)];
+const NVENC_ANCHORS: &[(i32, i32)] = &[(100, 10), (98, 19), (95, 25), (90, 30), (85, 36), (70, 52)];
 
 /// Piecewise-linear interpolation between anchors. Anchors are
 /// `(vmaf, cq)` pairs in descending VMAF order. Out-of-range VMAF

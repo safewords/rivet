@@ -86,7 +86,7 @@ fn luma_spread(frame: &VideoFrame) -> u32 {
         PixelFormat::Yuv420p10le => {
             let n = (w * h * 2).min(data.len());
             let y = &data[..n];
-            for px in y.chunks_exact(2).step_by(17) {
+            for px in y.as_chunks::<2>().0.iter().step_by(17) {
                 let v = u16::from_le_bytes([px[0], px[1]]) as u32; // 0..=1023
                 sample(v >> 2); // → 8-bit scale
             }
@@ -101,8 +101,9 @@ fn luma_spread(frame: &VideoFrame) -> u32 {
 fn decode_on_gpu(data: &[u8], gpu_index: u32) -> Result<(String, usize, u32), String> {
     let demuxed = container::demux::demux(data).map_err(|e| format!("demux: {e}"))?;
     let codec = demuxed.codec.clone();
-    let mut decoder = codec::decode::create_decoder_on(&codec, demuxed.info.clone(), Some(gpu_index))
-        .map_err(|e| format!("create_decoder_on: {e:#}"))?;
+    let mut decoder =
+        codec::decode::create_decoder_on(&codec, demuxed.info.clone(), Some(gpu_index))
+            .map_err(|e| format!("create_decoder_on: {e:#}"))?;
 
     let mut frames = 0usize;
     let mut max_spread = 0u32;
@@ -112,7 +113,10 @@ fn decode_on_gpu(data: &[u8], gpu_index: u32) -> Result<(String, usize, u32), St
         decoder
             .push_sample(sample)
             .map_err(|e| format!("push_sample: {e:#}"))?;
-        while let Some(f) = decoder.decode_next().map_err(|e| format!("decode_next: {e:#}"))? {
+        while let Some(f) = decoder
+            .decode_next()
+            .map_err(|e| format!("decode_next: {e:#}"))?
+        {
             frames += 1;
             max_spread = max_spread.max(luma_spread(&f));
         }
@@ -145,9 +149,17 @@ fn gpu_decode_per_vendor_family_produces_real_frames() {
         return;
     }
 
-    eprintln!("GPU decode matrix ({} GPU(s), {} sample(s)):", gpus.len(), files.len());
-    eprintln!("| vendor  | idx | name                       | codec | frames | luma_spread | result |");
-    eprintln!("|---------|-----|----------------------------|-------|--------|-------------|--------|");
+    eprintln!(
+        "GPU decode matrix ({} GPU(s), {} sample(s)):",
+        gpus.len(),
+        files.len()
+    );
+    eprintln!(
+        "| vendor  | idx | name                       | codec | frames | luma_spread | result |"
+    );
+    eprintln!(
+        "|---------|-----|----------------------------|-------|--------|-------------|--------|"
+    );
 
     let mut any_real = false;
     let mut decoded_combos = 0usize;

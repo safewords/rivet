@@ -43,13 +43,14 @@ fn full_box_(fourcc: &[u8; 4], version: u8, flags: u32, payload: &[u8]) -> Vec<u
 
 /// Build an avcC config record per ISO/IEC 14496-15 §5.3.3.1.
 fn build_avcc(sps: &[u8], pps: &[u8], length_size_minus_one: u8) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.push(0x01); // configurationVersion
-    out.push(0x42); // AVCProfileIndication = 66 (Baseline) — value irrelevant for the demux test
-    out.push(0x00); // profile_compatibility
-    out.push(0x1E); // AVCLevelIndication = 3.0
-    out.push(0xFC | (length_size_minus_one & 0x03));
-    out.push(0xE1); // reserved(3)=7|num_sps=1
+    let mut out = vec![
+        0x01, // configurationVersion
+        0x42, // AVCProfileIndication = 66 (Baseline) — value irrelevant for the demux test
+        0x00, // profile_compatibility
+        0x1E, // AVCLevelIndication = 3.0
+        0xFC | (length_size_minus_one & 0x03),
+        0xE1, // reserved(3)=7|num_sps=1
+    ];
     out.extend_from_slice(&(sps.len() as u16).to_be_bytes());
     out.extend_from_slice(sps);
     out.push(0x01); // num_pps

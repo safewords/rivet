@@ -11,7 +11,13 @@ use super::scale::Pixels;
 /// `lossless` makes WebP lossless; `speed` (1 slowest to 10 fastest) is the
 /// effort PNG ([`png_level`]) and WebP ([`super::webp::effort`]) spend on
 /// compression.
-pub(crate) fn encode(pixels: &Pixels<'_>, format: ImageFormat, quality: u8, lossless: bool, speed: u8) -> Result<Vec<u8>> {
+pub(crate) fn encode(
+    pixels: &Pixels<'_>,
+    format: ImageFormat,
+    quality: u8,
+    lossless: bool,
+    speed: u8,
+) -> Result<Vec<u8>> {
     match format {
         ImageFormat::Avif => avif(pixels, quality),
         ImageFormat::Webp => super::webp::encode(pixels, quality, lossless, speed),
@@ -49,7 +55,8 @@ fn jpeg(pixels: &Pixels<'_>, quality: u8) -> Result<Vec<u8>> {
         icc_profile: pixels.icc.map(<[u8]>::to_vec),
         ..Default::default()
     };
-    jpeg::encode(&rgb, w, h, jpeg::PixelFormat::Rgb, &settings).map_err(|e| anyhow!("JPEG encode failed: {e}"))
+    jpeg::encode(&rgb, w, h, jpeg::PixelFormat::Rgb, &settings)
+        .map_err(|e| anyhow!("JPEG encode failed: {e}"))
 }
 
 /// The DEFLATE level a PNG is written at for an encoder effort of `speed`
@@ -94,9 +101,14 @@ fn png(pixels: &Pixels<'_>, level: u8) -> Result<Vec<u8>> {
     .map_err(|e| anyhow!("PNG encode failed: {e}"))?;
     let mut encoder = png_encoder(level);
     if let Some(icc) = pixels.icc {
-        encoder.metadata.icc_profile = Some(rpng::IccProfile { name: "ICC profile".into(), profile: icc.to_vec() });
+        encoder.metadata.icc_profile = Some(rpng::IccProfile {
+            name: "ICC profile".into(),
+            profile: icc.to_vec(),
+        });
     }
-    encoder.encode(&image).map_err(|e| anyhow!("PNG encode failed: {e}"))
+    encoder
+        .encode(&image)
+        .map_err(|e| anyhow!("PNG encode failed: {e}"))
 }
 
 #[cfg(test)]
@@ -108,7 +120,10 @@ mod tests {
     #[test]
     fn png_compresses_on_the_jobs_share_of_the_machine() {
         let threads = png_encoder(6).compression.threads;
-        assert!((1..=crate::thread_budget::parallelism()).contains(&threads), "{threads}");
+        assert!(
+            (1..=crate::thread_budget::parallelism()).contains(&threads),
+            "{threads}"
+        );
     }
 
     #[test]
@@ -145,6 +160,10 @@ fn png_level_timings() {
     for level in [1u8, 3, 6, 9] {
         let start = std::time::Instant::now();
         let bytes = rpng::Encoder::with_level(level).encode(&image).unwrap();
-        eprintln!("PNG level {level}: {:.2} s, {} bytes", start.elapsed().as_secs_f64(), bytes.len());
+        eprintln!(
+            "PNG level {level}: {:.2} s, {} bytes",
+            start.elapsed().as_secs_f64(),
+            bytes.len()
+        );
     }
 }

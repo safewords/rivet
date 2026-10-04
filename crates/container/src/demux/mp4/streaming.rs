@@ -23,8 +23,9 @@ use super::super::AudioTrack;
 use super::super::subtitle::SubtitleTrack;
 use super::edit_list::{self, EditTimeline};
 use super::sample_entry::{
-    extract_avc_config, extract_hevc_config, has_av01_sample_entry, has_h263_sample_entry, has_vp08_sample_entry,
-    has_avc_sample_entry, hevc_sample_entry_fourcc, mp4v_config, prores_sample_entry_fourcc,
+    extract_avc_config, extract_hevc_config, has_av01_sample_entry, has_avc_sample_entry,
+    has_h263_sample_entry, has_vp08_sample_entry, hevc_sample_entry_fourcc, mp4v_config,
+    prores_sample_entry_fourcc,
 };
 
 // ---------------------------------------------------------------------------
@@ -132,8 +133,8 @@ fn init(data: bytes::Bytes, edits: Edits) -> Result<Mp4StreamingDemuxer> {
     // legacy `demux_mp4`. This pulls track / codec metadata before we
     // commit the owned buffer to the cursor that backs the streaming
     // reader.
-    let probe = Mp4Reader::read_header(Cursor::new(&owned[..]), size)
-        .context("reading MP4 header")?;
+    let probe =
+        Mp4Reader::read_header(Cursor::new(&owned[..]), size).context("reading MP4 header")?;
 
     let video_track = probe
         .tracks()
@@ -162,7 +163,9 @@ fn init(data: bytes::Bytes, edits: Edits) -> Result<Mp4StreamingDemuxer> {
     };
     // MPEG-4 Part 2 / MPEG-1 / MPEG-2 in `mp4v`: the `esds` configuration,
     // put ahead of the first sample when it carries none of its own.
-    let config_prefix = mp4v_config(&owned).map(|(_, dsi)| dsi).filter(|dsi| !dsi.is_empty());
+    let config_prefix = mp4v_config(&owned)
+        .map(|(_, dsi)| dsi)
+        .filter(|dsi| !dsi.is_empty());
     let width = video_track.width() as u32;
     let height = video_track.height() as u32;
     let sample_count = video_track.sample_count();
@@ -255,7 +258,8 @@ fn init(data: bytes::Bytes, edits: Edits) -> Result<Mp4StreamingDemuxer> {
         },
         Edits::Ignore => None,
     };
-    let static_pts = video_timeline.map(|_| edit_list::static_sample_pts(video_track, sample_count));
+    let static_pts =
+        video_timeline.map(|_| edit_list::static_sample_pts(video_track, sample_count));
     let audio_track_ids: Vec<u32> = probe
         .tracks()
         .values()
@@ -436,7 +440,9 @@ fn init(data: bytes::Bytes, edits: Edits) -> Result<Mp4StreamingDemuxer> {
         );
     }
     let audio_edit = match (edits, &audio) {
-        (Edits::Honour, Some(track)) => edit_list::resolve_audio_edit(&owned, &audio_track_ids, track)?,
+        (Edits::Honour, Some(track)) => {
+            edit_list::resolve_audio_edit(&owned, &audio_track_ids, track)?
+        }
         _ => None,
     };
     if let Some(e) = &audio_edit {

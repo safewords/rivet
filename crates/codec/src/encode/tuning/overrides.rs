@@ -48,7 +48,10 @@ pub struct TileGrid {
 }
 
 impl TileGrid {
-    pub const SINGLE: Self = Self { columns: 1, rows: 1 };
+    pub const SINGLE: Self = Self {
+        columns: 1,
+        rows: 1,
+    };
 
     pub fn tiles(self) -> u32 {
         u32::from(self.columns) * u32::from(self.rows)
@@ -282,7 +285,12 @@ pub struct RungContext {
 impl RungContext {
     /// A single encode that is not part of a ladder.
     pub fn standalone(width: u32, height: u32) -> Self {
-        Self { width, height, index: 0, rung_count: 1 }
+        Self {
+            width,
+            height,
+            index: 0,
+            rung_count: 1,
+        }
     }
 
     /// The short side, which is what "1080p" has always meant here regardless
@@ -336,7 +344,10 @@ pub struct RungRule {
 
 impl RungRule {
     pub fn new(selector: RungSelector, overrides: EncodeOverrides) -> Self {
-        Self { selector, overrides }
+        Self {
+            selector,
+            overrides,
+        }
     }
 }
 
@@ -447,7 +458,12 @@ mod tests {
     }
 
     fn ladder_rung(index: usize, short_side: u32) -> RungContext {
-        RungContext { width: short_side * 2, height: short_side, index, rung_count: 5 }
+        RungContext {
+            width: short_side * 2,
+            height: short_side,
+            index,
+            rung_count: 5,
+        }
     }
 
     #[test]
@@ -465,12 +481,13 @@ mod tests {
     fn the_top_rung_can_be_given_some_back() {
         // The shape the ladder actually wants: everything below the top gets
         // cheaper, and the rung most people watch gets a little sharper.
-        let policy = RungPolicy::new()
-            .with_quality_step_per_rung(2)
-            .with_rule(
-                RungSelector::Top,
-                EncodeOverrides { quality_delta: -2, ..Default::default() },
-            );
+        let policy = RungPolicy::new().with_quality_step_per_rung(2).with_rule(
+            RungSelector::Top,
+            EncodeOverrides {
+                quality_delta: -2,
+                ..Default::default()
+            },
+        );
 
         assert_eq!(policy.resolve(&ladder_rung(0, 1080)).quality_delta, -2);
         assert_eq!(policy.resolve(&ladder_rung(1, 720)).quality_delta, 2);
@@ -497,11 +514,17 @@ mod tests {
         let policy = RungPolicy::new()
             .with_rule(
                 RungSelector::Any,
-                EncodeOverrides { bframes: Some(3), ..Default::default() },
+                EncodeOverrides {
+                    bframes: Some(3),
+                    ..Default::default()
+                },
             )
             .with_rule(
                 RungSelector::ShortSideAtMost(240),
-                EncodeOverrides { bframes: Some(0), ..Default::default() },
+                EncodeOverrides {
+                    bframes: Some(0),
+                    ..Default::default()
+                },
             );
 
         assert_eq!(policy.resolve(&ladder_rung(0, 1080)).bframes, Some(3));

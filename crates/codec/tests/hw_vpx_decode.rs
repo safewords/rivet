@@ -37,8 +37,8 @@ use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
 use codec::decode::Decoder;
-use codec::encode::{EncoderBackend, EncoderConfig, select_encoder};
 use codec::decode::vp9_hw_guard::{self, Vp9HwPolicy};
+use codec::encode::{EncoderBackend, EncoderConfig, select_encoder};
 use codec::frame::{ColorSpace, PixelFormat, StreamInfo, VideoCodec, VideoFrame};
 
 const W: u32 = 352;
@@ -46,7 +46,10 @@ const H: u32 = 288;
 
 /// Frames in each of rivet's own clips: 40, or `RIVET_VPX_FRAMES`.
 fn frames() -> u64 {
-    std::env::var("RIVET_VPX_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(40)
+    std::env::var("RIVET_VPX_FRAMES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40)
 }
 
 /// `RIVET_VPX_STREAMS=a,b`: run only the streams whose name contains one of
@@ -89,7 +92,11 @@ fn pattern(t: u64, ten_bit: bool) -> VideoFrame {
     for y in 0..h {
         for x in 0..w {
             let in_box = x.wrapping_sub(t as usize * 5) % w < 64 && (100..180).contains(&y);
-            planes.push(if in_box { 235 } else { (16 + (x + 2 * y + 3 * t as usize) % 220) as u16 });
+            planes.push(if in_box {
+                235
+            } else {
+                (16 + (x + 2 * y + 3 * t as usize) % 220) as u16
+            });
         }
     }
     for c in 0..2 {
@@ -100,9 +107,18 @@ fn pattern(t: u64, ten_bit: bool) -> VideoFrame {
         }
     }
     let (data, format) = if ten_bit {
-        (planes.iter().flat_map(|v| (v << 2).to_le_bytes()).collect::<Vec<u8>>(), PixelFormat::Yuv420p10le)
+        (
+            planes
+                .iter()
+                .flat_map(|v| (v << 2).to_le_bytes())
+                .collect::<Vec<u8>>(),
+            PixelFormat::Yuv420p10le,
+        )
     } else {
-        (planes.iter().map(|&v| v as u8).collect(), PixelFormat::Yuv420p)
+        (
+            planes.iter().map(|&v| v as u8).collect(),
+            PixelFormat::Yuv420p,
+        )
     };
     VideoFrame::new(Bytes::from(data), W, H, format, ColorSpace::Bt709, t)
 }
@@ -114,7 +130,11 @@ fn own_clip(codec: VideoCodec, ten_bit: bool) -> Stream {
         VideoCodec::H264 => EncoderBackend::H26x,
         _ => EncoderBackend::Vp9,
     };
-    let format = if ten_bit { PixelFormat::Yuv420p10le } else { PixelFormat::Yuv420p };
+    let format = if ten_bit {
+        PixelFormat::Yuv420p10le
+    } else {
+        PixelFormat::Yuv420p
+    };
     let cfg = EncoderConfig {
         width: W,
         height: H,
@@ -152,7 +172,9 @@ fn own_clip(codec: VideoCodec, ten_bit: bool) -> Stream {
 /// Whether a vector's name says it is 4:2:0 at 8 or 10 bits: profile 0
 /// (`vp90-`) or profile 2 (`vp92-`), and not one of the odd-chroma streams.
 fn hardware_shaped(name: &str) -> bool {
-    (name.starts_with("vp90-") || name.starts_with("vp92-")) && !name.contains("yuv44") && !name.contains("yuv422")
+    (name.starts_with("vp90-") || name.starts_with("vp92-"))
+        && !name.contains("yuv44")
+        && !name.contains("yuv422")
 }
 
 /// A test vector file as a [`Stream`]: WebM through rivet's demuxer, IVF
@@ -162,10 +184,23 @@ fn vector(path: &Path) -> Option<Stream> {
     let data = std::fs::read(path).ok()?;
     if name.ends_with(".ivf") {
         let reader = vp9::ivf::IvfReader::new(&data).ok()?;
-        let (w, h) = (u32::from(reader.header().width), u32::from(reader.header().height));
-        let format = if name.starts_with("vp92-") { PixelFormat::Yuv420p10le } else { PixelFormat::Yuv420p };
-        let samples: Vec<Vec<u8>> = reader.map_while(|f| f.ok().map(|f| f.data.to_vec())).collect();
-        return Some(Stream { name, info: info("vp9", w, h, format), samples });
+        let (w, h) = (
+            u32::from(reader.header().width),
+            u32::from(reader.header().height),
+        );
+        let format = if name.starts_with("vp92-") {
+            PixelFormat::Yuv420p10le
+        } else {
+            PixelFormat::Yuv420p
+        };
+        let samples: Vec<Vec<u8>> = reader
+            .map_while(|f| f.ok().map(|f| f.data.to_vec()))
+            .collect();
+        return Some(Stream {
+            name,
+            info: info("vp9", w, h, format),
+            samples,
+        });
     }
     let demuxed = container::demux::demux(&data).ok()?;
     if !demuxed.codec.eq_ignore_ascii_case("vp9") {
@@ -175,7 +210,11 @@ fn vector(path: &Path) -> Option<Stream> {
     if name.starts_with("vp92-") {
         info.pixel_format = PixelFormat::Yuv420p10le;
     }
-    Some(Stream { name, info, samples: demuxed.samples.iter().map(|s| s.to_vec()).collect() })
+    Some(Stream {
+        name,
+        info,
+        samples: demuxed.samples.iter().map(|s| s.to_vec()).collect(),
+    })
 }
 
 /// The committed vectors, then any in `RIVET_VP9_VECTORS`.
@@ -193,7 +232,9 @@ fn vectors() -> Vec<Stream> {
         let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
         paths.sort();
         for p in paths {
-            let Some(name) = p.file_name().and_then(|n| n.to_str()) else { continue };
+            let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
             if !(name.ends_with(".webm") || name.ends_with(".ivf")) || !hardware_shaped(name) {
                 continue;
             }
@@ -238,9 +279,18 @@ fn reference(stream: &Stream) -> Vec<VideoFrame> {
 
 /// The top-left `w` x `h` of a planar 4:2:0 frame.
 fn crop(f: &VideoFrame, w: u32, h: u32) -> VideoFrame {
-    let b = if f.format == PixelFormat::Yuv420p10le { 2 } else { 1 };
+    let b = if f.format == PixelFormat::Yuv420p10le {
+        2
+    } else {
+        1
+    };
     let (sw, sh, dw, dh) = (f.width as usize, f.height as usize, w as usize, h as usize);
-    let (scw, sch, dcw, dch) = (sw.div_ceil(2), sh.div_ceil(2), dw.div_ceil(2), dh.div_ceil(2));
+    let (scw, sch, dcw, dch) = (
+        sw.div_ceil(2),
+        sh.div_ceil(2),
+        dw.div_ceil(2),
+        dh.div_ceil(2),
+    );
     let mut out = Vec::new();
     for row in 0..dh {
         out.extend_from_slice(&f.data[row * sw * b..(row * sw + dw) * b]);
@@ -274,7 +324,10 @@ fn luma_diff(a: &VideoFrame, b: &VideoFrame) -> String {
         se += ((x - y) * (x - y)) as f64;
     }
     let peak = if ten { 1023.0 } else { 255.0 };
-    format!("luma max|diff|={max} psnr={:.2} dB", 10.0 * (peak * peak / (se / n as f64).max(1e-9)).log10())
+    format!(
+        "luma max|diff|={max} psnr={:.2} dB",
+        10.0 * (peak * peak / (se / n as f64).max(1e-9)).log10()
+    )
 }
 
 /// `None` when every frame matched; otherwise why not.
@@ -282,7 +335,11 @@ fn compare(stream: &Stream, got: &[VideoFrame], want: &[VideoFrame]) -> Option<S
     if got.len() != want.len() {
         let matched: Vec<String> = got
             .iter()
-            .map(|f| want.iter().position(|r| r.data[..] == f.data[..]).map_or("?".into(), |i| i.to_string()))
+            .map(|f| {
+                want.iter()
+                    .position(|r| r.data[..] == f.data[..])
+                    .map_or("?".into(), |i| i.to_string())
+            })
             .collect();
         return Some(format!(
             "{} frames, rivet's decoder {}; hardware frames matched reference indices [{}]",
@@ -336,7 +393,9 @@ fn guarded_features(stream: &Stream) -> Vec<&'static str> {
     for packet in &stream.samples {
         for frame in vp9::superframe::split(packet) {
             let Some(h) = peek(frame) else { continue };
-            if matches!(h, FrameHeader::ShowExisting { .. }) && !out.contains(&"show_existing_frame") {
+            if matches!(h, FrameHeader::ShowExisting { .. })
+                && !out.contains(&"show_existing_frame")
+            {
                 out.push("show_existing_frame");
             }
             if let FrameHeader::Coded(c) = &h {
@@ -373,10 +432,19 @@ type Make = fn(&StreamInfo) -> anyhow::Result<Box<dyn Decoder>>;
 ///   and a mismatch fails only if the tier's policy claims the feature;
 /// - **guarded** (VP9), the decoder behind `Vp9HardwareGuard` with the
 ///   tier's policy, as `create_decoder` builds it: bit-exact on everything.
-fn check_tier(tier: &'static str, codec_label: &str, streams: &[Stream], make: Make, policy: Vp9HwPolicy) {
+fn check_tier(
+    tier: &'static str,
+    codec_label: &str,
+    streams: &[Stream],
+    make: Make,
+    policy: Vp9HwPolicy,
+) {
     let mut failures = Vec::new();
     let mut exact = Vec::new();
-    for stream in streams.iter().filter(|s| s.info.codec == codec_label && selected(&s.name)) {
+    for stream in streams
+        .iter()
+        .filter(|s| s.info.codec == codec_label && selected(&s.name))
+    {
         let want = reference(stream);
         let features = guarded_features(stream);
         // The bare hardware sees only what the guard would hand it, unless
@@ -391,26 +459,57 @@ fn check_tier(tier: &'static str, codec_label: &str, streams: &[Stream], make: M
             _ => true,
         };
         if !passes && !required("RIVET_VPX_RAW_FEATURES") {
-            eprintln!("  {tier} {}: raw: not run (the guard keeps it from the hardware: {features:?})", stream.name);
+            eprintln!(
+                "  {tier} {}: raw: not run (the guard keeps it from the hardware: {features:?})",
+                stream.name
+            );
         } else {
-            raw_pass(tier, stream, make, policy, passes, &features, &want, &mut failures, &mut exact, codec_label);
+            raw_pass(
+                tier,
+                stream,
+                make,
+                policy,
+                passes,
+                &features,
+                &want,
+                &mut failures,
+                &mut exact,
+                codec_label,
+            );
         }
         if codec_label == "vp9" {
             guarded_pass(tier, stream, make, policy, &want, &mut failures, &mut exact);
         }
     }
-    eprintln!("{tier} {codec_label}: {} stream(s) bit-exact as dispatched: {exact:?}", exact.len());
-    assert!(failures.is_empty(), "{tier} {codec_label} decode differs from rivet's decoder:
-  {}", failures.join("
-  "));
+    eprintln!(
+        "{tier} {codec_label}: {} stream(s) bit-exact as dispatched: {exact:?}",
+        exact.len()
+    );
+    assert!(
+        failures.is_empty(),
+        "{tier} {codec_label} decode differs from rivet's decoder:
+  {}",
+        failures.join(
+            "
+  "
+        )
+    );
 }
 
 /// Whether the guard, with `policy`, would keep the whole stream on the
 /// hardware — asked of a guard over rivet's own decoder, no GPU involved.
 fn guard_passes(stream: &Stream, policy: Vp9HwPolicy) -> bool {
-    let stand_in = Box::new(codec::decode::vp9_sw::Vp9Decoder::new(stream.info.clone()).expect("vp9"));
-    let mut g = codec::decode::vp9_hw_guard::Vp9HardwareGuard::new("dry run", stand_in, stream.info.clone(), policy)
-        .with_rebuild(Box::new(|i| Ok(Box::new(codec::decode::vp9_sw::Vp9Decoder::new(i.clone())?) as Box<dyn Decoder>)));
+    let stand_in =
+        Box::new(codec::decode::vp9_sw::Vp9Decoder::new(stream.info.clone()).expect("vp9"));
+    let mut g = codec::decode::vp9_hw_guard::Vp9HardwareGuard::new(
+        "dry run",
+        stand_in,
+        stream.info.clone(),
+        policy,
+    )
+    .with_rebuild(Box::new(|i| {
+        Ok(Box::new(codec::decode::vp9_sw::Vp9Decoder::new(i.clone())?) as Box<dyn Decoder>)
+    }));
     for s in &stream.samples {
         if g.push_sample(s).is_err() || g.switched() {
             return false;
@@ -441,21 +540,29 @@ fn raw_pass(
     };
     // Claimed only when there is something to claim: a stream the guard
     // keeps away for its depth or size (a 12-bit vector) claims nothing.
-    let claimed = !features.is_empty() && features.iter().all(|f| match *f {
-        "show_existing_frame" => policy.show_existing,
-        "error_resilient_mode" => policy.error_resilient,
-        "segmentation" => policy.segmentation,
-        "intra_only" => policy.intra_only,
-        _ => policy.size_changes,
-    });
+    let claimed = !features.is_empty()
+        && features.iter().all(|f| match *f {
+            "show_existing_frame" => policy.show_existing,
+            "error_resilient_mode" => policy.error_resilient,
+            "segmentation" => policy.segmentation,
+            "intra_only" => policy.intra_only,
+            _ => policy.size_changes,
+        });
     // A stream the guard hands the hardware must come back exact; one it
     // keeps away (a feature, a depth, a size) is reported, and fails only
     // where the policy claims the feature.
     match (&raw_verdict, passes) {
         (None, _) => {
-            eprintln!("  {tier} {}: raw: {} frames bit-exact (uses {features:?})", stream.name, want.len());
+            eprintln!(
+                "  {tier} {}: raw: {} frames bit-exact (uses {features:?})",
+                stream.name,
+                want.len()
+            );
             if !features.is_empty() && !claimed {
-                eprintln!("  {tier} {}: raw hardware handled {features:?} bit-exact: the policy could trust it", stream.name);
+                eprintln!(
+                    "  {tier} {}: raw hardware handled {features:?} bit-exact: the policy could trust it",
+                    stream.name
+                );
             }
         }
         (Some(why), true) => {
@@ -463,9 +570,15 @@ fn raw_pass(
             failures.push(format!("{} (raw): {why}", stream.name));
         }
         (Some(why), false) => {
-            eprintln!("  {tier} {}: raw: differs on a stream using {features:?}: {why}", stream.name);
+            eprintln!(
+                "  {tier} {}: raw: differs on a stream using {features:?}: {why}",
+                stream.name
+            );
             if claimed {
-                failures.push(format!("{} (raw, policy trusts {features:?}): {why}", stream.name));
+                failures.push(format!(
+                    "{} (raw, policy trusts {features:?}): {why}",
+                    stream.name
+                ));
             }
         }
     }
@@ -486,13 +599,25 @@ fn guarded_pass(
     exact: &mut Vec<String>,
 ) {
     let guarded = make(&stream.info).and_then(|d| {
-        let g = codec::decode::vp9_hw_guard::Vp9HardwareGuard::new(tier, d, stream.info.clone(), policy)
-            .with_rebuild(Box::new(move |i| make(i)));
+        let g = codec::decode::vp9_hw_guard::Vp9HardwareGuard::new(
+            tier,
+            d,
+            stream.info.clone(),
+            policy,
+        )
+        .with_rebuild(Box::new(make));
         run(Box::new(g), &stream.samples)
     });
-    match guarded.map_err(|e| format!("{e:#}")).map(|f| compare(stream, &f, want)) {
+    match guarded
+        .map_err(|e| format!("{e:#}"))
+        .map(|f| compare(stream, &f, want))
+    {
         Ok(None) => {
-            eprintln!("  {tier} {}: guarded: {} frames bit-exact", stream.name, want.len());
+            eprintln!(
+                "  {tier} {}: guarded: {} frames bit-exact",
+                stream.name,
+                want.len()
+            );
             exact.push(stream.name.clone());
         }
         Ok(Some(why)) | Err(why) => {
@@ -506,7 +631,9 @@ fn guarded_pass(
 /// (`vp80-00-comprehensive-*.ivf`).
 fn vp8_vectors() -> Vec<Stream> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../vp8/tests/data");
-    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
     let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
     paths.sort();
     paths
@@ -516,15 +643,27 @@ fn vp8_vectors() -> Vec<Stream> {
             let name = p.file_name()?.to_str()?.to_string();
             let data = std::fs::read(&p).ok()?;
             let reader = vp9::ivf::IvfReader::new(&data).ok()?;
-            let (w, h) = (u32::from(reader.header().width), u32::from(reader.header().height));
-            let samples: Vec<Vec<u8>> = reader.map_while(|f| f.ok().map(|f| f.data.to_vec())).collect();
-            Some(Stream { name, info: info("vp8", w, h, PixelFormat::Yuv420p), samples })
+            let (w, h) = (
+                u32::from(reader.header().width),
+                u32::from(reader.header().height),
+            );
+            let samples: Vec<Vec<u8>> = reader
+                .map_while(|f| f.ok().map(|f| f.data.to_vec()))
+                .collect();
+            Some(Stream {
+                name,
+                info: info("vp8", w, h, PixelFormat::Yuv420p),
+                samples,
+            })
         })
         .collect()
 }
 
 fn vp9_streams() -> Vec<Stream> {
-    let mut s = vec![own_clip(VideoCodec::Vp9, false), own_clip(VideoCodec::Vp9, true)];
+    let mut s = vec![
+        own_clip(VideoCodec::Vp9, false),
+        own_clip(VideoCodec::Vp9, true),
+    ];
     s.extend(vectors());
     s
 }
@@ -539,10 +678,19 @@ fn amf_vp9_decode_is_bit_exact_against_rivets_decoder() {
         eprintln!("SKIPPED: AMF VP9 decode is opt-in (RIVET_AMF_VP9=1)");
         return;
     }
-    let present = codec::gpu::detect_gpus().iter().any(|g| g.vendor == codec::gpu::GpuVendor::Amd);
-    let caps = if present { codec::decode::amf_dec::probe_decode_caps() } else { &[] };
+    let present = codec::gpu::detect_gpus()
+        .iter()
+        .any(|g| g.vendor == codec::gpu::GpuVendor::Amd);
+    let caps = if present {
+        codec::decode::amf_dec::probe_decode_caps()
+    } else {
+        &[]
+    };
     if !caps.contains(&"vp9") {
-        assert!(!required("RIVET_REQUIRE_AMF"), "RIVET_REQUIRE_AMF=1 and AMF decodes no VP9 here (caps {caps:?})");
+        assert!(
+            !required("RIVET_REQUIRE_AMF"),
+            "RIVET_REQUIRE_AMF=1 and AMF decodes no VP9 here (caps {caps:?})"
+        );
         eprintln!("SKIPPED: no AMF VP9 decoder on this machine (caps {caps:?})");
         return;
     }
@@ -551,7 +699,12 @@ fn amf_vp9_decode_is_bit_exact_against_rivets_decoder() {
         "AMF",
         "vp9",
         &vp9_streams(),
-        |info| Ok(Box::new(codec::decode::amf_dec::AmfDecoder::new(info.clone(), 0)?) as Box<dyn Decoder>),
+        |info| {
+            Ok(
+                Box::new(codec::decode::amf_dec::AmfDecoder::new(info.clone(), 0)?)
+                    as Box<dyn Decoder>,
+            )
+        },
         vp9_hw_guard::AMF_POLICY,
     );
 }
@@ -559,10 +712,19 @@ fn amf_vp9_decode_is_bit_exact_against_rivets_decoder() {
 #[cfg(feature = "qsv")]
 #[test]
 fn qsv_vp9_decode_is_bit_exact_against_rivets_decoder() {
-    let present = codec::gpu::detect_gpus().iter().any(|g| g.vendor == codec::gpu::GpuVendor::Intel);
-    let caps = if present { codec::decode::qsv_dec::probe_decode_caps() } else { &[] };
+    let present = codec::gpu::detect_gpus()
+        .iter()
+        .any(|g| g.vendor == codec::gpu::GpuVendor::Intel);
+    let caps = if present {
+        codec::decode::qsv_dec::probe_decode_caps()
+    } else {
+        &[]
+    };
     if !caps.contains(&"vp9") {
-        assert!(!required("RIVET_REQUIRE_QSV"), "RIVET_REQUIRE_QSV=1 and QSV decodes no VP9 here (caps {caps:?})");
+        assert!(
+            !required("RIVET_REQUIRE_QSV"),
+            "RIVET_REQUIRE_QSV=1 and QSV decodes no VP9 here (caps {caps:?})"
+        );
         eprintln!("SKIPPED: no QSV VP9 decoder on this machine (caps {caps:?})");
         return;
     }
@@ -570,16 +732,26 @@ fn qsv_vp9_decode_is_bit_exact_against_rivets_decoder() {
         "QSV",
         "vp9",
         &vp9_streams(),
-        |info| Ok(Box::new(codec::decode::qsv_dec::QsvDecoder::new(info.clone(), 0)?) as Box<dyn Decoder>),
+        |info| {
+            Ok(
+                Box::new(codec::decode::qsv_dec::QsvDecoder::new(info.clone(), 0)?)
+                    as Box<dyn Decoder>,
+            )
+        },
         vp9_hw_guard::QSV_POLICY,
     );
 }
 
 #[cfg(feature = "nvidia")]
 fn nvidia_present() -> bool {
-    let present = codec::gpu::detect_gpus().iter().any(|g| g.vendor == codec::gpu::GpuVendor::Nvidia);
+    let present = codec::gpu::detect_gpus()
+        .iter()
+        .any(|g| g.vendor == codec::gpu::GpuVendor::Nvidia);
     if !present {
-        assert!(!required("RIVET_REQUIRE_NVDEC"), "RIVET_REQUIRE_NVDEC=1 and there is no NVIDIA GPU here");
+        assert!(
+            !required("RIVET_REQUIRE_NVDEC"),
+            "RIVET_REQUIRE_NVDEC=1 and there is no NVIDIA GPU here"
+        );
         eprintln!("SKIPPED: no NVIDIA GPU on this machine");
     }
     present

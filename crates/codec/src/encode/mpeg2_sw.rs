@@ -38,7 +38,9 @@ use std::collections::VecDeque;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 
-use super::native::{ReferenceFirst, average_rate, check_frame, frame_rate_ratio, quantizer, threads, tier};
+use super::native::{
+    ReferenceFirst, average_rate, check_frame, frame_rate_ratio, quantizer, threads, tier,
+};
 use super::tuning::SpeedTier;
 use super::{EncodedPacket, Encoder, EncoderConfig};
 use crate::frame::{PixelFormat, VideoCodec, VideoFrame};
@@ -55,7 +57,10 @@ impl Mpeg2Encoder {
     /// Build an encoder for `config` (codec MPEG-2, `yuv420p`).
     pub fn new(config: EncoderConfig) -> Result<Self> {
         if config.codec != VideoCodec::Mpeg2 {
-            bail!("the MPEG-2 encoder encodes MPEG-2, not {}", config.codec.label());
+            bail!(
+                "the MPEG-2 encoder encodes MPEG-2, not {}",
+                config.codec.label()
+            );
         }
         if config.pixel_format != PixelFormat::Yuv420p {
             bail!(
@@ -78,8 +83,14 @@ impl Mpeg2Encoder {
             SpeedTier::Archive => 64,
         };
         cfg.threads = threads(&config);
-        let inner = mpeg2::Encoder::new(cfg.clone()).context("the MPEG-2 encoder rejected the configuration")?;
-        Ok(Self { inner, cfg, order: ReferenceFirst::default(), ready: VecDeque::new() })
+        let inner = mpeg2::Encoder::new(cfg.clone())
+            .context("the MPEG-2 encoder rejected the configuration")?;
+        Ok(Self {
+            inner,
+            cfg,
+            order: ReferenceFirst::default(),
+            ready: VecDeque::new(),
+        })
     }
 
     /// Split what the encoder returned into one packet per picture, stamped.
@@ -88,7 +99,11 @@ impl Mpeg2Encoder {
         let stamps = self.order.take(units.len())?;
         for (unit, pts) in units.into_iter().zip(stamps) {
             let is_keyframe = picture_type(&unit) == Some(1);
-            self.ready.push_back(EncodedPacket { data: Bytes::from(unit), pts, is_keyframe });
+            self.ready.push_back(EncodedPacket {
+                data: Bytes::from(unit),
+                pts,
+                is_keyframe,
+            });
         }
         Ok(())
     }
@@ -139,16 +154,29 @@ fn picture_type(unit: &[u8]) -> Option<u8> {
 
 impl Encoder for Mpeg2Encoder {
     fn send_frame(&mut self, frame: &VideoFrame) -> Result<()> {
-        let want = check_frame("MPEG-2", frame, self.cfg.width, self.cfg.height, &[PixelFormat::Yuv420p])?;
-        let mut picture = mpeg2::Frame::new(self.cfg.width, self.cfg.height, mpeg2::ChromaFormat::Yuv420);
+        let want = check_frame(
+            "MPEG-2",
+            frame,
+            self.cfg.width,
+            self.cfg.height,
+            &[PixelFormat::Yuv420p],
+        )?;
+        let mut picture =
+            mpeg2::Frame::new(self.cfg.width, self.cfg.height, mpeg2::ChromaFormat::Yuv420);
         picture.data.copy_from_slice(&frame.data[..want]);
         self.order.push(frame.pts);
-        let bytes = self.inner.encode(&picture).context("the MPEG-2 encoder refused a frame")?;
+        let bytes = self
+            .inner
+            .encode(&picture)
+            .context("the MPEG-2 encoder refused a frame")?;
         self.collect(bytes)
     }
 
     fn flush(&mut self) -> Result<()> {
-        let bytes = self.inner.finish().context("the MPEG-2 encoder failed to finish")?;
+        let bytes = self
+            .inner
+            .finish()
+            .context("the MPEG-2 encoder failed to finish")?;
         self.collect(bytes)
     }
 
@@ -159,7 +187,8 @@ impl Encoder for Mpeg2Encoder {
     /// Rebuild the encoder: the next frame opens a new sequence with a closed
     /// GOP.
     fn reset(&mut self) -> Result<()> {
-        self.inner = mpeg2::Encoder::new(self.cfg.clone()).context("rebuilding the MPEG-2 encoder")?;
+        self.inner =
+            mpeg2::Encoder::new(self.cfg.clone()).context("rebuilding the MPEG-2 encoder")?;
         self.order.clear();
         self.ready.clear();
         Ok(())
@@ -186,7 +215,8 @@ mod tests {
         let mut enc = Mpeg2Encoder::new(config).unwrap();
         let mut packets = Vec::new();
         for n in 0..8 {
-            enc.send_frame(&super::super::native::test_picture(w, h, n)).unwrap();
+            enc.send_frame(&super::super::native::test_picture(w, h, n))
+                .unwrap();
             while let Some(p) = enc.receive_packet().unwrap() {
                 packets.push(p);
             }
@@ -199,7 +229,10 @@ mod tests {
         // I0, P3 B1 B2, then the GOP at 6: I6 B4 B5, then P7 at the flush.
         assert_eq!(pts, vec![0, 3, 1, 2, 6, 4, 5, 7]);
         let keys: Vec<bool> = packets.iter().map(|p| p.is_keyframe).collect();
-        assert_eq!(keys, vec![true, false, false, false, true, false, false, false]);
+        assert_eq!(
+            keys,
+            vec![true, false, false, false, true, false, false, false]
+        );
         let mut dec = mpeg2::Decoder::new();
         let mut frames = Vec::new();
         for p in &packets {
@@ -212,23 +245,48 @@ mod tests {
     /// The rung's thread budget reaches the encoder; zero is the machine's.
     #[test]
     fn the_rung_thread_budget_reaches_the_encoder() {
-        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Mpeg2, ..Default::default() };
+        let base = EncoderConfig {
+            width: 64,
+            height: 48,
+            frame_rate: 25.0,
+            codec: VideoCodec::Mpeg2,
+            ..Default::default()
+        };
         let all = std::thread::available_parallelism().map_or(1, |n| n.get());
         for (asked, want) in [(3, 3), (0, all)] {
-            let enc = Mpeg2Encoder::new(EncoderConfig { threads: asked, ..base.clone() }).unwrap();
+            let enc = Mpeg2Encoder::new(EncoderConfig {
+                threads: asked,
+                ..base.clone()
+            })
+            .unwrap();
             assert_eq!(enc.cfg.threads, want, "threads {asked}");
         }
     }
 
     #[test]
     fn a_rate_beside_a_buffer_is_refused_and_a_plain_rate_taken() {
-        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Mpeg2, ..Default::default() };
+        let base = EncoderConfig {
+            width: 64,
+            height: 48,
+            frame_rate: 25.0,
+            codec: VideoCodec::Mpeg2,
+            ..Default::default()
+        };
         let mut rate = base.clone();
         rate.overrides.bitrate = Some(2_000_000);
         assert!(Mpeg2Encoder::new(rate.clone()).is_ok());
         rate.overrides.buffer_ms = Some(1000);
-        assert!(Mpeg2Encoder::new(rate).err().expect("refused").to_string().contains("buffer"));
-        let odd = EncoderConfig { frame_rate: 17.3, ..base };
+        assert!(
+            Mpeg2Encoder::new(rate)
+                .err()
+                .expect("refused")
+                .to_string()
+                .contains("buffer")
+        );
+        let odd = EncoderConfig {
+            frame_rate: 17.3,
+            ..base
+        };
         assert!(Mpeg2Encoder::new(odd).is_err());
     }
 }

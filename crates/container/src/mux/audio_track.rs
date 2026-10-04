@@ -1,11 +1,11 @@
+use super::AudioCodecKind;
+use super::boxes::BoxBuilder;
+use super::boxes::write_unity_matrix;
+use super::sample_table::{AudioBuildPlan, build_co64, build_stco, build_stsc, build_stsz};
+use super::video_track::{build_dinf, build_mdhd};
 use crate::AudioInfo;
 use crate::aac_asc::{Speaker, speaker_order};
 use crate::ac3_sync::{Ac3SyncInfo, Eac3SyncInfo};
-use super::boxes::BoxBuilder;
-use super::boxes::write_unity_matrix;
-use super::video_track::{build_mdhd, build_dinf};
-use super::sample_table::{AudioBuildPlan, build_stsc, build_stsz, build_stco, build_co64};
-use super::AudioCodecKind;
 
 // ---- Audio trak / mdia / minf / stbl / mp4a / esds ---------------------------
 // These layers match ISO/IEC 14496-12/14 for an AAC sound track sharing
@@ -218,11 +218,15 @@ pub(super) fn build_mp4a(info: &AudioInfo) -> Vec<u8> {
 /// read. Adding a wrong `chan` tag is worse than omitting the box — Apple
 /// players would map channels to the wrong speakers.
 pub(crate) fn build_chan_box(asc: &[u8]) -> Option<Vec<u8>> {
-    let order = crate::aac_asc::parse_aac_asc(asc).as_ref().and_then(speaker_order)?;
+    let order = crate::aac_asc::parse_aac_asc(asc)
+        .as_ref()
+        .and_then(speaker_order)?;
     if matches!(order.as_slice(), [Speaker::C] | [Speaker::L, Speaker::R]) {
         return None; // Apple default is correct
     }
-    let (tag, _) = AAC_LAYOUT_TAGS.iter().find(|(_, speakers)| *speakers == order.as_slice())?;
+    let (tag, _) = AAC_LAYOUT_TAGS
+        .iter()
+        .find(|(_, speakers)| *speakers == order.as_slice())?;
     let tag = *tag;
     let mut b = BoxBuilder::new(b"chan");
     b.u32(0); // version (u8) = 0, flags (u24) = 0
@@ -594,7 +598,10 @@ pub fn dec3_body_from_sync(s: &Eac3SyncInfo, data_rate_kbps: u16) -> [u8; 5] {
 /// `substreamid`, which read literally is 0 for a single dependent (ids
 /// start at 0) and would drop `chan_loc` under the syntax's
 /// `if num_dep_sub > 0`, so the count is the reading the syntax admits.
-pub fn dec3_body_from_programme(p: &crate::ac3_sync::Eac3Programme, data_rate_kbps: u16) -> Vec<u8> {
+pub fn dec3_body_from_programme(
+    p: &crate::ac3_sync::Eac3Programme,
+    data_rate_kbps: u16,
+) -> Vec<u8> {
     let s = &p.independent;
     let mut bw = MsbBitWriter::new();
     bw.put(13, u32::from(data_rate_kbps.min(0x1FFF)));
@@ -630,7 +637,11 @@ pub fn eac3_config_from_access_unit(au: &[u8]) -> Option<(Vec<u8>, u32, u16)> {
         return None;
     }
     let kbps = p.bytes as u64 * 8 * u64::from(rate) / spf / 1000;
-    Some((dec3_body_from_programme(&p, kbps.min(0x1FFF) as u16), rate, p.channels()))
+    Some((
+        dec3_body_from_programme(&p, kbps.min(0x1FFF) as u16),
+        rate,
+        p.channels(),
+    ))
 }
 
 /// MSB-first bit writer used to pack the dac3 / dec3 bodies. Keeps layout
@@ -919,13 +930,13 @@ pub fn ddts_body_from_sync(s: &crate::dts_sync::DtsSyncInfo, hd: bool) -> Vec<u8
 /// never garbage.
 fn channel_layout_mask(s: &crate::dts_sync::DtsSyncInfo) -> u32 {
     let mut mask = match s.amode {
-        0 => 0x0001,          // mono: centre
-        1..=4 => 0x0002,      // stereo variants: L/R
-        5 => 0x0003,          // 3/0: C + L/R
-        6 => 0x0012,          // 2/1: L/R + centre surround
-        7 => 0x0013,          // 3/1: C + L/R + centre surround
-        8 => 0x0006,          // 2/2: L/R + surround pair
-        9..=12 => 0x0007,     // 3/2: C + L/R + surround pair (the 5.1 core)
+        0 => 0x0001,      // mono: centre
+        1..=4 => 0x0002,  // stereo variants: L/R
+        5 => 0x0003,      // 3/0: C + L/R
+        6 => 0x0012,      // 2/1: L/R + centre surround
+        7 => 0x0013,      // 3/1: C + L/R + centre surround
+        8 => 0x0006,      // 2/2: L/R + surround pair
+        9..=12 => 0x0007, // 3/2: C + L/R + surround pair (the 5.1 core)
         _ => 0x0002,
     };
     if s.lfe {

@@ -106,8 +106,8 @@ pub(super) fn detect_nvidia() -> Vec<GpuDevice> {
 /// "cannot open shared object file" while the `.so.1` was present.
 /// Fall back to the explicit SONAME path; if both fail, the caller
 /// folds to "no NVML available" same as before.
-pub(super) fn init_nvml_with_fallback(
-) -> Result<nvml_wrapper::Nvml, nvml_wrapper::error::NvmlError> {
+pub(super) fn init_nvml_with_fallback() -> Result<nvml_wrapper::Nvml, nvml_wrapper::error::NvmlError>
+{
     match nvml_wrapper::Nvml::init() {
         Ok(n) => Ok(n),
         Err(_) => nvml_wrapper::Nvml::builder()

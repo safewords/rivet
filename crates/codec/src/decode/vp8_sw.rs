@@ -46,7 +46,15 @@ impl Vp8Decoder {
         if !supports(&codec) {
             bail!("the VP8 decoder decodes VP8, not '{codec}'");
         }
-        Ok(Self { inner: vp8::Decoder::with_threads(super::sw_decode_threads("RIVET_VP8_DECODE_THREADS", share)), info, ready: VecDeque::new(), next_pts: 0 })
+        Ok(Self {
+            inner: vp8::Decoder::with_threads(super::sw_decode_threads(
+                "RIVET_VP8_DECODE_THREADS",
+                share,
+            )),
+            info,
+            ready: VecDeque::new(),
+            next_pts: 0,
+        })
     }
 }
 
@@ -109,7 +117,10 @@ mod tests {
     #[test]
     fn decodes_on_the_software_decoder_threads() {
         let dec = Vp8Decoder::new(info("vp8")).expect("decoder");
-        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_VP8_DECODE_THREADS", 1));
+        assert_eq!(
+            dec.inner.threads(),
+            crate::decode::sw_decode_threads("RIVET_VP8_DECODE_THREADS", 1)
+        );
     }
 
     #[test]
@@ -122,8 +133,12 @@ mod tests {
     #[test]
     fn encoded_frames_come_back_in_order() {
         let (w, h) = (64u32, 48u32);
-        let mut enc = vp8::Encoder::new(vp8::Config { width: w, height: h, ..vp8::Config::default() })
-            .expect("encoder");
+        let mut enc = vp8::Encoder::new(vp8::Config {
+            width: w,
+            height: h,
+            ..vp8::Config::default()
+        })
+        .expect("encoder");
         let mut dec = Vp8Decoder::new(info("vp8")).expect("decoder");
         for n in 0..3u32 {
             let mut frame = vp8::Frame::new(w, h).expect("frame");
@@ -136,7 +151,10 @@ mod tests {
         dec.finish().unwrap();
         for pts in 0..3 {
             let f = dec.decode_next().unwrap().expect("a frame");
-            assert_eq!((f.width, f.height, f.format, f.pts), (w, h, PixelFormat::Yuv420p, pts));
+            assert_eq!(
+                (f.width, f.height, f.format, f.pts),
+                (w, h, PixelFormat::Yuv420p, pts)
+            );
             assert_eq!(f.data.len(), (w * h * 3 / 2) as usize);
         }
         assert!(dec.decode_next().unwrap().is_none());

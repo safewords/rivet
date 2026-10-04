@@ -28,8 +28,19 @@ fn png_bytes(img: &RgbaImage) -> Vec<u8> {
 
 /// A baseline JPEG at quality 95, with `app1` (an EXIF block) when given.
 fn jpeg_bytes(img: &RgbaImage, app1: Option<&[u8]>) -> Vec<u8> {
-    let settings = jpeg::EncodeSettings { quality: 95, exif: app1.map(<[u8]>::to_vec), ..Default::default() };
-    jpeg::encode(&rgb_of(img), img.width(), img.height(), jpeg::PixelFormat::Rgb, &settings).unwrap()
+    let settings = jpeg::EncodeSettings {
+        quality: 95,
+        exif: app1.map(<[u8]>::to_vec),
+        ..Default::default()
+    };
+    jpeg::encode(
+        &rgb_of(img),
+        img.width(),
+        img.height(),
+        jpeg::PixelFormat::Rgb,
+        &settings,
+    )
+    .unwrap()
 }
 
 /// Every raster input format this module reads, made by the workspace's own
@@ -37,13 +48,28 @@ fn jpeg_bytes(img: &RgbaImage, app1: Option<&[u8]>) -> Vec<u8> {
 /// rivet-webp).
 fn raster_inputs(img: &RgbaImage) -> Vec<(SourceFormat, Vec<u8>)> {
     let (w, h) = img.dimensions();
-    let gif = gif::encode(w as u16, h as u16, img.as_raw(), &gif::EncodeOptions::default()).unwrap();
+    let gif = gif::encode(
+        w as u16,
+        h as u16,
+        img.as_raw(),
+        &gif::EncodeOptions::default(),
+    )
+    .unwrap();
     let rgb = rgb_of(img);
-    let tiff = tiff::encode(w, h, tiff::PixelFormat::Rgb8, tiff::SampleData::U8(&rgb), &tiff::EncodeOptions::default())
-        .unwrap();
+    let tiff = tiff::encode(
+        w,
+        h,
+        tiff::PixelFormat::Rgb8,
+        tiff::SampleData::U8(&rgb),
+        &tiff::EncodeOptions::default(),
+    )
+    .unwrap();
     let bmp = bmp::encode(w, h, img.as_raw(), bmp::Format::Rgb24).unwrap();
-    let webp = ::webp::encode(&::webp::Image::new(w, h, img.as_raw().to_vec()).unwrap(), &::webp::EncoderConfig::lossless())
-        .unwrap();
+    let webp = ::webp::encode(
+        &::webp::Image::new(w, h, img.as_raw().to_vec()).unwrap(),
+        &::webp::EncoderConfig::lossless(),
+    )
+    .unwrap();
     vec![
         (SourceFormat::Png, png_bytes(img)),
         (SourceFormat::Jpeg, jpeg_bytes(img, None)),
@@ -66,7 +92,12 @@ fn px(img: &RgbaImage, x: u32, y: u32) -> [u8; 3] {
 /// Luma-free PSNR over the RGB channels, in dB.
 fn psnr(a: &RgbaImage, b: &RgbaImage) -> f64 {
     let (x, y) = (rgb_of(a), rgb_of(b));
-    let mse = x.iter().zip(&y).map(|(p, q)| (f64::from(*p) - f64::from(*q)).powi(2)).sum::<f64>() / x.len() as f64;
+    let mse = x
+        .iter()
+        .zip(&y)
+        .map(|(p, q)| (f64::from(*p) - f64::from(*q)).powi(2))
+        .sum::<f64>()
+        / x.len() as f64;
     10.0 * (255.0f64 * 255.0 / mse.max(1e-9)).log10()
 }
 
@@ -75,7 +106,10 @@ fn run(input: Vec<u8>, spec: &ImageSpec) -> Result<ImageJobOutput> {
 }
 
 fn spec_of(formats: &[ImageFormat]) -> ImageSpec {
-    ImageSpec { formats: formats.to_vec(), ..ImageSpec::default() }
+    ImageSpec {
+        formats: formats.to_vec(),
+        ..ImageSpec::default()
+    }
 }
 
 /// Decode an output back to pixels, by sniffing it and running this
@@ -83,7 +117,9 @@ fn spec_of(formats: &[ImageFormat]) -> ImageSpec {
 /// their format's conformance material in their own repositories).
 fn read_back(bytes: &[u8]) -> RgbaImage {
     let format = sniff(bytes).expect("the output is an image");
-    decode::decode(bytes, format).expect("the output decodes").rgba
+    decode::decode(bytes, format)
+        .expect("the output decodes")
+        .rgba
 }
 
 /// The formats this build writes.
@@ -95,15 +131,26 @@ fn every_raster_input_is_sniffed_probed_and_decoded() {
     for (format, bytes) in raster_inputs(&img) {
         assert_eq!(sniff(&bytes), Some(format), "{format}");
         let info = probe(&bytes).unwrap().expect("an image");
-        assert_eq!((info.container.as_str(), info.width, info.height), (format.label(), 64, 48), "{format}");
+        assert_eq!(
+            (info.container.as_str(), info.width, info.height),
+            (format.label(), 64, 48),
+            "{format}"
+        );
         assert_eq!(info.duration, 0.0);
         let picture = decode::decode(&bytes, format).unwrap();
         assert_eq!(picture.rgba.dimensions(), (64, 48), "{format}");
         // GIF is palettised and JPEG lossy; both keep a red corner red.
-        assert!(near(px(&picture.rgba, 2, 2), RED, 40), "{format}: {:?}", px(&picture.rgba, 2, 2));
+        assert!(
+            near(px(&picture.rgba, 2, 2), RED, 40),
+            "{format}: {:?}",
+            px(&picture.rgba, 2, 2)
+        );
         assert!(!picture.alpha, "{format}");
         // The lossless ones give back every pixel.
-        if matches!(format, SourceFormat::Png | SourceFormat::Tiff | SourceFormat::Bmp | SourceFormat::Webp) {
+        if matches!(
+            format,
+            SourceFormat::Png | SourceFormat::Tiff | SourceFormat::Bmp | SourceFormat::Webp
+        ) {
             assert_eq!(rgb_of(&picture.rgba), rgb_of(&img), "{format}");
         }
     }
@@ -115,12 +162,23 @@ fn every_raster_input_is_sniffed_probed_and_decoded() {
 #[test]
 fn every_written_format_round_trips() {
     let img = picture(160, 120);
-    let out = run(png_bytes(&img), &ImageSpec { quality: Some(90), ..spec_of(&WRITTEN) }).unwrap();
+    let out = run(
+        png_bytes(&img),
+        &ImageSpec {
+            quality: Some(90),
+            ..spec_of(&WRITTEN)
+        },
+    )
+    .unwrap();
     for a in &out.artifacts {
         let back = read_back(&a.bytes);
         assert_eq!(back.dimensions(), (160, 120), "{}", a.format);
         let db = psnr(&back, &img);
-        println!("{} at quality 90: {} bytes, {db:.2} dB RGB PSNR", a.format, a.bytes.len());
+        println!(
+            "{} at quality 90: {} bytes, {db:.2} dB RGB PSNR",
+            a.format,
+            a.bytes.len()
+        );
         match a.format {
             ImageFormat::Png => assert_eq!(rgb_of(&back), rgb_of(&img)),
             ImageFormat::Jpeg => assert!(db > 34.0, "jpeg: {db:.2} dB"),
@@ -130,8 +188,18 @@ fn every_written_format_round_trips() {
     }
     // GIF, TIFF and BMP are inputs only; their round trip is through their
     // own encoders, above. Lossless WebP is exact:
-    let lossless = run(png_bytes(&img), &ImageSpec { lossless: true, ..spec_of(&[ImageFormat::Webp]) }).unwrap();
-    assert_eq!(rgb_of(&read_back(&lossless.artifacts[0].bytes)), rgb_of(&img));
+    let lossless = run(
+        png_bytes(&img),
+        &ImageSpec {
+            lossless: true,
+            ..spec_of(&[ImageFormat::Webp])
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        rgb_of(&read_back(&lossless.artifacts[0].bytes)),
+        rgb_of(&img)
+    );
 }
 
 /// A picture over the single-item size is written as a grid of tiles,
@@ -151,8 +219,14 @@ fn a_large_avif_is_a_grid_and_reads_back_whole() {
 
 #[test]
 fn video_and_audio_are_not_images() {
-    assert_eq!(sniff(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41"), None);
-    assert_eq!(sniff(b"\x1a\x45\xdf\xa3\x00\x00\x00\x00\x00\x00\x00\x00"), None);
+    assert_eq!(
+        sniff(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41"),
+        None
+    );
+    assert_eq!(
+        sniff(b"\x1a\x45\xdf\xa3\x00\x00\x00\x00\x00\x00\x00\x00"),
+        None
+    );
     assert_eq!(sniff(b"ID3\x04\x00\x00\x00\x00\x00\x00"), None);
     // `BM` alone is not a bitmap.
     assert_eq!(sniff(b"BMthis is plain text, not a picture"), None);
@@ -182,23 +256,42 @@ fn exif_orientation_is_applied_and_every_output_is_upright() {
     // top-left corner is the top-right.
     let jpeg = jpeg_bytes(&picture(64, 48), Some(&exif(6)));
     let info = probe(&jpeg).unwrap().unwrap();
-    assert_eq!((info.width, info.height, info.stored_width, info.stored_height), (48, 64, 64, 48));
+    assert_eq!(
+        (
+            info.width,
+            info.height,
+            info.stored_width,
+            info.stored_height
+        ),
+        (48, 64, 64, 48)
+    );
 
     let out = run(jpeg, &spec_of(&[ImageFormat::Png])).unwrap();
     let back = read_back(&out.artifacts[0].bytes);
     assert_eq!(back.dimensions(), (48, 64));
-    assert!(near(px(&back, 45, 2), RED, 40), "the red corner is top-right: {:?}", px(&back, 45, 2));
+    assert!(
+        near(px(&back, 45, 2), RED, 40),
+        "the red corner is top-right: {:?}",
+        px(&back, 45, 2)
+    );
     assert!(!near(px(&back, 2, 2), RED, 60), "and no longer top-left");
 }
 
 #[test]
 fn metadata_never_reaches_an_output() {
     let jpeg = jpeg_bytes(&picture(64, 48), Some(&exif(1)));
-    assert!(jpeg.windows(6).any(|w| w == b"SECRET"), "the fixture carries it");
+    assert!(
+        jpeg.windows(6).any(|w| w == b"SECRET"),
+        "the fixture carries it"
+    );
     let out = run(jpeg, &spec_of(&ImageFormat::ALL)).unwrap();
     for a in &out.artifacts {
         assert!(!a.bytes.windows(6).any(|w| w == b"SECRET"), "{}", a.format);
-        assert!(!a.bytes.windows(4).any(|w| w == b"Exif"), "{}: an EXIF segment", a.format);
+        assert!(
+            !a.bytes.windows(4).any(|w| w == b"Exif"),
+            "{}: an EXIF segment",
+            a.format
+        );
     }
 }
 
@@ -208,7 +301,10 @@ fn every_output_format_is_what_it_says() {
     assert_eq!(out.artifacts.len(), 4);
     for a in &out.artifacts {
         assert_eq!((a.width, a.height, a.label.as_str()), (64, 48, "64x48"));
-        assert_eq!(a.file_name(false), format!("64x48.{}", a.format.extension()));
+        assert_eq!(
+            a.file_name(false),
+            format!("64x48.{}", a.format.extension())
+        );
         match a.format {
             ImageFormat::Avif | ImageFormat::Webp | ImageFormat::Jpeg | ImageFormat::Png => {
                 if a.format == ImageFormat::Avif {
@@ -217,7 +313,12 @@ fn every_output_format_is_what_it_says() {
                 }
                 let back = read_back(&a.bytes);
                 assert_eq!(back.dimensions(), (64, 48), "{}", a.format);
-                assert!(near(px(&back, 2, 2), RED, 40), "{}: {:?}", a.format, px(&back, 2, 2));
+                assert!(
+                    near(px(&back, 2, 2), RED, 40),
+                    "{}: {:?}",
+                    a.format,
+                    px(&back, 2, 2)
+                );
             }
         }
     }
@@ -228,7 +329,10 @@ fn every_output_format_is_what_it_says() {
 #[test]
 fn lossless_webp_and_png_give_back_every_pixel() {
     let img = picture(37, 23);
-    let spec = ImageSpec { lossless: true, ..spec_of(&[ImageFormat::Webp, ImageFormat::Png]) };
+    let spec = ImageSpec {
+        lossless: true,
+        ..spec_of(&[ImageFormat::Webp, ImageFormat::Png])
+    };
     let out = run(png_bytes(&img), &spec).unwrap();
     for a in &out.artifacts {
         assert_eq!(rgb_of(&read_back(&a.bytes)), rgb_of(&img), "{}", a.format);
@@ -246,7 +350,8 @@ fn per_format_quality_at_the_defaults_makes_what_no_quality_does() {
     let mut s = crate::TranscodeSettings::default();
     s.apply_kv("mode", "image").unwrap();
     s.apply_kv("image-format", "avif,webp,jpeg,png").unwrap();
-    s.apply_kv("image-quality", "avif:60,webp:80,jpeg:82").unwrap();
+    s.apply_kv("image-quality", "avif:60,webp:80,jpeg:82")
+        .unwrap();
     s.apply_kv("frames", "poster").unwrap();
     let stated = run(png_bytes(&img), &s.into_image_spec().unwrap()).unwrap();
     assert_eq!(plain.artifacts.len(), stated.artifacts.len());
@@ -255,7 +360,10 @@ fn per_format_quality_at_the_defaults_makes_what_no_quality_does() {
         assert!(a.bytes == b.bytes, "{} differs", a.format);
     }
 
-    let jpeg_low = ImageSpec { format_quality: vec![(ImageFormat::Jpeg, 10)], ..spec_of(&formats) };
+    let jpeg_low = ImageSpec {
+        format_quality: vec![(ImageFormat::Jpeg, 10)],
+        ..spec_of(&formats)
+    };
     let out = run(png_bytes(&img), &jpeg_low).unwrap();
     for (a, b) in plain.artifacts.iter().zip(&out.artifacts) {
         if a.format == ImageFormat::Jpeg {
@@ -270,9 +378,26 @@ fn per_format_quality_at_the_defaults_makes_what_no_quality_does() {
 fn quality_changes_the_lossy_formats() {
     let img = picture(256, 192);
     for format in [ImageFormat::Jpeg, ImageFormat::Webp, ImageFormat::Avif] {
-        let low = run(png_bytes(&img), &ImageSpec { quality: Some(10), ..spec_of(&[format]) }).unwrap();
-        let high = run(png_bytes(&img), &ImageSpec { quality: Some(95), ..spec_of(&[format]) }).unwrap();
-        assert!(low.artifacts[0].bytes.len() < high.artifacts[0].bytes.len(), "{format}");
+        let low = run(
+            png_bytes(&img),
+            &ImageSpec {
+                quality: Some(10),
+                ..spec_of(&[format])
+            },
+        )
+        .unwrap();
+        let high = run(
+            png_bytes(&img),
+            &ImageSpec {
+                quality: Some(95),
+                ..spec_of(&[format])
+            },
+        )
+        .unwrap();
+        assert!(
+            low.artifacts[0].bytes.len() < high.artifacts[0].bytes.len(),
+            "{format}"
+        );
     }
 }
 
@@ -281,9 +406,18 @@ fn renditions_are_fitted_as_video_rungs_are_but_to_the_pixel() {
     let spec = ImageSpec {
         renditions: vec![
             ImageRendition::new(200, 200),
-            ImageRendition { fit: Some(Fit::Cover), ..ImageRendition::new(100, 100) },
-            ImageRendition { fit: Some(Fit::Pad), ..ImageRendition::new(300, 300) },
-            ImageRendition { fit: Some(Fit::Stretch), ..ImageRendition::new(50, 70) },
+            ImageRendition {
+                fit: Some(Fit::Cover),
+                ..ImageRendition::new(100, 100)
+            },
+            ImageRendition {
+                fit: Some(Fit::Pad),
+                ..ImageRendition::new(300, 300)
+            },
+            ImageRendition {
+                fit: Some(Fit::Stretch),
+                ..ImageRendition::new(50, 70)
+            },
             // Larger than the picture: its own size, odd sides and all.
             ImageRendition::new(1000, 1000),
             // A portrait box turns to the landscape picture.
@@ -293,31 +427,83 @@ fn renditions_are_fitted_as_video_rungs_are_but_to_the_pixel() {
     };
     let out = run(png_bytes(&picture(401, 301)), &spec).unwrap();
     let sizes: Vec<(u32, u32)> = out.artifacts.iter().map(|a| (a.width, a.height)).collect();
-    assert_eq!(sizes, vec![(200, 150), (100, 100), (300, 300), (50, 70), (401, 301), (133, 100)]);
+    assert_eq!(
+        sizes,
+        vec![
+            (200, 150),
+            (100, 100),
+            (300, 300),
+            (50, 70),
+            (401, 301),
+            (133, 100)
+        ]
+    );
     let labels: Vec<&str> = out.artifacts.iter().map(|a| a.label.as_str()).collect();
-    assert_eq!(labels, vec!["200x150", "100x100", "300x300", "50x70", "401x301", "133x100"]);
-    assert_eq!(out.artifacts.iter().map(|a| a.rendition).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4, 5]);
+    assert_eq!(
+        labels,
+        vec![
+            "200x150", "100x100", "300x300", "50x70", "401x301", "133x100"
+        ]
+    );
+    assert_eq!(
+        out.artifacts
+            .iter()
+            .map(|a| a.rendition)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4, 5]
+    );
 
     // Pad: black bars above and below a 300x225 picture.
     let padded = read_back(&out.artifacts[2].bytes);
     assert_eq!(px(&padded, 150, 5), [0, 0, 0]);
-    assert!(near(px(&padded, 5, 45), RED, 40), "the picture starts below the bar: {:?}", px(&padded, 5, 45));
+    assert!(
+        near(px(&padded, 5, 45), RED, 40),
+        "the picture starts below the bar: {:?}",
+        px(&padded, 5, 45)
+    );
 }
 
 #[test]
 fn renditions_a_small_picture_collapses_are_made_once() {
     let spec = ImageSpec {
-        renditions: vec![ImageRendition::new(1000, 1000), ImageRendition::new(2000, 2000), ImageRendition::new(64, 64)],
+        renditions: vec![
+            ImageRendition::new(1000, 1000),
+            ImageRendition::new(2000, 2000),
+            ImageRendition::new(64, 64),
+        ],
         ..spec_of(&[ImageFormat::Png])
     };
     let out = run(png_bytes(&picture(120, 90)), &spec).unwrap();
-    assert_eq!(out.artifacts.iter().map(|a| a.rendition).collect::<Vec<_>>(), vec![0, 2]);
-    assert_eq!(out.merged, vec![MergedRendition { rendition: 1, same_as: 0, output: (120, 90) }]);
+    assert_eq!(
+        out.artifacts
+            .iter()
+            .map(|a| a.rendition)
+            .collect::<Vec<_>>(),
+        vec![0, 2]
+    );
+    assert_eq!(
+        out.merged,
+        vec![MergedRendition {
+            rendition: 1,
+            same_as: 0,
+            output: (120, 90)
+        }]
+    );
 
     // Upscale makes both.
-    let up = run(png_bytes(&picture(120, 90)), &ImageSpec { upscale: true, ..spec }).unwrap();
+    let up = run(
+        png_bytes(&picture(120, 90)),
+        &ImageSpec {
+            upscale: true,
+            ..spec
+        },
+    )
+    .unwrap();
     assert_eq!(up.artifacts.len(), 3);
-    assert_eq!((up.artifacts[1].width, up.artifacts[1].height), (2000, 1500));
+    assert_eq!(
+        (up.artifacts[1].width, up.artifacts[1].height),
+        (2000, 1500)
+    );
 }
 
 #[test]
@@ -328,12 +514,24 @@ fn transparency_is_kept_where_the_format_holds_it_and_flattened_onto_white_where
             *p = [0, 0, 0, 0];
         }
     }
-    let out = run(png_bytes(&img), &spec_of(&[ImageFormat::Png, ImageFormat::Webp, ImageFormat::Avif, ImageFormat::Jpeg])).unwrap();
+    let out = run(
+        png_bytes(&img),
+        &spec_of(&[
+            ImageFormat::Png,
+            ImageFormat::Webp,
+            ImageFormat::Avif,
+            ImageFormat::Jpeg,
+        ]),
+    )
+    .unwrap();
     for a in &out.artifacts {
         let back = read_back(&a.bytes);
         let right = back.get_pixel(30, 15);
         match a.format {
-            ImageFormat::Jpeg => assert!(near([right[0], right[1], right[2]], [255, 255, 255], 8), "{right:?}"),
+            ImageFormat::Jpeg => assert!(
+                near([right[0], right[1], right[2]], [255, 255, 255], 8),
+                "{right:?}"
+            ),
             // AVIF's alpha is coded lossy, as its colour is.
             ImageFormat::Avif => assert!(right[3] < 8, "{right:?}"),
             _ => assert_eq!(right[3], 0, "{}", a.format),
@@ -348,44 +546,103 @@ fn a_tagged_picture_is_converted_to_srgb_unless_its_profile_is_kept() {
     let p3 = moxcms::ColorProfile::new_display_p3().encode().unwrap();
     let img = RgbaImage::from_pixel(16, 16, [200, 60, 40, 255]);
     let mut enc = rpng::Encoder::default();
-    enc.metadata.icc_profile = Some(rpng::IccProfile { name: "Display P3".into(), profile: p3.clone() });
-    let tagged = enc.encode(&rpng::Image::from_rgba8(16, 16, img.as_raw().to_vec()).unwrap()).unwrap();
+    enc.metadata.icc_profile = Some(rpng::IccProfile {
+        name: "Display P3".into(),
+        profile: p3.clone(),
+    });
+    let tagged = enc
+        .encode(&rpng::Image::from_rgba8(16, 16, img.as_raw().to_vec()).unwrap())
+        .unwrap();
 
     let converted = run(tagged.clone(), &spec_of(&[ImageFormat::Png])).unwrap();
     let bytes = &converted.artifacts[0].bytes;
-    assert!(!bytes.windows(4).any(|w| w == b"iCCP"), "converted output is untagged sRGB");
+    assert!(
+        !bytes.windows(4).any(|w| w == b"iCCP"),
+        "converted output is untagged sRGB"
+    );
     let c = px(&read_back(bytes), 8, 8);
     assert_ne!(c, [200, 60, 40], "the colour was converted");
-    assert!(c[0] > 200, "P3 red is redder than the same numbers in sRGB: {c:?}");
+    assert!(
+        c[0] > 200,
+        "P3 red is redder than the same numbers in sRGB: {c:?}"
+    );
 
-    let kept = run(tagged, &ImageSpec { keep_icc: true, ..spec_of(&[ImageFormat::Png, ImageFormat::Jpeg, ImageFormat::Webp]) })
-        .unwrap();
+    let kept = run(
+        tagged,
+        &ImageSpec {
+            keep_icc: true,
+            ..spec_of(&[ImageFormat::Png, ImageFormat::Jpeg, ImageFormat::Webp])
+        },
+    )
+    .unwrap();
     for a in &kept.artifacts {
         let marker: &[u8] = match a.format {
             ImageFormat::Png => b"iCCP",
             ImageFormat::Jpeg => b"ICC_PROFILE",
             _ => b"ICCP",
         };
-        assert!(a.bytes.windows(marker.len()).any(|w| w == marker), "{} carries the profile", a.format);
+        assert!(
+            a.bytes.windows(marker.len()).any(|w| w == marker),
+            "{} carries the profile",
+            a.format
+        );
     }
-    assert_eq!(px(&read_back(&kept.artifacts[0].bytes), 8, 8), [200, 60, 40], "and its pixels as they were");
+    assert_eq!(
+        px(&read_back(&kept.artifacts[0].bytes), 8, 8),
+        [200, 60, 40],
+        "and its pixels as they were"
+    );
 }
 
 #[test]
 fn a_spec_that_cannot_mean_anything_is_refused() {
     let refused = [
-        ImageSpec { formats: vec![], ..ImageSpec::default() },
+        ImageSpec {
+            formats: vec![],
+            ..ImageSpec::default()
+        },
         spec_of(&[ImageFormat::Png, ImageFormat::Png]),
-        ImageSpec { quality: Some(80), ..spec_of(&[ImageFormat::Png]) },
-        ImageSpec { quality: Some(0), ..spec_of(&[ImageFormat::Jpeg]) },
-        ImageSpec { quality: Some(80), lossless: true, ..spec_of(&[ImageFormat::Webp]) },
-        ImageSpec { lossless: true, ..spec_of(&[ImageFormat::Jpeg]) },
-        ImageSpec { speed: 0, ..ImageSpec::default() },
-        ImageSpec { renditions: vec![ImageRendition::new(0, 10)], ..ImageSpec::default() },
-        ImageSpec { renditions: vec![ImageRendition::new(20_000, 10)], ..ImageSpec::default() },
-        ImageSpec { frames: Some(FrameSelection::Count(0)), ..ImageSpec::default() },
-        ImageSpec { frames: Some(FrameSelection::At(vec![-1.0])), ..ImageSpec::default() },
-        ImageSpec { frames: Some(FrameSelection::At(vec![])), ..ImageSpec::default() },
+        ImageSpec {
+            quality: Some(80),
+            ..spec_of(&[ImageFormat::Png])
+        },
+        ImageSpec {
+            quality: Some(0),
+            ..spec_of(&[ImageFormat::Jpeg])
+        },
+        ImageSpec {
+            quality: Some(80),
+            lossless: true,
+            ..spec_of(&[ImageFormat::Webp])
+        },
+        ImageSpec {
+            lossless: true,
+            ..spec_of(&[ImageFormat::Jpeg])
+        },
+        ImageSpec {
+            speed: 0,
+            ..ImageSpec::default()
+        },
+        ImageSpec {
+            renditions: vec![ImageRendition::new(0, 10)],
+            ..ImageSpec::default()
+        },
+        ImageSpec {
+            renditions: vec![ImageRendition::new(20_000, 10)],
+            ..ImageSpec::default()
+        },
+        ImageSpec {
+            frames: Some(FrameSelection::Count(0)),
+            ..ImageSpec::default()
+        },
+        ImageSpec {
+            frames: Some(FrameSelection::At(vec![-1.0])),
+            ..ImageSpec::default()
+        },
+        ImageSpec {
+            frames: Some(FrameSelection::At(vec![])),
+            ..ImageSpec::default()
+        },
     ];
     for spec in refused {
         let err = spec.validate().expect_err(&format!("{spec:?}"));
@@ -395,9 +652,15 @@ fn a_spec_that_cannot_mean_anything_is_refused() {
 
 #[test]
 fn frames_on_a_still_image_are_refused() {
-    let spec = ImageSpec { frames: Some(FrameSelection::Count(3)), ..ImageSpec::default() };
+    let spec = ImageSpec {
+        frames: Some(FrameSelection::Count(3)),
+        ..ImageSpec::default()
+    };
     let err = run(png_bytes(&picture(32, 32)), &spec).unwrap_err();
-    assert!(err.to_string().contains("frames pick stills from a video"), "{err}");
+    assert!(
+        err.to_string().contains("frames pick stills from a video"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -411,7 +674,11 @@ fn an_oversized_picture_is_refused_from_its_header() {
     let crc = png[12..29].iter().fold(!0u32, |mut c, &b| {
         c ^= u32::from(b);
         for _ in 0..8 {
-            c = if c & 1 != 0 { (c >> 1) ^ 0xEDB8_8320 } else { c >> 1 };
+            c = if c & 1 != 0 {
+                (c >> 1) ^ 0xEDB8_8320
+            } else {
+                c >> 1
+            };
         }
         c
     });
@@ -423,14 +690,26 @@ fn an_oversized_picture_is_refused_from_its_header() {
 #[test]
 fn a_denied_format_is_refused_by_the_setting_s_name() {
     let heic = include_bytes!("testdata/small.heic").to_vec();
-    let spec = ImageSpec { decode_deny: ImageDecodeDeny::parse("heic").unwrap(), ..spec_of(&[ImageFormat::Png]) };
+    let spec = ImageSpec {
+        decode_deny: ImageDecodeDeny::parse("heic").unwrap(),
+        ..spec_of(&[ImageFormat::Png])
+    };
     let err = run(heic, &spec).unwrap_err();
-    assert_eq!(err.to_string(), "decoding heic images is denied by the image-decode-deny setting");
+    assert_eq!(
+        err.to_string(),
+        "decoding heic images is denied by the image-decode-deny setting"
+    );
     // Only what is named.
     run(png_bytes(&picture(16, 16)), &spec).unwrap();
     assert!(ImageDecodeDeny::parse("heic,webm").is_err());
-    assert_eq!(ImageDecodeDeny::parse("").unwrap(), ImageDecodeDeny::default());
-    assert_eq!(ImageDecodeDeny::parse("heif,HEIC").unwrap().0, vec![SourceFormat::Heic]);
+    assert_eq!(
+        ImageDecodeDeny::parse("").unwrap(),
+        ImageDecodeDeny::default()
+    );
+    assert_eq!(
+        ImageDecodeDeny::parse("heif,HEIC").unwrap().0,
+        vec![SourceFormat::Heic]
+    );
 }
 
 #[test]
@@ -438,7 +717,10 @@ fn heic_is_decoded_by_the_hevc_decoder() {
     let heic = include_bytes!("testdata/small.heic");
     assert_eq!(sniff(heic), Some(SourceFormat::Heic));
     let info = probe(heic).unwrap().unwrap();
-    assert_eq!((info.container.as_str(), info.video_codec.as_str()), ("heic", "hevc"));
+    assert_eq!(
+        (info.container.as_str(), info.video_codec.as_str()),
+        ("heic", "hevc")
+    );
     assert_eq!((info.width, info.height), (64, 48));
 
     let out = run(heic.to_vec(), &spec_of(&[ImageFormat::Png])).unwrap();
@@ -453,16 +735,33 @@ fn heic_is_decoded_by_the_hevc_decoder() {
 #[test]
 fn avif_is_decoded_by_the_av1_decoder_at_every_layout_and_depth() {
     for (name, bytes, size) in [
-        ("4:2:0 10-bit, odd-sized (avifenc)", &include_bytes!("testdata/odd_420_10bit.avif")[..], (65, 49)),
-        ("4:4:4 8-bit (avifenc)", &include_bytes!("testdata/small_444.avif")[..], (64, 48)),
+        (
+            "4:2:0 10-bit, odd-sized (avifenc)",
+            &include_bytes!("testdata/odd_420_10bit.avif")[..],
+            (65, 49),
+        ),
+        (
+            "4:4:4 8-bit (avifenc)",
+            &include_bytes!("testdata/small_444.avif")[..],
+            (64, 48),
+        ),
     ] {
         assert_eq!(sniff(bytes), Some(SourceFormat::Avif), "{name}");
         let info = probe(bytes).unwrap().unwrap();
-        assert_eq!((info.video_codec.as_str(), info.width, info.height), ("av1", size.0, size.1), "{name}");
+        assert_eq!(
+            (info.video_codec.as_str(), info.width, info.height),
+            ("av1", size.0, size.1),
+            "{name}"
+        );
         let result = run(bytes.to_vec(), &spec_of(&[ImageFormat::Png]));
-        let back = read_back(&result.unwrap_or_else(|e| panic!("{name}: {e:#}")).artifacts[0].bytes);
+        let back =
+            read_back(&result.unwrap_or_else(|e| panic!("{name}: {e:#}")).artifacts[0].bytes);
         assert_eq!(back.dimensions(), size, "{name}");
-        assert!(near(px(&back, 3, 3), RED, 48), "{name}: {:?}", px(&back, 3, 3));
+        assert!(
+            near(px(&back, 3, 3), RED, 48),
+            "{name}: {:?}",
+            px(&back, 3, 3)
+        );
     }
 }
 
@@ -474,11 +773,24 @@ fn an_avif_we_wrote_comes_back_with_its_transparency() {
             p[3] = 0;
         }
     }
-    let avif = run(png_bytes(&img), &ImageSpec { quality: Some(95), ..spec_of(&[ImageFormat::Avif]) }).unwrap();
-    let result = run(avif.artifacts[0].bytes.clone(), &spec_of(&[ImageFormat::Png]));
+    let avif = run(
+        png_bytes(&img),
+        &ImageSpec {
+            quality: Some(95),
+            ..spec_of(&[ImageFormat::Avif])
+        },
+    )
+    .unwrap();
+    let result = run(
+        avif.artifacts[0].bytes.clone(),
+        &spec_of(&[ImageFormat::Png]),
+    );
     let back = read_back(&result.unwrap().artifacts[0].bytes);
     assert_eq!(back.dimensions(), (48, 32));
-    assert!(back.get_pixel(40, 16)[3] < 16, "transparent stays transparent");
+    assert!(
+        back.get_pixel(40, 16)[3] < 16,
+        "transparent stays transparent"
+    );
     assert!(back.get_pixel(4, 4)[3] > 240, "opaque stays opaque");
     assert!(near(px(&back, 3, 3), RED, 40), "{:?}", px(&back, 3, 3));
 }
@@ -499,7 +811,11 @@ fn grey_rgb_and_rgba_avif_round_trip_at_their_own_levels() {
     for (x, y, p) in rgba.enumerate_pixels_mut() {
         p[3] = ((x + y) * 255 / (w + h - 2)) as u8;
     }
-    for (name, img, alpha) in [("grey", &grey, false), ("rgb", &colour, false), ("rgba", &rgba, true)] {
+    for (name, img, alpha) in [
+        ("grey", &grey, false),
+        ("rgb", &colour, false),
+        ("rgba", &rgba, true),
+    ] {
         let avif = crate::avif::encode_rgba(img.as_raw(), w, h, alpha, 90).unwrap();
         let back = read_back(&avif);
         let db = psnr(&back, img);
@@ -507,12 +823,27 @@ fn grey_rgb_and_rgba_avif_round_trip_at_their_own_levels() {
         assert!(db > 36.0, "{name}: {db:.2} dB");
         if name == "grey" {
             // The darkest and lightest levels stay where they were.
-            let (lo, hi) = img.pixels().fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
-            let (blo, bhi) = back.pixels().fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
-            assert!(blo.abs_diff(lo) <= 3 && bhi.abs_diff(hi) <= 3, "{lo}..{hi} came back {blo}..{bhi}");
+            let (lo, hi) = img
+                .pixels()
+                .fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
+            let (blo, bhi) = back
+                .pixels()
+                .fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
+            assert!(
+                blo.abs_diff(lo) <= 3 && bhi.abs_diff(hi) <= 3,
+                "{lo}..{hi} came back {blo}..{bhi}"
+            );
         }
-        let worst_alpha = img.pixels().zip(back.pixels()).map(|(a, b)| a[3].abs_diff(b[3])).max().unwrap();
-        assert!(worst_alpha <= if alpha { 8 } else { 0 }, "{name}: alpha off by {worst_alpha}");
+        let worst_alpha = img
+            .pixels()
+            .zip(back.pixels())
+            .map(|(a, b)| a[3].abs_diff(b[3]))
+            .max()
+            .unwrap();
+        assert!(
+            worst_alpha <= if alpha { 8 } else { 0 },
+            "{name}: alpha off by {worst_alpha}"
+        );
     }
 }
 
@@ -535,8 +866,16 @@ fn stills_are_taken_from_a_video() {
     assert!(out.from_video && out.several_frames);
     assert_eq!(out.decoded, "h264");
     assert_eq!(out.artifacts.len(), 8);
-    let times: Vec<f64> = out.artifacts.iter().step_by(2).map(|a| a.frame.unwrap().1).collect();
-    assert!(times.windows(2).all(|w| w[0] < w[1]), "evenly spaced and in order: {times:?}");
+    let times: Vec<f64> = out
+        .artifacts
+        .iter()
+        .step_by(2)
+        .map(|a| a.frame.unwrap().1)
+        .collect();
+    assert!(
+        times.windows(2).all(|w| w[0] < w[1]),
+        "evenly spaced and in order: {times:?}"
+    );
     assert!(times[0] > 0.0 && *times.last().unwrap() < 4.0, "{times:?}");
     assert_eq!(out.artifacts[0].file_name(true), "160x120-001.jpg");
     assert_eq!(out.artifacts[7].file_name(true), "160x120-004.avif");
@@ -550,14 +889,29 @@ fn stills_are_taken_from_a_video() {
     assert!((0.3..0.5).contains(&t), "{t}");
     assert_eq!(poster.artifacts[0].file_name(false), "320x240.png");
 
-    let at = run(clip.clone(), &ImageSpec { frames: Some(FrameSelection::At(vec![1.0, 2.0])), ..spec_of(&[ImageFormat::Png]) })
-        .unwrap();
+    let at = run(
+        clip.clone(),
+        &ImageSpec {
+            frames: Some(FrameSelection::At(vec![1.0, 2.0])),
+            ..spec_of(&[ImageFormat::Png])
+        },
+    )
+    .unwrap();
     let times: Vec<f64> = at.artifacts.iter().map(|a| a.frame.unwrap().1).collect();
     assert_eq!(times, vec![1.0, 2.0]);
 
-    let err = run(clip, &ImageSpec { frames: Some(FrameSelection::At(vec![60.0])), ..spec_of(&[ImageFormat::Png]) })
-        .unwrap_err();
-    assert!(err.to_string().contains("past the end of the video"), "{err}");
+    let err = run(
+        clip,
+        &ImageSpec {
+            frames: Some(FrameSelection::At(vec![60.0])),
+            ..spec_of(&[ImageFormat::Png])
+        },
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("past the end of the video"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -586,11 +940,24 @@ fn settings_build_an_image_spec_and_keep_the_modes_apart() {
     let mut video_knob = crate::TranscodeSettings::default();
     video_knob.apply_kv("mode", "image").unwrap();
     video_knob.apply_kv("codec", "h264").unwrap();
-    assert!(video_knob.into_image_spec().unwrap_err().to_string().contains("`codec`"));
+    assert!(
+        video_knob
+            .into_image_spec()
+            .unwrap_err()
+            .to_string()
+            .contains("`codec`")
+    );
 
     let mut image_knob = crate::TranscodeSettings::default();
     image_knob.apply_kv("image-format", "png").unwrap();
-    assert!(image_knob.clone().into_spec(1280, 720).unwrap_err().to_string().contains("image-format"));
+    assert!(
+        image_knob
+            .clone()
+            .into_spec(1280, 720)
+            .unwrap_err()
+            .to_string()
+            .contains("image-format")
+    );
 
     // `image-decode-deny` rides along on a video job, as `audio-decode-deny` does.
     let mut deny = crate::TranscodeSettings::default();
@@ -599,16 +966,36 @@ fn settings_build_an_image_spec_and_keep_the_modes_apart() {
 
     let mut image_mode = crate::TranscodeSettings::default();
     image_mode.apply_kv("mode", "image").unwrap();
-    assert!(image_mode.into_spec(1280, 720).is_err(), "run_job does not make images");
+    assert!(
+        image_mode.into_spec(1280, 720).is_err(),
+        "run_job does not make images"
+    );
 }
 
 #[test]
 fn place_aligned_to_one_pixel_keeps_odd_sizes_and_to_two_is_place() {
     use crate::fit::{SourceShape, place, place_aligned};
     let shape = SourceShape::square(641, 481);
-    let one = place_aligned(shape, (1000, 1000), Fit::Contain, Orientation::Auto, false, 1);
+    let one = place_aligned(
+        shape,
+        (1000, 1000),
+        Fit::Contain,
+        Orientation::Auto,
+        false,
+        1,
+    );
     assert_eq!(one.canvas, (641, 481));
-    let two = place_aligned(shape, (1000, 1000), Fit::Contain, Orientation::Auto, false, 2);
-    assert_eq!(two, place(shape, (1000, 1000), Fit::Contain, Orientation::Auto, false));
+    let two = place_aligned(
+        shape,
+        (1000, 1000),
+        Fit::Contain,
+        Orientation::Auto,
+        false,
+        2,
+    );
+    assert_eq!(
+        two,
+        place(shape, (1000, 1000), Fit::Contain, Orientation::Auto, false)
+    );
     assert_eq!(two.canvas, (640, 480));
 }

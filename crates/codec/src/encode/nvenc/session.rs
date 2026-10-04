@@ -1,16 +1,16 @@
 //! Live encode session + CUDA context RAII guard.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::ffi::c_void;
 use std::os::raw::c_uint;
 use std::ptr;
 
 use super::constants::{
-    CUcontext, FnCuCtxDestroy, FnCuCtxPopCurrent, FnCuCtxPushCurrent, FnNvEncDestroyBitstreamBuffer,
-    FnNvEncDestroyEncoder, FnNvEncDestroyInputBuffer, FnNvEncEncodePicture, FnNvEncLockBitstream,
-    FnNvEncGetSequenceParams, FnNvEncLockInputBuffer, FnNvEncReconfigureEncoder,
-    FnNvEncUnlockBitstream, FnNvEncUnlockInputBuffer, NV_ENC_RECONFIGURE_PARAMS_VER,
-    NV_ENC_SEQUENCE_PARAM_PAYLOAD_VER, NV_ENC_SUCCESS, RING_SIZE,
+    CUcontext, FnCuCtxDestroy, FnCuCtxPopCurrent, FnCuCtxPushCurrent,
+    FnNvEncDestroyBitstreamBuffer, FnNvEncDestroyEncoder, FnNvEncDestroyInputBuffer,
+    FnNvEncEncodePicture, FnNvEncGetSequenceParams, FnNvEncLockBitstream, FnNvEncLockInputBuffer,
+    FnNvEncReconfigureEncoder, FnNvEncUnlockBitstream, FnNvEncUnlockInputBuffer,
+    NV_ENC_RECONFIGURE_PARAMS_VER, NV_ENC_SEQUENCE_PARAM_PAYLOAD_VER, NV_ENC_SUCCESS, RING_SIZE,
 };
 use super::ffi::{
     NvEncConfig, NvEncInitializeParams, NvEncReconfigureParams, NvEncSequenceParamPayload,

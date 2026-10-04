@@ -62,7 +62,10 @@ fn mdta_meta(items: &[(&str, &str)]) -> Vec<u8> {
         data.extend_from_slice(v.as_bytes());
         ilst.extend(bx(&(i as u32 + 1).to_be_bytes(), &bx(b"data", &data)));
     }
-    bx(b"meta", &cat(&[&hdlr(b"mdta"), &bx(b"keys", &keys), &bx(b"ilst", &ilst)]))
+    bx(
+        b"meta",
+        &cat(&[&hdlr(b"mdta"), &bx(b"keys", &keys), &bx(b"ilst", &ilst)]),
+    )
 }
 
 /// An `mebx` sample entry whose one key is `key`.
@@ -83,17 +86,27 @@ fn iphone_mov() -> Vec<u8> {
         &trak(b"meta", &mebx("com.apple.quicktime.location.ISO6709")),
         &mdta_meta(&[
             ("com.apple.quicktime.location.accuracy.horizontal", "4.748"),
-            ("com.apple.quicktime.location.ISO6709", "+37.3349-122.0090+010.000/"),
+            (
+                "com.apple.quicktime.location.ISO6709",
+                "+37.3349-122.0090+010.000/",
+            ),
             ("com.apple.quicktime.make", "Apple"),
             ("com.apple.quicktime.model", "iPhone 15 Pro"),
             ("com.apple.quicktime.software", "17.4.1"),
-            ("com.apple.quicktime.creationdate", "2024-05-01T12:34:56+0200"),
+            (
+                "com.apple.quicktime.creationdate",
+                "2024-05-01T12:34:56+0200",
+            ),
         ]),
     ]);
     let mut ftyp = b"qt  ".to_vec();
     ftyp.extend_from_slice(&[0, 0, 0, 0]);
     ftyp.extend_from_slice(b"qt  ");
-    cat(&[&bx(b"ftyp", &ftyp), &bx(b"moov", &moov), &bx(b"mdat", &[0u8; 32])])
+    cat(&[
+        &bx(b"ftyp", &ftyp),
+        &bx(b"moov", &moov),
+        &bx(b"mdat", &[0u8; 32]),
+    ])
 }
 
 fn android_mp4() -> Vec<u8> {
@@ -107,12 +120,19 @@ fn android_mp4() -> Vec<u8> {
         &trak(b"vide", &bx(b"avc1", &[0u8; 78])),
         &trak(b"soun", &bx(b"mp4a", &[0u8; 28])),
         &udta,
-        &mdta_meta(&[("com.android.version", "14"), ("com.android.capture.fps", "30.0")]),
+        &mdta_meta(&[
+            ("com.android.version", "14"),
+            ("com.android.capture.fps", "30.0"),
+        ]),
     ]);
     let mut ftyp = b"mp42".to_vec();
     ftyp.extend_from_slice(&[0, 0, 0, 0]);
     ftyp.extend_from_slice(b"isommp42");
-    cat(&[&bx(b"ftyp", &ftyp), &bx(b"moov", &moov), &bx(b"mdat", &[0u8; 32])])
+    cat(&[
+        &bx(b"ftyp", &ftyp),
+        &bx(b"moov", &moov),
+        &bx(b"mdat", &[0u8; 32]),
+    ])
 }
 
 /// Little-endian EXIF the way a phone writes it: Make, Model, DateTime and
@@ -155,7 +175,14 @@ fn phone_exif() -> Vec<u8> {
     entry(&mut t, 3, 2, 2, u32::from(b'W'));
     entry(&mut t, 4, 5, 3, lon_at as u32);
     t.extend_from_slice(&0u32.to_le_bytes());
-    for (n, d) in [(51u32, 1u32), (30, 1), (252, 100), (0, 1), (7, 1), (2856, 100)] {
+    for (n, d) in [
+        (51u32, 1u32),
+        (30, 1),
+        (252, 100),
+        (0, 1),
+        (7, 1),
+        (2856, 100),
+    ] {
         t.extend_from_slice(&n.to_le_bytes());
         t.extend_from_slice(&d.to_le_bytes());
     }
@@ -178,16 +205,37 @@ fn jpeg_with_exif() -> Vec<u8> {
 /// This crate's own MP4: an H.264 track of filler slices.
 fn rivet_mp4() -> Vec<u8> {
     use frame::{EncodedPacket, VideoCodec};
-    let unhex = |s: &str| (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect::<Vec<u8>>();
+    let unhex = |s: &str| {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect::<Vec<u8>>()
+    };
     let sps = unhex("676e001ea6cd940a02ff970110000003001000000303c0f162d960");
     let pps = unhex("68ebe1b2c8b0");
     let au = |nals: &[&[u8]]| -> bytes::Bytes {
-        nals.iter().flat_map(|n| [&[0u8, 0, 0, 1][..], n].concat()).collect::<Vec<u8>>().into()
+        nals.iter()
+            .flat_map(|n| [&[0u8, 0, 0, 1][..], n].concat())
+            .collect::<Vec<u8>>()
+            .into()
     };
-    let mut muxer = crate::mux::Av1Mp4Muxer::new_with_codec(640, 360, 30.0, VideoCodec::H264).unwrap();
-    muxer.add_packet(EncodedPacket { data: au(&[&sps, &pps, &[0x65, 0x88, 0x84, 0x00]]), pts: 0, is_keyframe: true }).unwrap();
+    let mut muxer =
+        crate::mux::Av1Mp4Muxer::new_with_codec(640, 360, 30.0, VideoCodec::H264).unwrap();
+    muxer
+        .add_packet(EncodedPacket {
+            data: au(&[&sps, &pps, &[0x65, 0x88, 0x84, 0x00]]),
+            pts: 0,
+            is_keyframe: true,
+        })
+        .unwrap();
     for i in 1..4u64 {
-        muxer.add_packet(EncodedPacket { data: au(&[&[0x41, 0x9a, 0x02, 0x03]]), pts: i, is_keyframe: false }).unwrap();
+        muxer
+            .add_packet(EncodedPacket {
+                data: au(&[&[0x41, 0x9a, 0x02, 0x03]]),
+                pts: i,
+                is_keyframe: false,
+            })
+            .unwrap();
     }
     muxer.finalize().unwrap().to_vec()
 }
@@ -196,7 +244,10 @@ fn rivet_mp4() -> Vec<u8> {
 fn an_iphone_mov_shows_location_device_time_and_its_location_track() {
     let m = read(&iphone_mov());
     let loc = m.location.clone().unwrap();
-    assert_eq!((loc.latitude, loc.longitude, loc.altitude), (Some(37.3349), Some(-122.009), Some(10.0)));
+    assert_eq!(
+        (loc.latitude, loc.longitude, loc.altitude),
+        (Some(37.3349), Some(-122.009), Some(10.0))
+    );
     assert_eq!(m.device.make.as_deref(), Some("Apple"));
     assert_eq!(m.device.model.as_deref(), Some("iPhone 15 Pro"));
     assert_eq!(m.device.software.as_deref(), Some("17.4.1"));
@@ -206,14 +257,20 @@ fn an_iphone_mov_shows_location_device_time_and_its_location_track() {
     assert_eq!(m.timed_tracks[0].label, "Apple location track");
     assert_eq!(m.timed_tracks[0].kind, TimedTrackKind::Location);
     assert!(m.unclassified.is_empty(), "{:?}", m.unclassified);
-    assert_eq!(m.categories(), Categories::ALL.minus(Categories::NONE.with(Category::Descriptive)));
+    assert_eq!(
+        m.categories(),
+        Categories::ALL.minus(Categories::NONE.with(Category::Descriptive))
+    );
 }
 
 #[test]
 fn an_android_mp4_shows_its_xyz_location_and_version() {
     let m = read(&android_mp4());
     let loc = m.location.clone().unwrap();
-    assert_eq!((loc.latitude, loc.longitude), (Some(37.4219), Some(-122.084)));
+    assert_eq!(
+        (loc.latitude, loc.longitude),
+        (Some(37.4219), Some(-122.084))
+    );
     assert_eq!(m.device.software.as_deref(), Some("14"));
     assert_eq!(m.capture_time.as_deref(), Some("2024-05-01T10:34:56Z"));
     assert!(m.timed_tracks.is_empty());
@@ -258,10 +315,16 @@ fn png_webp_and_tiff_carry_the_same_exif() {
 
     for (name, file) in [("png", png), ("webp", webp), ("tiff", exif.clone())] {
         let m = read(&file);
-        assert!(m.location.as_ref().is_some_and(Location::has_coordinates), "{name}");
+        assert!(
+            m.location.as_ref().is_some_and(Location::has_coordinates),
+            "{name}"
+        );
         assert_eq!(m.device.model.as_deref(), Some("Pixel 8"), "{name}");
         if name == "png" {
-            assert_eq!(m.descriptive.get("title").map(String::as_str), Some("Harbour"));
+            assert_eq!(
+                m.descriptive.get("title").map(String::as_str),
+                Some("Harbour")
+            );
         }
     }
 }
@@ -306,7 +369,12 @@ fn a_heif_exif_item_is_found_through_iloc() {
 }
 
 fn ebml(id: u32, body: &[u8]) -> Vec<u8> {
-    let mut out: Vec<u8> = id.to_be_bytes().iter().copied().skip_while(|&b| b == 0).collect();
+    let mut out: Vec<u8> = id
+        .to_be_bytes()
+        .iter()
+        .copied()
+        .skip_while(|&b| b == 0)
+        .collect();
     out.push(0x01); // an 8-byte size
     out.extend_from_slice(&(body.len() as u64).to_be_bytes()[1..]);
     out.extend_from_slice(body);
@@ -315,7 +383,15 @@ fn ebml(id: u32, body: &[u8]) -> Vec<u8> {
 
 #[test]
 fn a_matroska_file_shows_its_tags_and_date() {
-    let simple = |name: &str, value: &str| ebml(0x67C8, &cat(&[&ebml(0x45A3, name.as_bytes()), &ebml(0x4487, value.as_bytes())]));
+    let simple = |name: &str, value: &str| {
+        ebml(
+            0x67C8,
+            &cat(&[
+                &ebml(0x45A3, name.as_bytes()),
+                &ebml(0x4487, value.as_bytes()),
+            ]),
+        )
+    };
     let tags = ebml(
         0x1254_C367,
         &ebml(
@@ -329,10 +405,22 @@ fn a_matroska_file_shows_its_tags_and_date() {
             ]),
         ),
     );
-    let info = ebml(0x1549_A966, &cat(&[&ebml(0x4D80, b"Lavf61.7.100"), &ebml(0x4461, &0i64.to_be_bytes())]));
-    let file = cat(&[&ebml(0x1A45_DFA3, &ebml(0x4282, b"webm")), &ebml(0x1853_8067, &cat(&[&info, &tags]))]);
+    let info = ebml(
+        0x1549_A966,
+        &cat(&[
+            &ebml(0x4D80, b"Lavf61.7.100"),
+            &ebml(0x4461, &0i64.to_be_bytes()),
+        ]),
+    );
+    let file = cat(&[
+        &ebml(0x1A45_DFA3, &ebml(0x4282, b"webm")),
+        &ebml(0x1853_8067, &cat(&[&info, &tags])),
+    ]);
     let m = read(&file);
-    assert_eq!(m.descriptive.get("title").map(String::as_str), Some("Holiday"));
+    assert_eq!(
+        m.descriptive.get("title").map(String::as_str),
+        Some("Holiday")
+    );
     assert_eq!(m.location.as_ref().and_then(|l| l.latitude), Some(48.8584));
     assert_eq!(m.device.make.as_deref(), Some("Apple"));
     assert_eq!(m.device.software.as_deref(), Some("Lavf61.7.100"));
@@ -357,13 +445,26 @@ fn flac_and_mp3_tags_round_trip_through_the_writers() {
     si[13] = 0xF0;
     flac_file.extend_from_slice(&si);
     flac_file.extend_from_slice(&[0xFF, 0xF8, 0x69, 0x08, 0x00, 0x00]);
-    assert!(read(&flac_file).is_empty(), "a bare FLAC stream carries nothing");
+    assert!(
+        read(&flac_file).is_empty(),
+        "a bare FLAC stream carries nothing"
+    );
     let written = write::flac(&flac_file, &kept).unwrap();
-    assert!(written.ends_with(&[0xFF, 0xF8, 0x69, 0x08, 0x00, 0x00]), "the audio follows untouched");
+    assert!(
+        written.ends_with(&[0xFF, 0xF8, 0x69, 0x08, 0x00, 0x00]),
+        "the audio follows untouched"
+    );
     let back = read(&written);
-    assert_eq!(back.descriptive.get("title").map(String::as_str), Some("Song"));
+    assert_eq!(
+        back.descriptive.get("title").map(String::as_str),
+        Some("Song")
+    );
     assert_eq!(back.capture_time.as_deref(), Some("2020-02-02T00:00:00Z"));
-    assert!(back.device.is_empty(), "no vendor string: {:?}", back.device);
+    assert!(
+        back.device.is_empty(),
+        "no vendor string: {:?}",
+        back.device
+    );
     let none = write::flac(&flac_file, &Metadata::default()).unwrap();
     assert!(read(&none).is_empty());
 
@@ -375,7 +476,10 @@ fn flac_and_mp3_tags_round_trip_through_the_writers() {
     assert!(written.starts_with(b"ID3\x04"));
     assert!(written.ends_with(&mp3_file));
     let back = read(&written);
-    assert_eq!(back.descriptive.get("artist").map(String::as_str), Some("Band"));
+    assert_eq!(
+        back.descriptive.get("artist").map(String::as_str),
+        Some("Band")
+    );
     assert_eq!(back.capture_time.as_deref(), Some("2020-02-02T00:00:00Z"));
     assert_eq!(write::mp3(&mp3_file, &Metadata::default()), mp3_file);
 }
@@ -411,13 +515,20 @@ fn each_kept_category_is_written_alone_and_the_media_still_lines_up() {
         assert!(back.unclassified.is_empty(), "{:?}", back.unclassified);
         if keep.contains(Category::Location) {
             let loc = back.location.clone().unwrap();
-            assert_eq!((loc.latitude, loc.longitude), (Some(37.3349), Some(-122.009)));
+            assert_eq!(
+                (loc.latitude, loc.longitude),
+                (Some(37.3349), Some(-122.009))
+            );
         }
         if keep.contains(Category::CaptureTime) {
-            assert_eq!(back.capture_time.as_deref(), Some("2024-05-01T12:34:56+02:00"));
+            assert_eq!(
+                back.capture_time.as_deref(),
+                Some("2024-05-01T12:34:56+02:00")
+            );
         }
         // The samples are where the moved chunk offsets say.
-        let demuxed = crate::streaming::demux_streaming_shared(bytes::Bytes::from(written.clone())).unwrap();
+        let demuxed =
+            crate::streaming::demux_streaming_shared(bytes::Bytes::from(written.clone())).unwrap();
         assert_eq!(demuxed.header().info.width, before_first.info.width);
         let a = sample_bytes(&out);
         let b = sample_bytes(&written);
@@ -427,9 +538,15 @@ fn each_kept_category_is_written_alone_and_the_media_still_lines_up() {
 
 /// The bytes the first chunk offset points at.
 fn sample_bytes(file: &[u8]) -> Vec<u8> {
-    let moov = isobmff::boxes(file).find(|b| &b.kind == b"moov").unwrap().body;
+    let moov = isobmff::boxes(file)
+        .find(|b| &b.kind == b"moov")
+        .unwrap()
+        .body;
     let stco = {
-        let at = moov.windows(4).position(|w| w == b"stco" || w == b"co64").unwrap();
+        let at = moov
+            .windows(4)
+            .position(|w| w == b"stco" || w == b"co64")
+            .unwrap();
         (&moov[at..at + 4], &moov[at + 4..])
     };
     let off = match stco.0 {
@@ -442,26 +559,39 @@ fn sample_bytes(file: &[u8]) -> Vec<u8> {
 #[test]
 fn descriptive_tags_round_trip_through_mp4() {
     let mut kept = Metadata::default();
-    kept.descriptive.insert("title".into(), "Harbour at dusk".into());
-    kept.descriptive.insert("copyright".into(), "2024 Someone".into());
+    kept.descriptive
+        .insert("title".into(), "Harbour at dusk".into());
+    kept.descriptive
+        .insert("copyright".into(), "2024 Someone".into());
     let written = write::mp4(&rivet_mp4(), &kept).unwrap();
     let back = read(&written);
     assert_eq!(back.descriptive, kept.descriptive);
-    assert_eq!(back.categories(), Categories::NONE.with(Category::Descriptive));
+    assert_eq!(
+        back.categories(),
+        Categories::NONE.with(Category::Descriptive)
+    );
 }
 
 #[test]
 fn a_fragmented_file_is_refused() {
     let mut kept = Metadata::default();
     kept.descriptive.insert("title".into(), "x".into());
-    let frag = cat(&[&bx(b"ftyp", b"iso6\0\0\0\0iso6"), &bx(b"moov", &mvhd(0)), &bx(b"moof", &[]), &bx(b"mdat", &[])]);
+    let frag = cat(&[
+        &bx(b"ftyp", b"iso6\0\0\0\0iso6"),
+        &bx(b"moov", &mvhd(0)),
+        &bx(b"moof", &[]),
+        &bx(b"mdat", &[]),
+    ]);
     assert!(write::mp4(&frag, &kept).is_err());
 }
 
 #[test]
 fn unknown_items_are_listed_not_dropped() {
     let moov = cat(&[&mvhd(0), &bx(b"udta", &bx(b"ZZZZ", b"secret"))]);
-    let m = read(&cat(&[&bx(b"ftyp", b"isom\0\0\0\0isom"), &bx(b"moov", &moov)]));
+    let m = read(&cat(&[
+        &bx(b"ftyp", b"isom\0\0\0\0isom"),
+        &bx(b"moov", &moov),
+    ]));
     assert_eq!(m.unclassified, vec!["udta/ZZZZ".to_string()]);
     assert!(!m.is_empty());
 }
@@ -472,7 +602,11 @@ fn category_lists_parse() {
     assert_eq!(Categories::parse_list("none").unwrap(), Categories::NONE);
     assert_eq!(Categories::parse_list("all").unwrap(), Categories::ALL);
     let c = Categories::parse_list("location, capture-time").unwrap();
-    assert!(c.contains(Category::Location) && c.contains(Category::CaptureTime) && !c.contains(Category::Device));
+    assert!(
+        c.contains(Category::Location)
+            && c.contains(Category::CaptureTime)
+            && !c.contains(Category::Device)
+    );
     assert_eq!(c.to_string(), "location,capture_time");
     assert!(Categories::parse_list("gps").is_err());
 }
@@ -480,11 +614,23 @@ fn category_lists_parse() {
 #[test]
 fn dates_normalise() {
     assert_eq!(normalize_date("2024:05:01 12:34:56"), "2024-05-01T12:34:56");
-    assert_eq!(normalize_date("2024-05-01T12:34:56+0200"), "2024-05-01T12:34:56+02:00");
-    assert_eq!(normalize_date("2024-05-01T12:34:56.123Z"), "2024-05-01T12:34:56.123Z");
+    assert_eq!(
+        normalize_date("2024-05-01T12:34:56+0200"),
+        "2024-05-01T12:34:56+02:00"
+    );
+    assert_eq!(
+        normalize_date("2024-05-01T12:34:56.123Z"),
+        "2024-05-01T12:34:56.123Z"
+    );
     assert_eq!(normalize_date("1999"), "1999");
-    assert_eq!(quicktime_time(u64::from(QT_2024_05_01)), "2024-05-01T10:34:56Z");
-    assert_eq!(parse_unix_time("2024-05-01T12:34:56+02:00"), parse_unix_time("2024-05-01T10:34:56Z"));
+    assert_eq!(
+        quicktime_time(u64::from(QT_2024_05_01)),
+        "2024-05-01T10:34:56Z"
+    );
+    assert_eq!(
+        parse_unix_time("2024-05-01T12:34:56+02:00"),
+        parse_unix_time("2024-05-01T10:34:56Z")
+    );
 }
 
 #[test]
@@ -507,9 +653,18 @@ fn an_avi_info_list_is_read() {
         }
         b
     };
-    let info = cat(&[b"INFO", &sub(b"ISFT", b"Lavf58.76.100\0"), &sub(b"ICRD", b"2019-03-04\0")]);
+    let info = cat(&[
+        b"INFO",
+        &sub(b"ISFT", b"Lavf58.76.100\0"),
+        &sub(b"ICRD", b"2019-03-04\0"),
+    ]);
     let list = sub(b"LIST", &info);
-    let file = cat(&[b"RIFF", &((list.len() + 4) as u32).to_le_bytes(), b"AVI ", &list]);
+    let file = cat(&[
+        b"RIFF",
+        &((list.len() + 4) as u32).to_le_bytes(),
+        b"AVI ",
+        &list,
+    ]);
     let m = read(&file);
     assert_eq!(m.device.software.as_deref(), Some("Lavf58.76.100"));
     assert_eq!(m.capture_time.as_deref(), Some("2019-03-04"));
@@ -523,9 +678,17 @@ fn keep_policies_parse_and_print() {
     let k = Keep::parse("location:approximate, capture_time:date,device,descriptive").unwrap();
     assert_eq!(
         k,
-        Keep { location: LocationKeep::Approximate, capture_time: TimeKeep::Date, device: DeviceKeep::Keep, descriptive: true }
+        Keep {
+            location: LocationKeep::Approximate,
+            capture_time: TimeKeep::Date,
+            device: DeviceKeep::Keep,
+            descriptive: true
+        }
     );
-    assert_eq!(k.to_string(), "location:approximate,capture_time:date,device,descriptive");
+    assert_eq!(
+        k.to_string(),
+        "location:approximate,capture_time:date,device,descriptive"
+    );
     assert_eq!(Keep::parse(&k.to_string()).unwrap(), k);
     assert_eq!(Keep::parse("device:all").unwrap().device, DeviceKeep::All);
     for bad in ["gps", "location:rough", "descriptive:some", "all:yes"] {
@@ -544,15 +707,37 @@ fn phone() -> Metadata {
 #[test]
 fn an_approximate_location_is_rounded_and_nothing_finer_travels() {
     let kept = phone().kept(Keep::parse("location:approximate").unwrap());
-    assert_eq!(kept.location, Some(Location { latitude: Some(37.33), longitude: Some(-122.01), altitude: None, name: None }));
+    assert_eq!(
+        kept.location,
+        Some(Location {
+            latitude: Some(37.33),
+            longitude: Some(-122.01),
+            altitude: None,
+            name: None
+        })
+    );
     let written = write::mp4(&rivet_mp4(), &kept).unwrap();
     let back = read(&written);
     assert_eq!(back.location.as_ref().and_then(|l| l.latitude), Some(37.33));
     let keep = Keep::parse("location:approximate").unwrap();
-    assert!(back.violations(keep, &[]).is_empty(), "{:?}", back.violations(keep, &[]));
+    assert!(
+        back.violations(keep, &[]).is_empty(),
+        "{:?}",
+        back.violations(keep, &[])
+    );
     // The whole location, checked against approximate, is refused.
-    let full = read(&write::mp4(&rivet_mp4(), &phone().kept(Keep::parse("location").unwrap())).unwrap());
-    assert!(full.violations(keep, &[]).iter().any(|v| v.contains("finer than approximate")));
+    let full = read(
+        &write::mp4(
+            &rivet_mp4(),
+            &phone().kept(Keep::parse("location").unwrap()),
+        )
+        .unwrap(),
+    );
+    assert!(
+        full.violations(keep, &[])
+            .iter()
+            .any(|v| v.contains("finer than approximate"))
+    );
 }
 
 #[test]
@@ -561,10 +746,31 @@ fn a_date_keeps_the_day_and_zeroes_the_time() {
     let kept = phone().kept(keep);
     assert_eq!(kept.capture_time.as_deref(), Some("2024-05-01T00:00:00"));
     let back = read(&write::mp4(&rivet_mp4(), &kept).unwrap());
-    assert!(back.capture_time.as_deref().unwrap().starts_with("2024-05-01T00:00:00"), "{:?}", back.capture_time);
-    assert!(back.violations(keep, &[]).is_empty(), "{:?}", back.violations(keep, &[]));
-    let full = read(&write::mp4(&rivet_mp4(), &phone().kept(Keep::parse("capture_time").unwrap())).unwrap());
-    assert!(full.violations(keep, &[]).iter().any(|v| v.contains("time of day")));
+    assert!(
+        back.capture_time
+            .as_deref()
+            .unwrap()
+            .starts_with("2024-05-01T00:00:00"),
+        "{:?}",
+        back.capture_time
+    );
+    assert!(
+        back.violations(keep, &[]).is_empty(),
+        "{:?}",
+        back.violations(keep, &[])
+    );
+    let full = read(
+        &write::mp4(
+            &rivet_mp4(),
+            &phone().kept(Keep::parse("capture_time").unwrap()),
+        )
+        .unwrap(),
+    );
+    assert!(
+        full.violations(keep, &[])
+            .iter()
+            .any(|v| v.contains("time of day"))
+    );
 }
 
 #[test]
@@ -573,13 +779,23 @@ fn device_keep_drops_serial_and_owner_and_keep_all_does_not() {
     assert_eq!(kept.device.model.as_deref(), Some("iPhone 15 Pro"));
     assert!(kept.device.serial.is_none() && kept.device.owner.is_none());
     let all = phone().kept(Keep::parse("device:all").unwrap());
-    assert_eq!((all.device.serial.as_deref(), all.device.owner.as_deref()), (Some("F2LXK0Q1"), Some("Ada")));
+    assert_eq!(
+        (all.device.serial.as_deref(), all.device.owner.as_deref()),
+        (Some("F2LXK0Q1"), Some("Ada"))
+    );
     // In a still, where EXIF has a place for them.
     let tiff = exif::build(&all).unwrap();
     let mut back = Metadata::default();
     exif::read_tiff(&tiff, &mut back);
-    assert!(back.violations(Keep::parse("device").unwrap(), &[]).iter().any(|v| v.contains("serial")));
-    assert!(back.violations(Keep::parse("device:all").unwrap(), &[]).is_empty());
+    assert!(
+        back.violations(Keep::parse("device").unwrap(), &[])
+            .iter()
+            .any(|v| v.contains("serial"))
+    );
+    assert!(
+        back.violations(Keep::parse("device:all").unwrap(), &[])
+            .is_empty()
+    );
 }
 
 #[test]
@@ -587,9 +803,16 @@ fn encoder_names_in_audio_are_device_metadata_unless_allowed() {
     let mut m = Metadata::default();
     m.embedded_software.push("Lavc62.28.101".into());
     assert_eq!(m.categories(), Categories::NONE.with(Category::Device));
-    assert!(m.violations(Keep::NONE, &[]).iter().any(|v| v.contains("encoder name")));
+    assert!(
+        m.violations(Keep::NONE, &[])
+            .iter()
+            .any(|v| v.contains("encoder name"))
+    );
     assert!(m.violations(Keep::parse("device").unwrap(), &[]).is_empty());
     let mut ours = Metadata::default();
     ours.embedded_software.push("LAME3.100".into());
-    assert!(ours.violations(Keep::NONE, &["LAME3.100".into()]).is_empty());
+    assert!(
+        ours.violations(Keep::NONE, &["LAME3.100".into()])
+            .is_empty()
+    );
 }

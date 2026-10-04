@@ -182,7 +182,10 @@ pub(super) fn nvenc_codec_guid(codec: crate::frame::VideoCodec) -> Guid {
         VideoCodec::Av1 => NV_ENC_CODEC_AV1_GUID,
         VideoCodec::H264 => NV_ENC_CODEC_H264_GUID,
         VideoCodec::H265 => NV_ENC_CODEC_HEVC_GUID,
-        codec => unreachable!("{} is refused by the constructor (refuse_unencoded_codec)", codec.label()),
+        codec => unreachable!(
+            "{} is refused by the constructor (refuse_unencoded_codec)",
+            codec.label()
+        ),
     }
 }
 
@@ -199,8 +202,16 @@ pub(super) fn nvenc_profile_guid(codec: crate::frame::VideoCodec, ten_bit: bool)
         VideoCodec::H264 => NV_ENC_H264_PROFILE_HIGH_GUID,
         VideoCodec::H265 if ten_bit => NV_ENC_HEVC_PROFILE_MAIN10_GUID,
         VideoCodec::H265 => NV_ENC_HEVC_PROFILE_MAIN_GUID,
-        VideoCodec::Av1 => Guid { data1: 0, data2: 0, data3: 0, data4: [0u8; 8] },
-        codec => unreachable!("{} is refused by the constructor (refuse_unencoded_codec)", codec.label()),
+        VideoCodec::Av1 => Guid {
+            data1: 0,
+            data2: 0,
+            data3: 0,
+            data4: [0u8; 8],
+        },
+        codec => unreachable!(
+            "{} is refused by the constructor (refuse_unencoded_codec)",
+            codec.label()
+        ),
     }
 }
 
@@ -278,15 +289,15 @@ pub(super) type FnNvEncodeAPIGetMaxSupportedVersion = unsafe extern "C" fn(*mut 
 pub(super) type FnNvEncodeAPICreateInstance =
     unsafe extern "C" fn(*mut super::buffers::NvEncFunctionList) -> c_uint;
 
-pub(super) type FnNvEncGetEncodeGUIDCount =
-    unsafe extern "C" fn(*mut c_void, *mut u32) -> c_uint;
+pub(super) type FnNvEncGetEncodeGUIDCount = unsafe extern "C" fn(*mut c_void, *mut u32) -> c_uint;
 pub(super) type FnNvEncGetEncodeGUIDs =
     unsafe extern "C" fn(*mut c_void, *mut Guid, u32, *mut u32) -> c_uint;
 pub(super) type FnNvEncGetEncodeCaps =
     unsafe extern "C" fn(*mut c_void, Guid, *mut NvEncCapsParam, *mut c_int) -> c_uint;
-pub(super) type FnNvEncOpenEncodeSessionEx =
-    unsafe extern "C" fn(*mut super::ffi::NvEncOpenEncodeSessionExParams, *mut *mut c_void)
-        -> c_uint;
+pub(super) type FnNvEncOpenEncodeSessionEx = unsafe extern "C" fn(
+    *mut super::ffi::NvEncOpenEncodeSessionExParams,
+    *mut *mut c_void,
+) -> c_uint;
 pub(super) type FnNvEncInitializeEncoder =
     unsafe extern "C" fn(*mut c_void, *mut super::ffi::NvEncInitializeParams) -> c_uint;
 pub(super) type FnNvEncCreateInputBuffer =
@@ -299,16 +310,13 @@ pub(super) type FnNvEncDestroyBitstreamBuffer =
     unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_uint;
 pub(super) type FnNvEncLockInputBuffer =
     unsafe extern "C" fn(*mut c_void, *mut super::buffers::NvEncLockInputBuffer) -> c_uint;
-pub(super) type FnNvEncUnlockInputBuffer =
-    unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_uint;
+pub(super) type FnNvEncUnlockInputBuffer = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_uint;
 pub(super) type FnNvEncEncodePicture =
     unsafe extern "C" fn(*mut c_void, *mut super::buffers::NvEncPicParams) -> c_uint;
 pub(super) type FnNvEncLockBitstream =
     unsafe extern "C" fn(*mut c_void, *mut super::buffers::NvEncLockBitstream) -> c_uint;
-pub(super) type FnNvEncUnlockBitstream =
-    unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_uint;
-pub(super) type FnNvEncDestroyEncoder =
-    unsafe extern "C" fn(*mut c_void) -> c_uint;
+pub(super) type FnNvEncUnlockBitstream = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_uint;
+pub(super) type FnNvEncDestroyEncoder = unsafe extern "C" fn(*mut c_void) -> c_uint;
 /// `NvEncReconfigureEncoder(encoder, &reconfigure_params)`. The one entry
 /// point that restarts a session in place — with `resetEncoder` set it
 /// clears the rate-control state and, with `forceIDR`, opens a new GOP on
@@ -324,9 +332,13 @@ pub(super) type FnNvEncGetSequenceParams =
 /// `NvEncGetEncodePresetConfigEx(encoder, encodeGuid, presetGuid, tuningInfo, &preset_cfg)`.
 /// SDK 12.2 entry; `Ex` variant takes tuning info so the seeded config
 /// reflects both preset + tuning rather than preset only.
-pub(super) type FnNvEncGetEncodePresetConfigEx =
-    unsafe extern "C" fn(*mut c_void, Guid, Guid, u32, *mut super::ffi::NvEncPresetConfig)
-        -> c_uint;
+pub(super) type FnNvEncGetEncodePresetConfigEx = unsafe extern "C" fn(
+    *mut c_void,
+    Guid,
+    Guid,
+    u32,
+    *mut super::ffi::NvEncPresetConfig,
+) -> c_uint;
 
 // Squad-22: pin the 10-bit buffer-format constant. The SDK
 // enumeration is `0x00010000`; if that ever changes (NVIDIA splits

@@ -19,22 +19,47 @@ pub(super) fn apply(
 ) -> Result<VideoFrame> {
     let pw = even(pw.max(frame.width));
     let ph = even(ph.max(frame.height));
-    let px = x.map(even).unwrap_or_else(|| even(pw.saturating_sub(frame.width) / 2));
-    let py = y.map(even).unwrap_or_else(|| even(ph.saturating_sub(frame.height) / 2));
+    let px = x
+        .map(even)
+        .unwrap_or_else(|| even(pw.saturating_sub(frame.width) / 2));
+    let py = y
+        .map(even)
+        .unwrap_or_else(|| even(ph.saturating_sub(frame.height) / 2));
     pad(frame, pw, ph, px, py)
 }
 
 fn pad(frame: &VideoFrame, pw: u32, ph: u32, x: u32, y: u32) -> Result<VideoFrame> {
     let (pw, ph, x, y) = (even(pw), even(ph), even(x), even(y));
     if x + frame.width > pw || y + frame.height > ph {
-        bail!("pad {pw}x{ph} with frame {}x{} at +{x}+{y} overflows", frame.width, frame.height);
+        bail!(
+            "pad {pw}x{ph} with frame {}x{} at +{x}+{y} overflows",
+            frame.width,
+            frame.height
+        );
     }
     let bps = bps(frame.format)?;
     let (yp, up, vp) = planes(frame, bps)?;
     let (luma_fill, chroma_fill) = black_fill(frame.format);
     let (fw, fh) = (frame.width as usize, frame.height as usize);
-    let y_new = pad_plane(yp, fw, fh, pw as usize, ph as usize, x as usize, y as usize, bps, &luma_fill);
-    let ca = (fw / 2, fh / 2, (pw / 2) as usize, (ph / 2) as usize, (x / 2) as usize, (y / 2) as usize);
+    let y_new = pad_plane(
+        yp,
+        fw,
+        fh,
+        pw as usize,
+        ph as usize,
+        x as usize,
+        y as usize,
+        bps,
+        &luma_fill,
+    );
+    let ca = (
+        fw / 2,
+        fh / 2,
+        (pw / 2) as usize,
+        (ph / 2) as usize,
+        (x / 2) as usize,
+        (y / 2) as usize,
+    );
     let u_new = pad_plane(up, ca.0, ca.1, ca.2, ca.3, ca.4, ca.5, bps, &chroma_fill);
     let v_new = pad_plane(vp, ca.0, ca.1, ca.2, ca.3, ca.4, ca.5, bps, &chroma_fill);
     Ok(assemble(frame, pw, ph, y_new, u_new, v_new))
@@ -42,6 +67,7 @@ fn pad(frame: &VideoFrame, pw: u32, ph: u32, x: u32, y: u32) -> Result<VideoFram
 
 /// Place an `sw×sh` plane at `(ox, oy)` inside a `dw×dh` canvas pre-filled with
 /// `fill_sample` (`bps`-byte samples).
+#[allow(clippy::too_many_arguments)] // source, canvas and offset dimensions, one by one
 fn pad_plane(
     src: &[u8],
     sw: usize,
@@ -69,6 +95,9 @@ fn pad_plane(
 fn black_fill(format: PixelFormat) -> (Vec<u8>, Vec<u8>) {
     match format {
         PixelFormat::Yuv420p => (vec![16], vec![128]),
-        _ => ((64u16).to_le_bytes().to_vec(), (512u16).to_le_bytes().to_vec()),
+        _ => (
+            (64u16).to_le_bytes().to_vec(),
+            (512u16).to_le_bytes().to_vec(),
+        ),
     }
 }

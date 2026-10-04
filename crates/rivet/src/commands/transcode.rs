@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rivet::{JobOutput, RungArtifact, TranscodeSettings};
 
 use crate::{AudioArg, ColorArg, GpuFamilyArg, ModeArg, PixelArg, SeamArg, value_name};
@@ -123,13 +123,19 @@ pub(crate) fn run(args: TranscodeArgs) -> Result<()> {
     }
     .apply(&mut settings)?;
     if let Some(v) = &args.max_short_side {
-        settings.apply_kv("max-short-side", v).context("parsing --max-short-side")?;
+        settings
+            .apply_kv("max-short-side", v)
+            .context("parsing --max-short-side")?;
     }
     if let Some(v) = &args.max_fps {
-        settings.apply_kv("max-fps", v).context("parsing --max-fps")?;
+        settings
+            .apply_kv("max-fps", v)
+            .context("parsing --max-fps")?;
     }
     if let Some(v) = &args.input_fps {
-        settings.apply_kv("input-fps", v).context("parsing --input-fps")?;
+        settings
+            .apply_kv("input-fps", v)
+            .context("parsing --input-fps")?;
     }
     args.fitting.apply(&mut settings)?;
     args.file.apply(&mut settings)?;
@@ -146,7 +152,9 @@ pub(crate) fn run(args: TranscodeArgs) -> Result<()> {
         ("audio-quality", &args.audio_quality),
     ] {
         if let Some(v) = value {
-            settings.apply_kv(key, v).with_context(|| format!("parsing --{key}"))?;
+            settings
+                .apply_kv(key, v)
+                .with_context(|| format!("parsing --{key}"))?;
         }
     }
     settings.apply_kv("subtitles", &args.subtitles)?;
@@ -190,15 +198,16 @@ pub(crate) fn run(args: TranscodeArgs) -> Result<()> {
         None => None,
     };
 
-    let out = rivet::run_job_blocking_owned(
-        bytes.clone(),
-        &spec,
-        output_dir.as_deref(),
-        sink,
-    )
-    .with_context(|| format!("transcoding {}", args.input.display()))?;
+    let out = rivet::run_job_blocking_owned(bytes.clone(), &spec, output_dir.as_deref(), sink)
+        .with_context(|| format!("transcoding {}", args.input.display()))?;
 
-    write_outputs(&args, &out, output_dir.as_deref(), single_file_target.as_deref(), spec.file_extension())?;
+    write_outputs(
+        &args,
+        &out,
+        output_dir.as_deref(),
+        single_file_target.as_deref(),
+        spec.file_extension(),
+    )?;
     if let Some(made) = made_dir {
         made.keep();
     }
@@ -209,9 +218,15 @@ pub(crate) fn run(args: TranscodeArgs) -> Result<()> {
 /// Decide where outputs go.
 /// Returns `(output_dir, single_file_target)`. Makes nothing: the caller
 /// creates the directory for the run.
-fn plan_output(args: &TranscodeArgs, spec: &rivet::OutputSpec) -> (Option<PathBuf>, Option<PathBuf>) {
+fn plan_output(
+    args: &TranscodeArgs,
+    spec: &rivet::OutputSpec,
+) -> (Option<PathBuf>, Option<PathBuf>) {
     if spec.mode == rivet::OutputMode::AudioOnly {
-        let file = args.output.clone().unwrap_or_else(|| default_file_ext(&args.input, spec.file_extension()));
+        let file = args
+            .output
+            .clone()
+            .unwrap_or_else(|| default_file_ext(&args.input, spec.file_extension()));
         return (None, Some(file));
     }
     match args.mode {
@@ -325,7 +340,11 @@ fn parse_wxh(s: &str) -> Result<rivet::settings::RungArg> {
     if rung.width == 0 || rung.height == 0 {
         bail!("rung '{s}' has a zero dimension");
     }
-    Ok(rivet::settings::RungArg { width: rung.width & !1, height: rung.height & !1, ..rung })
+    Ok(rivet::settings::RungArg {
+        width: rung.width & !1,
+        height: rung.height & !1,
+        ..rung
+    })
 }
 
 /// `<stem>.<codec>.<ext>` beside the input: `clip.av1.mp4`, `clip.prores.mov`,

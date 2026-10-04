@@ -96,7 +96,7 @@ fn build_hevc_sps_1920x1080() -> Vec<u8> {
     w.write_bits(0, 3);
     w.write_bits(1, 1);
     // profile_tier_level (max_sub_layers_minus1=0)
-    w.write_bits(0b0_0_00001, 8);
+    w.write_bits(0b000_0001, 8);
     w.write_bits(0x40000000, 32);
     w.write_bits(0, 48);
     w.write_bits(93, 8);

@@ -131,9 +131,12 @@ fn child_ranges(data: &[u8], start: usize, end: usize) -> Vec<(usize, usize, [u8
     let mut out = Vec::new();
     let mut cursor = start;
     while cursor + 8 <= end {
-        let size =
-            u32::from_be_bytes([data[cursor], data[cursor + 1], data[cursor + 2], data[cursor + 3]])
-                as usize;
+        let size = u32::from_be_bytes([
+            data[cursor],
+            data[cursor + 1],
+            data[cursor + 2],
+            data[cursor + 3],
+        ]) as usize;
         let fourcc: [u8; 4] = data[cursor + 4..cursor + 8].try_into().unwrap();
         // A size of 0 or 1 means "to end of parent" or 64-bit largesize; both
         // are left to the ordinary walker rather than reordered around.
@@ -286,7 +289,12 @@ fn walk_and_sanitize(data: &[u8], start: usize, end: usize, parent: &[u8; 4], ou
                     // Already first: nothing to do, and nothing to risk.
                     (at != 0).then(|| {
                         let mut order = vec![kids[at]];
-                        order.extend(kids.iter().enumerate().filter(|(i, _)| *i != at).map(|(_, k)| *k));
+                        order.extend(
+                            kids.iter()
+                                .enumerate()
+                                .filter(|(i, _)| *i != at)
+                                .map(|(_, k)| *k),
+                        );
                         order
                     })
                 });
@@ -528,7 +536,11 @@ mod first_child_tests {
         let out = sanitize_isobmff_box_sizes(&file_with(&[b"pasp", b"btrt", b"avcC", b"colr"]));
         let kids = children_of_entry(&out);
 
-        assert_eq!(kids.first(), Some(b"avcC"), "avcC did not move to the front: {kids:?}");
+        assert_eq!(
+            kids.first(),
+            Some(b"avcC"),
+            "avcC did not move to the front: {kids:?}"
+        );
         assert_eq!(kids.len(), 4, "a child was lost or duplicated: {kids:?}");
         for want in [b"pasp", b"btrt", b"colr"] {
             assert!(kids.contains(want), "{want:?} was dropped: {kids:?}");
@@ -541,7 +553,11 @@ mod first_child_tests {
         // nothing needs reordering is an opportunity to corrupt a working file
         // for no reason.
         let input = file_with(&[b"avcC", b"pasp", b"colr"]);
-        assert_eq!(sanitize_isobmff_box_sizes(&input), input, "a correct file was rewritten");
+        assert_eq!(
+            sanitize_isobmff_box_sizes(&input),
+            input,
+            "a correct file was rewritten"
+        );
     }
 
     #[test]

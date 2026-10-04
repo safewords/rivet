@@ -88,10 +88,19 @@ impl ProresEncoder {
     /// `yuv420p10le`).
     pub fn new(config: EncoderConfig) -> Result<Self> {
         let VideoCodec::ProRes(p) = config.codec else {
-            bail!("the ProRes encoder encodes ProRes, not {}", config.codec.label());
+            bail!(
+                "the ProRes encoder encodes ProRes, not {}",
+                config.codec.label()
+            );
         };
-        if !matches!(config.pixel_format, PixelFormat::Yuv420p | PixelFormat::Yuv420p10le) {
-            bail!("the ProRes encoder takes 8- or 10-bit 4:2:0 from the pipeline, not {:?}", config.pixel_format);
+        if !matches!(
+            config.pixel_format,
+            PixelFormat::Yuv420p | PixelFormat::Yuv420p10le
+        ) {
+            bail!(
+                "the ProRes encoder takes 8- or 10-bit 4:2:0 from the pipeline, not {:?}",
+                config.pixel_format
+            );
         }
         if config.quality != AUTO_FROM_TARGET {
             bail!(
@@ -151,8 +160,8 @@ impl ProresEncoder {
 /// Samples as u16: 8-bit bytes, or 16-bit little-endian pairs.
 fn widen(data: &[u8], ten: bool, out: &mut [u16]) {
     if ten {
-        for (o, pair) in out.iter_mut().zip(data.chunks_exact(2)) {
-            *o = u16::from_le_bytes([pair[0], pair[1]]);
+        for (o, pair) in out.iter_mut().zip(data.as_chunks::<2>().0) {
+            *o = u16::from_le_bytes(*pair);
         }
     } else {
         for (o, &b) in out.iter_mut().zip(data) {
@@ -195,12 +204,12 @@ fn upsample_chroma(
             let next = vertical[1..]
                 .iter()
                 .chain(std::iter::once(&vertical[cw - 1]));
-            let mut pairs = row.chunks_exact_mut(2);
-            for ((pair, &a), &b) in (&mut pairs).zip(&vertical).zip(next) {
+            let (pairs, rest) = row.as_chunks_mut::<2>();
+            for ((pair, &a), &b) in pairs.iter_mut().zip(&vertical).zip(next) {
                 pair[0] = a;
                 pair[1] = (u32::from(a) + u32::from(b)).div_ceil(2) as u16;
             }
-            if let [last] = pairs.into_remainder() {
+            if let [last] = rest {
                 *last = vertical[cw - 1];
             }
         } else {
@@ -213,8 +222,15 @@ impl Encoder for ProresEncoder {
     fn send_frame(&mut self, frame: &VideoFrame) -> Result<()> {
         let want = check_frame("ProRes", frame, self.width, self.height, &[self.format])?;
         let picture = self.picture(&frame.data[..want])?;
-        let data = self.inner.encode(&picture).context("the ProRes encoder refused a frame")?;
-        self.ready.push_back(EncodedPacket { data: Bytes::from(data), pts: frame.pts, is_keyframe: true });
+        let data = self
+            .inner
+            .encode(&picture)
+            .context("the ProRes encoder refused a frame")?;
+        self.ready.push_back(EncodedPacket {
+            data: Bytes::from(data),
+            pts: frame.pts,
+            is_keyframe: true,
+        });
         Ok(())
     }
 
@@ -283,10 +299,20 @@ mod tests {
     /// The rung's thread budget reaches the encoder; zero is the machine's.
     #[test]
     fn the_rung_thread_budget_reaches_the_encoder() {
-        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::ProRes(ProresProfile::ALL[0]), ..Default::default() };
+        let base = EncoderConfig {
+            width: 64,
+            height: 48,
+            frame_rate: 25.0,
+            codec: VideoCodec::ProRes(ProresProfile::ALL[0]),
+            ..Default::default()
+        };
         let all = std::thread::available_parallelism().map_or(1, |n| n.get());
         for (asked, want) in [(3, 3), (0, all)] {
-            let enc = ProresEncoder::new(EncoderConfig { threads: asked, ..base.clone() }).unwrap();
+            let enc = ProresEncoder::new(EncoderConfig {
+                threads: asked,
+                ..base.clone()
+            })
+            .unwrap();
             assert_eq!(enc.inner.config().threads, want, "threads {asked}");
         }
     }
@@ -329,8 +355,12 @@ mod tests {
     }
 
     fn psnr(a: &[u16], b: &[u16], max: f64) -> f64 {
-        let mse: f64 =
-            a.iter().zip(b).map(|(x, y)| (f64::from(*x) - f64::from(*y)).powi(2)).sum::<f64>() / a.len() as f64;
+        let mse: f64 = a
+            .iter()
+            .zip(b)
+            .map(|(x, y)| (f64::from(*x) - f64::from(*y)).powi(2))
+            .sum::<f64>()
+            / a.len() as f64;
         10.0 * (max * max / mse.max(1e-9)).log10()
     }
 
@@ -341,7 +371,12 @@ mod tests {
         let (w, h) = (64u32, 48u32);
         let src = super::super::native::test_picture(w, h, 3);
         for p in ProresProfile::ALL {
-            let color = ColorMetadata { colour_primaries: 9, matrix_coefficients: 9, transfer: TransferFn::St2084, ..Default::default() };
+            let color = ColorMetadata {
+                colour_primaries: 9,
+                matrix_coefficients: 9,
+                transfer: TransferFn::St2084,
+                ..Default::default()
+            };
             let config = EncoderConfig {
                 width: w,
                 height: h,
@@ -354,11 +389,23 @@ mod tests {
             enc.send_frame(&src).unwrap();
             let packet = enc.receive_packet().unwrap().unwrap();
             assert!(packet.is_keyframe);
-            let decoded = prores::Decoder::with_bit_depth(8).unwrap().decode(&packet.data).unwrap();
+            let decoded = prores::Decoder::with_bit_depth(8)
+                .unwrap()
+                .decode(&packet.data)
+                .unwrap();
             assert_eq!(decoded.chroma, profile(p).chroma(), "{p:?}");
-            assert_eq!((decoded.metadata.color_primaries, decoded.metadata.transfer_characteristic), (9, 16));
+            assert_eq!(
+                (
+                    decoded.metadata.color_primaries,
+                    decoded.metadata.transfer_characteristic
+                ),
+                (9, 16)
+            );
             assert_eq!(decoded.metadata.frame_rate(), Some((25, 1)));
-            let luma: Vec<u16> = src.data[..(w * h) as usize].iter().map(|&v| u16::from(v)).collect();
+            let luma: Vec<u16> = src.data[..(w * h) as usize]
+                .iter()
+                .map(|&v| u16::from(v))
+                .collect();
             let q = psnr(decoded.plane(0), &luma, 255.0);
             // A 64x48 picture of fine diagonal detail at the profile's
             // area-scaled frame size: Proxy and LT have very few bytes for it.
@@ -380,6 +427,12 @@ mod tests {
             quality: 20,
             ..Default::default()
         };
-        assert!(ProresEncoder::new(config).err().expect("refused").to_string().contains("profile"));
+        assert!(
+            ProresEncoder::new(config)
+                .err()
+                .expect("refused")
+                .to_string()
+                .contains("profile")
+        );
     }
 }

@@ -38,13 +38,19 @@ fn decode_error(e: ::mp3::Error) -> AudioError {
 impl Mp3Decoder {
     pub fn new(sample_rate: u32, channels: u8) -> Result<Self, AudioError> {
         if channels == 0 || channels > 2 {
-            return Err(AudioError::Unsupported(format!("mp3 channel count {channels}")));
+            return Err(AudioError::Unsupported(format!(
+                "mp3 channel count {channels}"
+            )));
         }
         let inner = ::mp3::Decoder::with_options(::mp3::DecoderOptions {
             trim_gapless: false,
             ..::mp3::DecoderOptions::default()
         });
-        Ok(Self { inner, declared_sample_rate: sample_rate.max(1), next_pts_us: None })
+        Ok(Self {
+            inner,
+            declared_sample_rate: sample_rate.max(1),
+            next_pts_us: None,
+        })
     }
 
     fn frames(&mut self, frames: Vec<::mp3::Frame>) -> Vec<AudioFrame> {
@@ -53,10 +59,19 @@ impl Mp3Decoder {
             if f.is_empty() {
                 continue;
             }
-            let sample_rate = if f.sample_rate > 0 { f.sample_rate } else { self.declared_sample_rate };
+            let sample_rate = if f.sample_rate > 0 {
+                f.sample_rate
+            } else {
+                self.declared_sample_rate
+            };
             let pts = self.next_pts_us.unwrap_or(0);
             self.next_pts_us = Some(pts + f.len() as i64 * 1_000_000 / i64::from(sample_rate));
-            out.push(AudioFrame { samples: f.samples, sample_rate, channels: f.channels, pts });
+            out.push(AudioFrame {
+                samples: f.samples,
+                sample_rate,
+                channels: f.channels,
+                pts,
+            });
         }
         out
     }
@@ -91,7 +106,9 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let pcm: Vec<f32> = (0..rate as usize * 2).map(|i| 0.3 * ((i / 2) as f32 * 0.06).sin()).collect();
+        let pcm: Vec<f32> = (0..rate as usize * 2)
+            .map(|i| 0.3 * ((i / 2) as f32 * 0.06).sin())
+            .collect();
         let mut frames = enc.encode(&pcm);
         frames.extend(enc.flush());
         frames
@@ -127,7 +144,10 @@ mod tests {
             assert_eq!(out.len(), frames.len(), "chunk {chunk}");
             assert_eq!(out[0].pts, 1_000);
             assert_eq!(out[1].pts, 1_000 + 1152 * 1_000_000 / 44_100);
-            assert!(out.iter().all(|f| f.channels == 2 && f.sample_rate == 44_100 && f.samples.len() == 2304));
+            assert!(
+                out.iter()
+                    .all(|f| f.channels == 2 && f.sample_rate == 44_100 && f.samples.len() == 2304)
+            );
         }
     }
 }

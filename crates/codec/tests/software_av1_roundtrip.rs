@@ -136,7 +136,8 @@ fn the_software_encoder_encodes_and_the_software_decoder_decodes_it_back() {
     let mut dec = Av1Decoder::new(stream_info()).expect("the AV1 decoder should construct");
     let mut decoded = Vec::new();
     for pkt in &packets {
-        dec.push_sample(&pkt.data).expect("the decoder accepts a packet");
+        dec.push_sample(&pkt.data)
+            .expect("the decoder accepts a packet");
         while let Some(frame) = dec.decode_next().expect("decode") {
             decoded.push(frame);
         }
@@ -237,10 +238,22 @@ fn throughput_at_720p() {
             for (i, v) in data[wu * hu..].iter_mut().enumerate() {
                 *v = 100 + ((i / 37) % 50) as u8;
             }
-            VideoFrame::new(data.into(), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, t)
+            VideoFrame::new(
+                data.into(),
+                w,
+                h,
+                PixelFormat::Yuv420p,
+                ColorSpace::Bt709,
+                t,
+            )
         })
         .collect();
-    let config = EncoderConfig { width: w, height: h, tier: SpeedTier::Standard, ..encoder_config() };
+    let config = EncoderConfig {
+        width: w,
+        height: h,
+        tier: SpeedTier::Standard,
+        ..encoder_config()
+    };
     let mut enc = Av1Encoder::new(config).expect("encoder");
     let start = std::time::Instant::now();
     let mut packets = Vec::new();
@@ -258,7 +271,11 @@ fn throughput_at_720p() {
         mp / encode,
         packets.iter().map(|p| p.data.len()).sum::<usize>()
     );
-    let info = StreamInfo { width: w, height: h, ..stream_info() };
+    let info = StreamInfo {
+        width: w,
+        height: h,
+        ..stream_info()
+    };
     for threaded in [false, true] {
         // SAFETY: a test process; nothing else reads the variable concurrently.
         unsafe { std::env::set_var("RIVET_AV1_DECODE_THREAD", if threaded { "1" } else { "0" }) };
@@ -279,7 +296,11 @@ fn throughput_at_720p() {
         assert_eq!(got, n);
         eprintln!(
             "decode 1280x720 ({}): {t:.2} s, {:.2} frames/s, {:.2} MP/s",
-            if threaded { "worker thread" } else { "caller's thread" },
+            if threaded {
+                "worker thread"
+            } else {
+                "caller's thread"
+            },
             n as f64 / t,
             mp / t
         );

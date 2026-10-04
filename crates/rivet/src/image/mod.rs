@@ -86,7 +86,12 @@ pub enum ImageFormat {
 }
 
 impl ImageFormat {
-    pub const ALL: [ImageFormat; 4] = [ImageFormat::Avif, ImageFormat::Webp, ImageFormat::Jpeg, ImageFormat::Png];
+    pub const ALL: [ImageFormat; 4] = [
+        ImageFormat::Avif,
+        ImageFormat::Webp,
+        ImageFormat::Jpeg,
+        ImageFormat::Png,
+    ];
 
     /// Read `avif`, `webp`, `jpeg` (or `jpg`) or `png`.
     pub fn parse(s: &str) -> Result<Self> {
@@ -266,7 +271,11 @@ impl ImageDecodeDeny {
     /// `none`, denies nothing.
     pub fn parse(s: &str) -> Result<Self> {
         let mut formats = Vec::new();
-        for word in s.split(',').map(str::trim).filter(|w| !w.is_empty() && *w != "none") {
+        for word in s
+            .split(',')
+            .map(str::trim)
+            .filter(|w| !w.is_empty() && *w != "none")
+        {
             let format = SourceFormat::parse(word).context("image-decode-deny")?;
             if !formats.contains(&format) {
                 formats.push(format);
@@ -283,7 +292,10 @@ impl ImageDecodeDeny {
     /// caller that maps refusals onto its own words matches on
     /// `image-decode-deny`.
     fn refusal(format: SourceFormat) -> anyhow::Error {
-        anyhow::anyhow!("decoding {} images is denied by the image-decode-deny setting", format.label())
+        anyhow::anyhow!(
+            "decoding {} images is denied by the image-decode-deny setting",
+            format.label()
+        )
     }
 }
 
@@ -310,10 +322,9 @@ pub fn parse_image_quality(s: &str) -> Result<(Option<u8>, Vec<(ImageFormat, u8)
     let mut all = None;
     let mut each: Vec<(ImageFormat, u8)> = Vec::new();
     let number = |v: &str, what: &str| -> Result<u8> {
-        let q: u8 = v
-            .trim()
-            .parse()
-            .with_context(|| format!("image-quality: {what} must be a number from 1 to 100, got '{v}'"))?;
+        let q: u8 = v.trim().parse().with_context(|| {
+            format!("image-quality: {what} must be a number from 1 to 100, got '{v}'")
+        })?;
         if !(1..=100).contains(&q) {
             bail!("image-quality: {what} must be a number from 1 to 100, got {q}");
         }
@@ -332,7 +343,9 @@ pub fn parse_image_quality(s: &str) -> Result<(Option<u8>, Vec<(ImageFormat, u8)
                     format!("image-quality: '{name}' is not an output format (avif, webp, jpeg)")
                 })?;
                 if !format.is_lossy() {
-                    bail!("image-quality: {format} is lossless and takes no quality (avif, webp, jpeg do)");
+                    bail!(
+                        "image-quality: {format} is lossless and takes no quality (avif, webp, jpeg do)"
+                    );
                 }
                 if each.iter().any(|(f, _)| *f == format) {
                     bail!("image-quality: {format} is given twice");
@@ -363,7 +376,13 @@ pub struct ImageRendition {
 
 impl ImageRendition {
     pub fn new(width: u32, height: u32) -> Self {
-        Self { width, height, fit: None, orientation: None, upscale: None }
+        Self {
+            width,
+            height,
+            fit: None,
+            orientation: None,
+            upscale: None,
+        }
     }
 }
 
@@ -449,32 +468,53 @@ impl ImageSpec {
             if !(1..=100).contains(&q) {
                 bail!("invalid output spec: image quality must be between 1 and 100 (got {q})");
             }
-            let lossy = self.formats.iter().any(|f| f.is_lossy() && !(self.lossless && *f == ImageFormat::Webp));
+            let lossy = self
+                .formats
+                .iter()
+                .any(|f| f.is_lossy() && !(self.lossless && *f == ImageFormat::Webp));
             if !lossy {
-                bail!("invalid output spec: image quality applies to lossy formats (avif, webp, jpeg), and none is being made");
+                bail!(
+                    "invalid output spec: image quality applies to lossy formats (avif, webp, jpeg), and none is being made"
+                );
             }
         }
         for (i, (format, q)) in self.format_quality.iter().enumerate() {
             if !format.is_lossy() {
-                bail!("invalid output spec: image quality applies to lossy formats (avif, webp, jpeg); {format} is lossless");
+                bail!(
+                    "invalid output spec: image quality applies to lossy formats (avif, webp, jpeg); {format} is lossless"
+                );
             }
             if !(1..=100).contains(q) {
-                bail!("invalid output spec: image quality must be between 1 and 100 (got {format}:{q})");
+                bail!(
+                    "invalid output spec: image quality must be between 1 and 100 (got {format}:{q})"
+                );
             }
             if self.format_quality[..i].iter().any(|(f, _)| f == format) {
                 bail!("invalid output spec: image quality for {format} is given twice");
             }
         }
-        if self.lossless {
-            if let Some(f) = self.formats.iter().find(|f| !matches!(f, ImageFormat::Webp | ImageFormat::Png)) {
-                bail!("invalid output spec: lossless applies to webp (png is always lossless); {f} has no lossless form here");
-            }
+        if self.lossless
+            && let Some(f) = self
+                .formats
+                .iter()
+                .find(|f| !matches!(f, ImageFormat::Webp | ImageFormat::Png))
+        {
+            bail!(
+                "invalid output spec: lossless applies to webp (png is always lossless); {f} has no lossless form here"
+            );
         }
         if !(1..=10).contains(&self.speed) {
-            bail!("invalid output spec: image speed must be between 1 and 10 (got {})", self.speed);
+            bail!(
+                "invalid output spec: image speed must be between 1 and 10 (got {})",
+                self.speed
+            );
         }
         for r in &self.renditions {
-            if r.width == 0 || r.height == 0 || r.width > MAX_OUTPUT_SIDE || r.height > MAX_OUTPUT_SIDE {
+            if r.width == 0
+                || r.height == 0
+                || r.width > MAX_OUTPUT_SIDE
+                || r.height > MAX_OUTPUT_SIDE
+            {
                 bail!(
                     "invalid output spec: an image rendition is between 1 and {MAX_OUTPUT_SIDE} on each side (got {}x{})",
                     r.width,
@@ -488,11 +528,15 @@ impl ImageSpec {
                     bail!("invalid output spec: frames-at takes between 1 and {MAX_FRAMES} times");
                 }
                 if let Some(t) = times.iter().find(|t| !t.is_finite() || **t < 0.0) {
-                    bail!("invalid output spec: frames-at times are seconds from the start, zero or more (got {t})");
+                    bail!(
+                        "invalid output spec: frames-at times are seconds from the start, zero or more (got {t})"
+                    );
                 }
             }
             Some(FrameSelection::Count(n)) if *n == 0 || *n as usize > MAX_FRAMES => {
-                bail!("invalid output spec: frames-count must be between 1 and {MAX_FRAMES} (got {n})");
+                bail!(
+                    "invalid output spec: frames-count must be between 1 and {MAX_FRAMES} (got {n})"
+                );
             }
             _ => {}
         }
@@ -536,7 +580,9 @@ impl ImageArtifact {
     /// several frames.
     pub fn file_name(&self, several_frames: bool) -> String {
         match self.frame {
-            Some((i, _)) if several_frames => format!("{}-{:03}.{}", self.label, i + 1, self.format.extension()),
+            Some((i, _)) if several_frames => {
+                format!("{}-{:03}.{}", self.label, i + 1, self.format.extension())
+            }
             _ => format!("{}.{}", self.label, self.format.extension()),
         }
     }
@@ -585,7 +631,8 @@ pub fn probe(data: &[u8]) -> Result<Option<crate::probe::MediaInfo>> {
     let Some(format) = sniff(data) else {
         return Ok(None);
     };
-    let header = decode::read_header(data, format).with_context(|| format!("reading the {format} header"))?;
+    let header = decode::read_header(data, format)
+        .with_context(|| format!("reading the {format} header"))?;
     Ok(Some(crate::probe::MediaInfo {
         container: format.label().to_string(),
         video_codec: format.coded_label().to_string(),
@@ -663,11 +710,19 @@ fn hook_frame(picture: &decode::Picture) -> codec::frame::VideoFrame {
     )
 }
 
-fn run_image_job_inner(input: &Bytes, spec: &ImageSpec, hooks: &crate::hooks::Hooks) -> Result<ImageJobOutput> {
+fn run_image_job_inner(
+    input: &Bytes,
+    spec: &ImageSpec,
+    hooks: &crate::hooks::Hooks,
+) -> Result<ImageJobOutput> {
     spec.validate()?;
     if hooks.wants(crate::hooks::Stage::Probe) {
         let still = sniff(input).is_some();
-        let info = if still { probe(input)? } else { crate::probe::probe_bytes(input).ok() };
+        let info = if still {
+            probe(input)?
+        } else {
+            crate::probe::probe_bytes(input).ok()
+        };
         if let Some(info) = info {
             hooks.emit_probe(0, crate::hooks::MediaSummary::of_media_info(&info, still))?;
         }
@@ -683,17 +738,28 @@ fn run_image_job_inner(input: &Bytes, spec: &ImageSpec, hooks: &crate::hooks::Ho
             if spec.decode_deny.denies(format) {
                 return Err(ImageDecodeDeny::refusal(format));
             }
-            let picture = decode::decode(input, format).with_context(|| format!("decoding the {format} image"))?;
-            (vec![(None, picture)], format.label().to_string(), format.coded_label().to_string(), false)
+            let picture = decode::decode(input, format)
+                .with_context(|| format!("decoding the {format} image"))?;
+            (
+                vec![(None, picture)],
+                format.label().to_string(),
+                format.coded_label().to_string(),
+                false,
+            )
         }
         None => {
             let container = container::sniff_container(input);
             if !container.is_known() {
-                bail!("unrecognised container: the input is neither an image this service reads nor a video");
+                bail!(
+                    "unrecognised container: the input is neither an image this service reads nor a video"
+                );
             }
             let selection = spec.frames.clone().unwrap_or(FrameSelection::Poster);
             let (codec, stills) = decode::video_stills(input, &selection)?;
-            let pictures = stills.into_iter().map(|(i, t, p)| (Some((i, t)), p)).collect();
+            let pictures = stills
+                .into_iter()
+                .map(|(i, t, p)| (Some((i, t)), p))
+                .collect();
             (pictures, container.label().to_string(), codec, true)
         }
     };
@@ -730,8 +796,14 @@ fn run_image_job_inner(input: &Bytes, spec: &ImageSpec, hooks: &crate::hooks::Ho
                         format.max_side()
                     );
                 }
-                let mut bytes = encode::encode(&pixels, format, spec.quality_for(format), spec.lossless, spec.speed)
-                    .with_context(|| format!("encoding the {w}x{h} {format}"))?;
+                let mut bytes = encode::encode(
+                    &pixels,
+                    format,
+                    spec.quality_for(format),
+                    spec.lossless,
+                    spec.speed,
+                )
+                .with_context(|| format!("encoding the {w}x{h} {format}"))?;
                 if let Some(exif) = &exif {
                     bytes = container::metadata::write::still(&bytes, exif, w, h)
                         .with_context(|| format!("writing the kept metadata into the {format}"))?;

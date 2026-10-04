@@ -12,13 +12,13 @@
 //!   5. AC-3 sync-header parser hex-dump verification for canned 5.1 input.
 
 use bytes::Bytes;
-use frame::EncodedPacket;
 use container::AudioInfo;
 use container::ac3_sync::{
     self, Ac3SyncInfo, Eac3SyncInfo, SyncInfo, ac3_bit_rate_kbps, ac3_sample_rate_hz,
     channel_count, parse_sync_info,
 };
 use container::mux::{Av1Mp4Muxer, dac3_body_from_sync, dec3_body_from_sync};
+use frame::EncodedPacket;
 
 // Minimal AV1 OBU_SEQUENCE_HEADER with obu_has_size_field=1 — required to
 // pass `extract_sequence_header` during finalize. (Mirrors the helper in
@@ -74,7 +74,7 @@ impl BitWriter {
     fn put(&mut self, n: usize, v: u32) {
         for i in (0..n).rev() {
             let bit = ((v >> i) & 0x01) as u8;
-            if self.bit_pos % 8 == 0 {
+            if self.bit_pos.is_multiple_of(8) {
                 self.bytes.push(0);
             }
             let byte_idx = self.bit_pos / 8;

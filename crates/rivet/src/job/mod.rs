@@ -33,27 +33,29 @@ use crate::validate::needs_chroma_downsample;
 mod audio;
 mod audio_only;
 pub(crate) use audio::audio_unusable;
-mod file_mux;
-mod pump;
-mod run;
-mod splice;
-mod subtitles;
 #[cfg(test)]
 mod audio_tests;
+mod file_mux;
 #[cfg(test)]
 mod lossless_tests;
 #[cfg(test)]
 mod m2ts_tests;
 #[cfg(test)]
 mod metadata_tests;
+mod pump;
+mod run;
 #[cfg(test)]
 mod sample_entry_tests;
+mod splice;
+mod subtitles;
 #[cfg(test)]
 mod tests;
 
 pub use splice::Clip;
 
-use self::audio::{AudioRequest, PreparedAudio, audio_codec_string, fit_single_file, prepare_audio};
+use self::audio::{
+    AudioRequest, PreparedAudio, audio_codec_string, fit_single_file, prepare_audio,
+};
 use self::pump::run_hls;
 use self::run::{run_serial_single_file, run_single_file};
 use self::splice::{trim_audio_to_video, trim_frame};
@@ -68,10 +70,7 @@ pub enum RungArtifact {
     /// A single self-contained file (MP4 bytes).
     File(Vec<u8>),
     /// An HLS rendition: a directory of CMAF segments + a media playlist.
-    HlsRendition {
-        dir: PathBuf,
-        relative_dir: String,
-    },
+    HlsRendition { dir: PathBuf, relative_dir: String },
 }
 
 /// Result for one completed rung.
@@ -181,7 +180,10 @@ fn artifact_events(out: &JobOutput) -> Vec<crate::hooks::ArtifactEvent> {
                 media_type: "application/vnd.apple.mpegurl".into(),
                 width: r.width,
                 height: r.height,
-                data: ArtifactData::Directory { path: dir.clone(), files: files_in(dir) },
+                data: ArtifactData::Directory {
+                    path: dir.clone(),
+                    files: files_in(dir),
+                },
             },
         })
         .collect();
@@ -249,8 +251,14 @@ pub fn single_file_extension(data: &[u8]) -> &'static str {
 /// bitstream states, or the default assumed when it states none, gives way
 /// to the one asked for — the duration with it. Any other input is timed by
 /// its container, and the setting is refused rather than ignored.
-pub(crate) fn with_input_frame_rate(mut header: DemuxHeader, input: &[u8], spec: &OutputSpec) -> Result<DemuxHeader> {
-    let Some(fps) = spec.input_frame_rate else { return Ok(header) };
+pub(crate) fn with_input_frame_rate(
+    mut header: DemuxHeader,
+    input: &[u8],
+    spec: &OutputSpec,
+) -> Result<DemuxHeader> {
+    let Some(fps) = spec.input_frame_rate else {
+        return Ok(header);
+    };
     let kind = container::sniff_container(input);
     if !kind.is_video_elementary_stream() {
         bail!(
@@ -259,7 +267,11 @@ pub(crate) fn with_input_frame_rate(mut header: DemuxHeader, input: &[u8], spec:
             kind.label()
         );
     }
-    tracing::info!(stream_fps = header.info.frame_rate, fps, "input-fps: the elementary stream's frame rate set");
+    tracing::info!(
+        stream_fps = header.info.frame_rate,
+        fps,
+        "input-fps: the elementary stream's frame rate set"
+    );
     header.info.frame_rate = fps;
     if header.info.total_frames > 0 {
         header.info.duration = header.info.total_frames as f64 / fps;
@@ -289,8 +301,11 @@ async fn run_job_inner(
             // its audio-only form, and says so.
             Err(e) => match audio_only::as_audio_only(&input, spec) {
                 Some(audio_spec) => {
-                    tracing::info!("the input has no video: writing its audio alone (audio-only output)");
-                    let audio_spec = audio_spec.context("the input has no video, and audio-only output")?;
+                    tracing::info!(
+                        "the input has no video: writing its audio alone (audio-only output)"
+                    );
+                    let audio_spec =
+                        audio_spec.context("the input has no video, and audio-only output")?;
                     return audio_only::run(input, &audio_spec, sink, started).await;
                 }
                 None => return Err(e).context("demux"),
@@ -323,8 +338,11 @@ async fn run_job_inner(
     // `-c:s copy` equivalent: carry the selected text tracks. A trim re-bases
     // them the way it re-bases the audio — cues clipped to the kept window
     // and moved to zero — so they line up with the re-numbered frames.
-    let subtitles: Vec<SubtitleTrack> =
-        trim_subtitles(&spec.subtitles.select(&subtitle_tracks), spec.trim_start, spec.trim_end);
+    let subtitles: Vec<SubtitleTrack> = trim_subtitles(
+        &spec.subtitles.select(&subtitle_tracks),
+        spec.trim_start,
+        spec.trim_end,
+    );
     if !subtitle_tracks.is_empty() {
         tracing::info!(
             source = ?subtitle_tracks.iter().map(|t| format!("{}:{}", t.language, t.codec)).collect::<Vec<_>>(),
@@ -390,7 +408,9 @@ async fn run_job_inner(
         spec
     };
 
-    sink.on_event(JobEvent::Started { rungs: spec.rungs.len() });
+    sink.on_event(JobEvent::Started {
+        rungs: spec.rungs.len(),
+    });
     sink.on_event(JobEvent::Probed {
         codec: source_codec.clone(),
         width: source_dims.0,
@@ -400,7 +420,11 @@ async fn run_job_inner(
     });
 
     let frame_rate = {
-        let mut fr = if header.info.frame_rate > 0.0 { header.info.frame_rate } else { 30.0 };
+        let mut fr = if header.info.frame_rate > 0.0 {
+            header.info.frame_rate
+        } else {
+            30.0
+        };
         if let Some(cap) = spec.max_frame_rate {
             fr = fr.min(cap);
         }
@@ -429,17 +453,30 @@ async fn run_job_inner(
         );
     }
 
-    let prepared_audio = prepare_audio(audio_track.as_ref(), audio_edit, &audio_gaps, AudioRequest::of(spec))
-        .context("preparing audio")?;
+    let prepared_audio = prepare_audio(
+        audio_track.as_ref(),
+        audio_edit,
+        &audio_gaps,
+        AudioRequest::of(spec),
+    )
+    .context("preparing audio")?;
     let prepared_audio = match spec.mode {
         OutputMode::SingleFile => fit_single_file(prepared_audio, spec.container)?,
         OutputMode::Hls { .. } | OutputMode::AudioOnly => prepared_audio,
     };
     let stereo_fallback = stereo_fallback(spec, prepared_audio.as_ref(), || {
-        prepare_audio(audio_track.as_ref(), audio_edit, &audio_gaps, stereo_request(spec))
+        prepare_audio(
+            audio_track.as_ref(),
+            audio_edit,
+            &audio_gaps,
+            stereo_request(spec),
+        )
     });
     let audio_handling = describe_audio(prepared_audio.as_ref(), stereo_fallback.as_ref());
-    let audio_codecs = prepared_audio.as_ref().filter(|a| a.has_samples()).map(|a| audio_codec_string(&a.info));
+    let audio_codecs = prepared_audio
+        .as_ref()
+        .filter(|a| a.has_samples())
+        .map(|a| audio_codec_string(&a.info));
 
     // Prepare the video filter chain once (loads any overlay images), then share
     // the Arc with every decode pump / multi-GPU param built below.
@@ -515,7 +552,11 @@ async fn run_job_inner(
 /// output, in the place its container has for it. Nothing is written — and
 /// the source is not read — when it names none, so an output carries only
 /// what the muxer wrote: no location, device, time or tags.
-pub(super) fn keep_metadata(input: &[u8], spec: &OutputSpec, rungs: &mut [RungOutput]) -> Result<()> {
+pub(super) fn keep_metadata(
+    input: &[u8],
+    spec: &OutputSpec,
+    rungs: &mut [RungOutput],
+) -> Result<()> {
     use crate::spec::Container;
     use container::metadata::{self, write};
     if spec.metadata_keep.is_empty() {
@@ -528,7 +569,9 @@ pub(super) fn keep_metadata(input: &[u8], spec: &OutputSpec, rungs: &mut [RungOu
         "carrying the source metadata asked for into the output"
     );
     for rung in rungs {
-        let RungArtifact::File(bytes) = &mut rung.artifact else { continue };
+        let RungArtifact::File(bytes) = &mut rung.artifact else {
+            continue;
+        };
         let written = match spec.container {
             // A QuickTime movie is the same box tree: `udta` / `meta` alike.
             Container::Mp4 | Container::M4a | Container::Mov => {
@@ -551,7 +594,11 @@ pub(super) fn keep_metadata(input: &[u8], spec: &OutputSpec, rungs: &mut [RungOu
 /// [`crate::fit`].
 fn fit_to(spec: &OutputSpec, header: &DemuxHeader) -> (OutputSpec, Vec<crate::fit::FittedRung>) {
     let (width, height) = header.upright_dims();
-    let upright = crate::fit::SourceShape { width, height, sample_aspect: header.upright_sample_aspect() };
+    let upright = crate::fit::SourceShape {
+        width,
+        height,
+        sample_aspect: header.upright_sample_aspect(),
+    };
     let shape = crate::fit::filtered_shape(upright, &spec.filters);
     let (fitted, renditions) = spec.with_rungs_fitted(shape);
     for (r, f) in renditions.iter().zip(&spec.rungs) {
@@ -573,9 +620,16 @@ fn fit_to(spec: &OutputSpec, header: &DemuxHeader) -> (OutputSpec, Vec<crate::fi
 /// than in the fitted ladder, which lacks the rungs fitting dropped — so a
 /// caller's progress lines up with the rungs it asked for. The sink itself
 /// when nothing was dropped.
-fn remap_rung_indices(sink: Arc<dyn ProgressSink>, renditions: &[crate::fit::FittedRung]) -> Arc<dyn ProgressSink> {
-    let requested: Vec<usize> =
-        renditions.iter().enumerate().filter(|(_, r)| r.duplicate_of.is_none()).map(|(i, _)| i).collect();
+fn remap_rung_indices(
+    sink: Arc<dyn ProgressSink>,
+    renditions: &[crate::fit::FittedRung],
+) -> Arc<dyn ProgressSink> {
+    let requested: Vec<usize> = renditions
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.duplicate_of.is_none())
+        .map(|(i, _)| i)
+        .collect();
     if requested.len() == renditions.len() {
         return sink;
     }
@@ -585,7 +639,11 @@ fn remap_rung_indices(sink: Arc<dyn ProgressSink>, renditions: &[crate::fit::Fit
     }
     impl ProgressSink for Remap {
         fn on_rung(&self, mut update: RungProgress) {
-            update.rung_index = self.requested.get(update.rung_index).copied().unwrap_or(update.rung_index);
+            update.rung_index = self
+                .requested
+                .get(update.rung_index)
+                .copied()
+                .unwrap_or(update.rung_index);
             self.inner.on_rung(update);
         }
         fn on_event(&self, event: JobEvent) {
@@ -593,11 +651,18 @@ fn remap_rung_indices(sink: Arc<dyn ProgressSink>, renditions: &[crate::fit::Fit
         }
         fn on_rung_complete(&self, manifest: &crate::multigpu::RungManifest) {
             let mut manifest = manifest.clone();
-            manifest.rung_index = self.requested.get(manifest.rung_index).copied().unwrap_or(manifest.rung_index);
+            manifest.rung_index = self
+                .requested
+                .get(manifest.rung_index)
+                .copied()
+                .unwrap_or(manifest.rung_index);
             self.inner.on_rung_complete(&manifest);
         }
     }
-    Arc::new(Remap { inner: sink, requested })
+    Arc::new(Remap {
+        inner: sink,
+        requested,
+    })
 }
 
 /// Synchronous wrapper that builds a multi-threaded Tokio runtime.
@@ -611,7 +676,12 @@ pub fn run_job_blocking(
         .enable_all()
         .build()
         .context("building Tokio runtime")?;
-    rt.block_on(run_job(Bytes::copy_from_slice(input), spec, output_dir, sink))
+    rt.block_on(run_job(
+        Bytes::copy_from_slice(input),
+        spec,
+        output_dir,
+        sink,
+    ))
 }
 
 /// [`run_job_blocking`] over a buffer the caller already owns.
@@ -666,7 +736,12 @@ pub async fn run_splice_job(
     let run = async {
         let inputs: Vec<Bytes> = clips.iter().map(|c| c.input.clone()).collect();
         hooks
-            .offload(move |h| inputs.iter().enumerate().try_for_each(|(i, b)| h.emit_source(i, b)))
+            .offload(move |h| {
+                inputs
+                    .iter()
+                    .enumerate()
+                    .try_for_each(|(i, b)| h.emit_source(i, b))
+            })
             .await?;
         run_splice_job_inner(clips, &spec, output_dir, sink).await
     };
@@ -690,7 +765,9 @@ async fn run_splice_job_inner(
         bail!("audio-only output is not available for a splice: run the clips as single-file jobs");
     }
     if !spec.metadata_keep.is_empty() {
-        bail!("metadata-keep is not available for a splice: its clips can each say something different");
+        bail!(
+            "metadata-keep is not available for a splice: its clips can each say something different"
+        );
     }
     // Probe each clip + prepare its audio. The first clip drives output config.
     struct ClipPrep {
@@ -726,10 +803,20 @@ async fn run_splice_job_inner(
                 .context("invalid OutputSpec")?;
         }
         let src_audio_codec = demuxer.audio().map(|t| t.codec.to_ascii_lowercase());
-        let audio = prepare_audio(demuxer.audio(), demuxer.audio_edit(), demuxer.audio_gaps(), AudioRequest::of(spec))
-            .with_context(|| format!("preparing audio for splice clip {i}"))?;
+        let audio = prepare_audio(
+            demuxer.audio(),
+            demuxer.audio_edit(),
+            demuxer.audio_gaps(),
+            AudioRequest::of(spec),
+        )
+        .with_context(|| format!("preparing audio for splice clip {i}"))?;
         let audio_stereo = stereo_fallback(spec, audio.as_ref(), || {
-            prepare_audio(demuxer.audio(), demuxer.audio_edit(), demuxer.audio_gaps(), stereo_request(spec))
+            prepare_audio(
+                demuxer.audio(),
+                demuxer.audio_edit(),
+                demuxer.audio_gaps(),
+                stereo_request(spec),
+            )
         });
         let subtitles = demuxer.subtitles().to_vec();
         let video_delay = video_delay_of(demuxer.as_ref());
@@ -743,7 +830,14 @@ async fn run_splice_job_inner(
                  its video starts"
             );
         }
-        preps.push(ClipPrep { header, audio, audio_stereo, src_audio_codec, subtitles, video_delay });
+        preps.push(ClipPrep {
+            header,
+            audio,
+            audio_stereo,
+            src_audio_codec,
+            subtitles,
+            video_delay,
+        });
     }
 
     let primary = preps[0].header.clone();
@@ -758,7 +852,11 @@ async fn run_splice_job_inner(
     let source_dims = primary.upright_dims();
     let source_frame_rate = primary.info.frame_rate;
     let frame_rate = {
-        let mut fr = if primary.info.frame_rate > 0.0 { primary.info.frame_rate } else { 30.0 };
+        let mut fr = if primary.info.frame_rate > 0.0 {
+            primary.info.frame_rate
+        } else {
+            30.0
+        };
         if let Some(cap) = spec.max_frame_rate {
             fr = fr.min(cap);
         }
@@ -770,7 +868,9 @@ async fn run_splice_job_inner(
     let rates_resolved = spec.with_constant_rates_resolved(frame_rate);
     let spec = &rates_resolved;
 
-    sink.on_event(JobEvent::Started { rungs: spec.rungs.len() });
+    sink.on_event(JobEvent::Started {
+        rungs: spec.rungs.len(),
+    });
     sink.on_event(JobEvent::Probed {
         codec: source_codec.clone(),
         width: source_dims.0,
@@ -815,7 +915,8 @@ async fn run_splice_job_inner(
     // index and vendor for a policy that names silicon; auto otherwise).
     let encode_pool = multigpu::gpu_pool_for_serial_job(
         spec,
-        spec.resolve_output(primary.info.color_metadata, primary.info.pixel_format).1,
+        spec.resolve_output(primary.info.color_metadata, primary.info.pixel_format)
+            .1,
     )?;
     let (encode_gpu, encode_vendor) = multigpu::serial_target(spec.encode_policy, &encode_pool);
     // Average-rate rungs are coded by the software encoder only, constant-rate
@@ -824,7 +925,8 @@ async fn run_splice_job_inner(
     multigpu::check_rate_pool(
         spec,
         &encode_pool,
-        spec.resolve_output(primary.info.color_metadata, primary.info.pixel_format).1,
+        spec.resolve_output(primary.info.color_metadata, primary.info.pixel_format)
+            .1,
         run::encoder_backend_override(),
     )?;
     // `--decode-with-fastest`: benchmark decode-capable GPUs on the first clip
@@ -846,7 +948,11 @@ async fn run_splice_job_inner(
     } else {
         None
     };
-    let decode_gpu = spec.decode_policy.gpu_index().or(fastest_decode).or(encode_gpu);
+    let decode_gpu = spec
+        .decode_policy
+        .gpu_index()
+        .or(fastest_decode)
+        .or(encode_gpu);
     let (output_color_metadata, output_pixel_format) =
         spec.resolve_output(primary.info.color_metadata, primary.info.pixel_format);
     let base_cfg = EncoderConfig {
@@ -883,10 +989,12 @@ async fn run_splice_job_inner(
         let end_frame = trim_frame(clip.end, cfps);
         // A frame-rate cap below this clip's rate drops its frames; totals
         // and offsets count what reaches the output.
-        let clip_decimate = crate::decode_pump::decimation(prep.header.info.frame_rate, spec.max_frame_rate);
+        let clip_decimate =
+            crate::decode_pump::decimation(prep.header.info.frame_rate, spec.max_frame_rate);
         match end_frame {
             Some(e) => {
-                effective_total += crate::decode_pump::output_frames(e.saturating_sub(start_frame), clip_decimate)
+                effective_total +=
+                    crate::decode_pump::output_frames(e.saturating_sub(start_frame), clip_decimate)
             }
             None if prep.header.info.total_frames > 0 => {
                 effective_total += crate::decode_pump::output_frames(
@@ -925,7 +1033,11 @@ async fn run_splice_job_inner(
         // starts in the output. The clip's length on the output timeline is
         // its kept frames at the output rate — the same arithmetic that
         // numbers the video frames — so the cues stay with their pictures.
-        let clip_subs = trim_subtitles(&spec.subtitles.select(&prep.subtitles), clip.start, clip.end);
+        let clip_subs = trim_subtitles(
+            &spec.subtitles.select(&prep.subtitles),
+            clip.start,
+            clip.end,
+        );
         append_clip_subtitles(&mut combined_subtitles, &clip_subs, offset_seconds);
         let kept_frames = match end_frame {
             Some(e) => e.saturating_sub(start_frame),
@@ -938,8 +1050,8 @@ async fn run_splice_job_inner(
                 total.saturating_sub(start_frame)
             }
         };
-        offset_seconds +=
-            crate::decode_pump::output_frames(kept_frames, clip_decimate) as f64 / frame_rate.max(1.0);
+        offset_seconds += crate::decode_pump::output_frames(kept_frames, clip_decimate) as f64
+            / frame_rate.max(1.0);
         let pump_cfg = DecodePumpConfig {
             codec_name: prep.header.codec.clone(),
             info_for_decoder: prep.header.info.clone(),
@@ -977,7 +1089,10 @@ async fn run_splice_job_inner(
         OutputMode::Hls { .. } | OutputMode::AudioOnly => combined_audio,
     };
     let audio_handling = describe_audio(combined_audio.as_ref(), combined_stereo.as_ref());
-    let audio_codecs = combined_audio.as_ref().filter(|a| a.has_samples()).map(|a| audio_codec_string(&a.info));
+    let audio_codecs = combined_audio
+        .as_ref()
+        .filter(|a| a.has_samples())
+        .map(|a| audio_codec_string(&a.info));
 
     let (rungs, hls_root, master_playlist) = match &spec.mode {
         OutputMode::SingleFile => {
@@ -1062,19 +1177,31 @@ pub fn run_splice_job_blocking(
 /// none — what every output writes as its video track's delay (an empty edit
 /// in an MP4, the first `tfdt` of a CMAF rendition).
 pub(super) fn video_delay_of(demuxer: &dyn container::streaming::StreamingDemuxer) -> (u64, u32) {
-    demuxer.video_presentation().map_or((0, 1), |p| (p.delay_ticks, p.delay_timescale))
+    demuxer
+        .video_presentation()
+        .map_or((0, 1), |p| (p.delay_ticks, p.delay_timescale))
 }
 
 /// Report a rung that failed with `error`: the warning and the rung's
 /// progress message carry the whole chain. The outermost context alone was
 /// all they said — "finalize" — which hid why every two-clip splice failed.
-pub(super) fn report_rung_error(sink: &dyn ProgressSink, rung_index: usize, rung: &Rung, error: &anyhow::Error) {
+pub(super) fn report_rung_error(
+    sink: &dyn ProgressSink,
+    rung_index: usize,
+    rung: &Rung,
+    error: &anyhow::Error,
+) {
     let error = format!("{error:#}");
     tracing::warn!(rung = %rung.label, %error, "rung failed");
     report_failed(sink, rung_index, rung, &error);
 }
 
-pub(super) fn report_failed(sink: &dyn ProgressSink, rung_index: usize, rung: &Rung, message: &str) {
+pub(super) fn report_failed(
+    sink: &dyn ProgressSink,
+    rung_index: usize,
+    rung: &Rung,
+    message: &str,
+) {
     sink.on_rung(RungProgress {
         rung_index,
         label: rung.label.clone(),
@@ -1092,7 +1219,10 @@ pub(super) fn report_failed(sink: &dyn ProgressSink, rung_index: usize, rung: &R
 
 /// The request for an HLS stereo fallback: the spec's, downmixed to stereo.
 fn stereo_request(spec: &OutputSpec) -> AudioRequest<'_> {
-    AudioRequest { channels: crate::spec::AudioChannels::Stereo, ..AudioRequest::of(spec) }
+    AudioRequest {
+        channels: crate::spec::AudioChannels::Stereo,
+        ..AudioRequest::of(spec)
+    }
 }
 
 /// The stereo downmix to put beside `main` in an HLS package, when the spec
@@ -1119,7 +1249,10 @@ fn stereo_fallback(
 }
 
 /// The job's audio handling, with the stereo fallback's when there is one.
-fn describe_audio(main: Option<&PreparedAudio>, stereo: Option<&Result<PreparedAudio, String>>) -> String {
+fn describe_audio(
+    main: Option<&PreparedAudio>,
+    stereo: Option<&Result<PreparedAudio, String>>,
+) -> String {
     let main = main.map_or_else(|| "none".to_string(), |a| a.handling.clone());
     match stereo {
         None => main,

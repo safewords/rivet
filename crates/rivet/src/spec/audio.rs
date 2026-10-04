@@ -16,7 +16,11 @@ impl OutputSpec {
             Container::Ogg => Muxer::OggFile,
             _ => Muxer::Mp3File,
         };
-        Self { container, muxer, ..Self::audio_only() }
+        Self {
+            container,
+            muxer,
+            ..Self::audio_only()
+        }
     }
 
     /// The file an audio-only output of `policy` is, unless one is named:
@@ -27,7 +31,9 @@ impl OutputSpec {
         match policy {
             Flac => Container::Flac,
             ForceOpus | ForceVorbis => Container::Ogg,
-            Alac | ForceAac | ForceHeAac | ForceHeAacV2 | ForceAc3 | ForceEac3 | ForceDts => Container::M4a,
+            Alac | ForceAac | ForceHeAac | ForceHeAacV2 | ForceAc3 | ForceEac3 | ForceDts => {
+                Container::M4a
+            }
             Auto | ForceMp3 | Drop => Container::Mp3,
         }
     }
@@ -50,7 +56,11 @@ impl OutputSpec {
         match (&self.mode, self.container) {
             (OutputMode::AudioOnly, Container::Flac) => "flac",
             (OutputMode::AudioOnly, Container::M4a) => "m4a",
-            (OutputMode::AudioOnly, Container::Ogg) if self.audio == AudioCodecPolicy::ForceOpus => "opus",
+            (OutputMode::AudioOnly, Container::Ogg)
+                if self.audio == AudioCodecPolicy::ForceOpus =>
+            {
+                "opus"
+            }
             (OutputMode::AudioOnly, Container::Ogg) => "ogg",
             (OutputMode::AudioOnly, _) => "mp3",
             (_, Container::Mov) => "mov",
@@ -68,7 +78,11 @@ impl OutputSpec {
             bail!(
                 "an audio bitrate was given, but audio={} is lossless: its size follows the audio. \
                  Drop audio-bitrate",
-                if self.audio == AudioCodecPolicy::Flac { "flac" } else { "alac" }
+                if self.audio == AudioCodecPolicy::Flac {
+                    "flac"
+                } else {
+                    "alac"
+                }
             );
         }
         if !lossless && self.audio_bit_depth != AudioBitDepth::Source {

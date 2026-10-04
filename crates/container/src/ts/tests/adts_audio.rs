@@ -1,5 +1,7 @@
-use super::super::audio::{AdtsHeader, decode_sample_rate_index, parse_adts_header, synthesize_asc};
-use super::super::{demux_ts, STREAM_TYPE_AAC_ADTS, STREAM_TYPE_MPEG2_VIDEO};
+use super::super::audio::{
+    AdtsHeader, decode_sample_rate_index, parse_adts_header, synthesize_asc,
+};
+use super::super::{STREAM_TYPE_AAC_ADTS, STREAM_TYPE_MPEG2_VIDEO, demux_ts};
 use super::{build_adts_header_7, build_adts_header_9, ts_pkt};
 
 // ---------------- AAC-ADTS / ASC unit tests (Squad-27) ----------------
@@ -310,9 +312,24 @@ fn adts_channel_configuration_zero_takes_the_layout_from_the_in_band_pce() {
         element_instance_tag: 0,
         object_type: 1,
         sampling_frequency_index: 3,
-        front: vec![PceElement { is_cpe: false, tag: 0 }, PceElement { is_cpe: true, tag: 0 }],
-        side: vec![PceElement { is_cpe: true, tag: 1 }],
-        back: vec![PceElement { is_cpe: true, tag: 2 }],
+        front: vec![
+            PceElement {
+                is_cpe: false,
+                tag: 0,
+            },
+            PceElement {
+                is_cpe: true,
+                tag: 0,
+            },
+        ],
+        side: vec![PceElement {
+            is_cpe: true,
+            tag: 1,
+        }],
+        back: vec![PceElement {
+            is_cpe: true,
+            tag: 2,
+        }],
         lfe: vec![0],
         ..Default::default()
     };
@@ -334,7 +351,10 @@ fn adts_channel_configuration_zero_takes_the_layout_from_the_in_band_pce() {
     assert_eq!(audio.channels, 8, "C + L/R + Ls/Rs + Lb/Rb + LFE");
     assert_eq!(audio.sample_rate, 48_000);
     assert_eq!(audio.samples.len(), 2);
-    assert_eq!(audio.samples[0], block, "frames stay verbatim, in-band PCE included");
+    assert_eq!(
+        audio.samples[0], block,
+        "frames stay verbatim, in-band PCE included"
+    );
     // The ASC says channelConfiguration = 0 and carries the same PCE.
     let parsed = parse_aac_asc(&audio.asc).expect("the synthesised ASC parses");
     assert_eq!(parsed.aot, 2);
@@ -342,7 +362,11 @@ fn adts_channel_configuration_zero_takes_the_layout_from_the_in_band_pce() {
     assert_eq!(parsed.channels, 8);
     assert_eq!(parsed.pce.as_ref(), Some(&pce));
     assert_eq!(audio.asc[1] & 0x78, 0, "channelConfiguration field is 0");
-    assert_ne!(&audio.asc[2..], &block[..audio.asc.len() - 2], "re-serialised, not copied");
+    assert_ne!(
+        &audio.asc[2..],
+        &block[..audio.asc.len() - 2],
+        "re-serialised, not copied"
+    );
 
     // channel_configuration = 0 with no PCE in the block is refused by name
     // (the extractor says why).

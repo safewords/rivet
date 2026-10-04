@@ -174,7 +174,10 @@ fn real_media_pipeline_if_sample_exists() {
     // Diagnostic gate so we can see exactly where execution crashes on
     // GPU boxes. Each println is flushed via `eprintln!` so stdout
     // buffering doesn't hide the last step before a hard segfault.
-    eprintln!("e2e real_media: test_media_dir={}", test_media_dir.display());
+    eprintln!(
+        "e2e real_media: test_media_dir={}",
+        test_media_dir.display()
+    );
     eprintln!(
         "e2e real_media: test_media_dir={}",
         test_media_dir.display()
@@ -477,7 +480,9 @@ fn audio_passthrough_real_media_if_sample_exists() {
         assert_eq!(major, b"iso6", "{}: major_brand should be iso6", name);
         let compat = &output[16..ftyp_size];
         let brands: Vec<[u8; 4]> = compat
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| [c[0], c[1], c[2], c[3]])
             .collect();
         assert!(

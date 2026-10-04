@@ -142,11 +142,11 @@ fn scaler_loop(
             None => colorspace::scale_frame(&frame, cfg.target_width, cfg.target_height),
         }
         .with_context(|| {
-                format!(
-                    "rung {} scaler: scale_frame to {}×{}",
-                    cfg.rung_idx, cfg.target_width, cfg.target_height
-                )
-            })?;
+            format!(
+                "rung {} scaler: scale_frame to {}×{}",
+                cfg.rung_idx, cfg.target_width, cfg.target_height
+            )
+        })?;
         if lead_in_left > 0 {
             lead_in_left -= 1;
             if cfg.overlap > 0 {
@@ -223,10 +223,21 @@ mod tests {
         let producers = Arc::new(AtomicUsize::new(2));
         let queue = Arc::new(SegmentChunkQueue::new(4));
 
-        assert_eq!(producers.fetch_sub(1, Ordering::AcqRel), 2, "first exit is not the last");
-        assert!(!queue.is_closed(), "queue must stay open while a range is still producing");
+        assert_eq!(
+            producers.fetch_sub(1, Ordering::AcqRel),
+            2,
+            "first exit is not the last"
+        );
+        assert!(
+            !queue.is_closed(),
+            "queue must stay open while a range is still producing"
+        );
 
-        assert_eq!(producers.fetch_sub(1, Ordering::AcqRel), 1, "second exit is the last");
+        assert_eq!(
+            producers.fetch_sub(1, Ordering::AcqRel),
+            1,
+            "second exit is the last"
+        );
         queue.close();
         assert!(queue.is_closed());
     }

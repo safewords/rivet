@@ -53,7 +53,9 @@ impl std::fmt::Display for LeaseKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LeaseKind::Gpu { index, vendor } => write!(f, "gpu {index} ({vendor:?})"),
-            LeaseKind::Software { slot, threads } => write!(f, "software slot {slot} ({threads} threads)"),
+            LeaseKind::Software { slot, threads } => {
+                write!(f, "software slot {slot} ({threads} threads)")
+            }
         }
     }
 }
@@ -373,7 +375,10 @@ impl GpuPool {
                 .is_ok()
             {
                 let kind = match self.software_threads {
-                    Some(threads) => LeaseKind::Software { slot: slot_idx, threads },
+                    Some(threads) => LeaseKind::Software {
+                        slot: slot_idx,
+                        threads,
+                    },
                     None => LeaseKind::Gpu {
                         index: self.gpu_indices[slot_idx],
                         vendor: self.gpu_vendors[slot_idx],
@@ -742,7 +747,10 @@ mod tests {
         let lease = pool.try_claim().unwrap();
         assert!(pool.try_claim().is_none());
         drop(lease);
-        assert!(pool.try_claim().is_some(), "permit returned to pool after lease drop");
+        assert!(
+            pool.try_claim().is_some(),
+            "permit returned to pool after lease drop"
+        );
     }
 
     #[tokio::test]
@@ -823,7 +831,13 @@ mod tests {
         let pool = Arc::new(GpuPool::new(&[synth_intel(2)]));
         let l = pool.claim().await.unwrap();
         assert!(!l.is_software());
-        assert_eq!(l.kind(), LeaseKind::Gpu { index: 2, vendor: GpuVendor::Intel });
+        assert_eq!(
+            l.kind(),
+            LeaseKind::Gpu {
+                index: 2,
+                vendor: GpuVendor::Intel
+            }
+        );
         assert_eq!(l.gpu_index(), Some(2));
         assert_eq!(l.vendor(), Some(GpuVendor::Intel));
         assert_eq!(l.threads(), 0);
@@ -857,7 +871,11 @@ mod tests {
         let l0 = pool.claim().await.unwrap();
         let l1 = pool.claim().await.unwrap();
         let l2 = pool.claim().await.unwrap();
-        let mut got: Vec<u32> = vec![l0.gpu_index().unwrap(), l1.gpu_index().unwrap(), l2.gpu_index().unwrap()];
+        let mut got: Vec<u32> = vec![
+            l0.gpu_index().unwrap(),
+            l1.gpu_index().unwrap(),
+            l2.gpu_index().unwrap(),
+        ];
         got.sort();
         assert_eq!(got, vec![0, 2, 5]);
     }

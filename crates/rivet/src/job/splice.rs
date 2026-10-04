@@ -14,12 +14,20 @@ pub struct Clip {
 impl Clip {
     /// A whole clip, no trim.
     pub fn new(input: impl Into<Bytes>) -> Self {
-        Self { input: input.into(), start: None, end: None }
+        Self {
+            input: input.into(),
+            start: None,
+            end: None,
+        }
     }
 
     /// A clip trimmed to `[start, end)` seconds (either bound `None` = open).
     pub fn trimmed(input: impl Into<Bytes>, start: Option<f64>, end: Option<f64>) -> Self {
-        Self { input: input.into(), start, end }
+        Self {
+            input: input.into(),
+            start,
+            end,
+        }
     }
 }
 

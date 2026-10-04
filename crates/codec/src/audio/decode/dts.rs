@@ -88,11 +88,17 @@ impl DtsDecoder {
                 lfe = info.lfe,
                 layout = info.layout.name(),
                 sample_rate = info.sample_rate,
-                filts = if info.perfect_reconstruction { "perfect" } else { "non-perfect" },
+                filts = if info.perfect_reconstruction {
+                    "perfect"
+                } else {
+                    "non-perfect"
+                },
                 "DTS core: decoding"
             );
             let channels = info.layout.channels();
-            if info.sample_rate != self.declared_sample_rate || channels != self.declared_channels as usize {
+            if info.sample_rate != self.declared_sample_rate
+                || channels != self.declared_channels as usize
+            {
                 tracing::warn!(
                     container_rate = self.declared_sample_rate,
                     container_channels = self.declared_channels,
@@ -144,7 +150,15 @@ impl AudioDecoder for DtsDecoder {
 
     fn layout(&self) -> Option<ChannelLayout> {
         let layout = self.inner.layout()?;
-        ChannelLayout::new(layout.speakers().iter().copied().map(label).collect::<Option<_>>()?).ok()
+        ChannelLayout::new(
+            layout
+                .speakers()
+                .iter()
+                .copied()
+                .map(label)
+                .collect::<Option<_>>()?,
+        )
+        .ok()
     }
 }
 
@@ -162,19 +176,40 @@ mod tests {
     #[test]
     fn errors_map_onto_audio_errors_with_their_messages() {
         let mut d = DtsDecoder::new(48_000, 6).unwrap();
-        let err = d.decode(&[0x0B, 0x77, 0, 0, 0, 0, 0, 0, 0, 0], 0).unwrap_err();
+        let err = d
+            .decode(&[0x0B, 0x77, 0, 0, 0, 0, 0, 0, 0, 0], 0)
+            .unwrap_err();
         assert!(matches!(err, AudioError::Decode(_)), "{err}");
         assert!(err.to_string().contains("0x7FFE8001"), "{err}");
         let err = decode_error(dts::Error::Unsupported("ADPCM prediction".into()));
         assert!(matches!(err, AudioError::Unsupported(_)), "{err}");
-        assert_eq!(err.to_string(), "unsupported: DTS: unsupported: ADPCM prediction");
+        assert_eq!(
+            err.to_string(),
+            "unsupported: DTS: unsupported: ADPCM prediction"
+        );
     }
 
     #[test]
     fn every_dts_layout_is_a_named_pipeline_layout() {
         use dts::Layout::*;
-        for l in [Mono, Stereo, Stereo21, Surround30, Surround40, QuadSide, Surround50Side, Surround51Side] {
-            let ours = ChannelLayout::new(l.speakers().iter().copied().map(|s| label(s).unwrap()).collect()).unwrap();
+        for l in [
+            Mono,
+            Stereo,
+            Stereo21,
+            Surround30,
+            Surround40,
+            QuadSide,
+            Surround50Side,
+            Surround51Side,
+        ] {
+            let ours = ChannelLayout::new(
+                l.speakers()
+                    .iter()
+                    .copied()
+                    .map(|s| label(s).unwrap())
+                    .collect(),
+            )
+            .unwrap();
             assert_eq!(ours, ChannelLayout::named(l.name()), "{l}");
         }
     }

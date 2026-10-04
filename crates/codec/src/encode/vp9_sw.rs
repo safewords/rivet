@@ -120,7 +120,11 @@ impl Vp9Encoder {
         cfg.keyframe_interval = config.keyframe_interval.max(1);
         if let Some(bps) = rate {
             cfg.target_bitrate = Some(u64::from(bps));
-            cfg.frame_rate = if config.frame_rate.is_finite() && config.frame_rate > 0.0 { config.frame_rate } else { 30.0 };
+            cfg.frame_rate = if config.frame_rate.is_finite() && config.frame_rate > 0.0 {
+                config.frame_rate
+            } else {
+                30.0
+            };
         }
         match tier(&config) {
             SpeedTier::Draft => {
@@ -141,8 +145,14 @@ impl Vp9Encoder {
         cfg.threads = threads(&config);
         cfg.color_space = color_space(&config.color_metadata);
         cfg.full_range = config.color_metadata.full_range;
-        cfg.validate().context("the VP9 encoder rejected the configuration")?;
-        Ok(Self { inner: vp9::Encoder::new(cfg.clone()), cfg, format: config.pixel_format, ready: VecDeque::new() })
+        cfg.validate()
+            .context("the VP9 encoder rejected the configuration")?;
+        Ok(Self {
+            inner: vp9::Encoder::new(cfg.clone()),
+            cfg,
+            format: config.pixel_format,
+            ready: VecDeque::new(),
+        })
     }
 }
 
@@ -165,17 +175,33 @@ impl Encoder for Vp9Encoder {
                 self.cfg.height
             );
         }
-        let mut picture = vp9::Frame::new(self.cfg.width, self.cfg.height, self.cfg.bit_depth, self.cfg.chroma);
+        let mut picture = vp9::Frame::new(
+            self.cfg.width,
+            self.cfg.height,
+            self.cfg.bit_depth,
+            self.cfg.chroma,
+        );
         let want = picture.data.len();
         if frame.data.len() < want {
-            bail!("frame buffer is {} bytes, too short for a {:?} frame ({want} expected)", frame.data.len(), frame.format);
+            bail!(
+                "frame buffer is {} bytes, too short for a {:?} frame ({want} expected)",
+                frame.data.len(),
+                frame.format
+            );
         }
         picture.data.copy_from_slice(&frame.data[..want]);
         picture.color_space = self.cfg.color_space;
         picture.full_range = self.cfg.full_range;
-        let data = self.inner.encode(&picture).context("the VP9 encoder refused a frame")?;
+        let data = self
+            .inner
+            .encode(&picture)
+            .context("the VP9 encoder refused a frame")?;
         let is_keyframe = self.inner.last_was_keyframe();
-        self.ready.push_back(EncodedPacket { data: Bytes::from(data), pts: frame.pts, is_keyframe });
+        self.ready.push_back(EncodedPacket {
+            data: Bytes::from(data),
+            pts: frame.pts,
+            is_keyframe,
+        });
         Ok(())
     }
 
@@ -208,16 +234,31 @@ mod tests {
     /// The rung's thread budget reaches the encoder; zero is the machine's.
     #[test]
     fn the_rung_thread_budget_reaches_the_encoder() {
-        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Vp9, ..Default::default() };
+        let base = EncoderConfig {
+            width: 64,
+            height: 48,
+            frame_rate: 25.0,
+            codec: VideoCodec::Vp9,
+            ..Default::default()
+        };
         let all = std::thread::available_parallelism().map_or(1, |n| n.get());
         for (asked, want) in [(3, 3), (0, all)] {
-            let enc = Vp9Encoder::new(EncoderConfig { threads: asked, ..base.clone() }).unwrap();
+            let enc = Vp9Encoder::new(EncoderConfig {
+                threads: asked,
+                ..base.clone()
+            })
+            .unwrap();
             assert_eq!(enc.cfg.threads, want, "threads {asked}");
         }
     }
 
     fn psnr8(a: &[u8], b: &[u8]) -> f64 {
-        let mse = a.iter().zip(b).map(|(x, y)| (f64::from(*x) - f64::from(*y)).powi(2)).sum::<f64>() / a.len() as f64;
+        let mse = a
+            .iter()
+            .zip(b)
+            .map(|(x, y)| (f64::from(*x) - f64::from(*y)).powi(2))
+            .sum::<f64>()
+            / a.len() as f64;
         10.0 * (255.0f64 * 255.0 / mse.max(1e-9)).log10()
     }
 
@@ -226,7 +267,13 @@ mod tests {
     #[test]
     fn packets_decode_near_the_source() {
         let (w, h) = (64, 48);
-        let config = EncoderConfig { width: w, height: h, codec: VideoCodec::Vp9, keyframe_interval: 3, ..Default::default() };
+        let config = EncoderConfig {
+            width: w,
+            height: h,
+            codec: VideoCodec::Vp9,
+            keyframe_interval: 3,
+            ..Default::default()
+        };
         let mut enc = Vp9Encoder::new(config).unwrap();
         let mut dec = vp9::Decoder::new();
         for n in 0..4 {
@@ -240,7 +287,8 @@ mod tests {
             assert!(psnr > 30.0, "frame {n}: {psnr:.1} dB");
         }
         enc.force_keyframe_next().unwrap();
-        enc.send_frame(&super::super::native::test_picture(w, h, 4)).unwrap();
+        enc.send_frame(&super::super::native::test_picture(w, h, 4))
+            .unwrap();
         assert!(enc.receive_packet().unwrap().unwrap().is_keyframe);
     }
 
@@ -255,7 +303,13 @@ mod tests {
             (PixelFormat::Yuv422p12le, 3),
         ] {
             let (depth, chroma) = vp9_layout(format).unwrap();
-            let config = EncoderConfig { width: w, height: h, codec: VideoCodec::Vp9, pixel_format: format, ..Default::default() };
+            let config = EncoderConfig {
+                width: w,
+                height: h,
+                codec: VideoCodec::Vp9,
+                pixel_format: format,
+                ..Default::default()
+            };
             let mut enc = Vp9Encoder::new(config).unwrap();
             assert_eq!(enc.cfg.profile(), profile, "{format:?}");
             let mut src = vp9::Frame::new(w, h, depth, chroma);
@@ -264,7 +318,8 @@ mod tests {
                 for y in 0..pl.height {
                     for x in 0..pl.width {
                         let v = ((x * 5 + y * 3 + p as u32 * 30) % 200 + 20) << (depth - 8);
-                        let at = pl.offset + ((y * pl.width + x) as usize) * if depth > 8 { 2 } else { 1 };
+                        let at = pl.offset
+                            + ((y * pl.width + x) as usize) * if depth > 8 { 2 } else { 1 };
                         if depth > 8 {
                             src.data[at..at + 2].copy_from_slice(&(v as u16).to_le_bytes());
                         } else {
@@ -273,7 +328,14 @@ mod tests {
                     }
                 }
             }
-            let frame = VideoFrame::new(Bytes::from(src.data.clone()), w, h, format, crate::frame::ColorSpace::Bt709, 0);
+            let frame = VideoFrame::new(
+                Bytes::from(src.data.clone()),
+                w,
+                h,
+                format,
+                crate::frame::ColorSpace::Bt709,
+                0,
+            );
             enc.send_frame(&frame).unwrap();
             let p = enc.receive_packet().unwrap().unwrap();
             let back = vp9::Decoder::new().decode(&p.data).unwrap().unwrap();
@@ -284,20 +346,52 @@ mod tests {
 
     #[test]
     fn a_bitrate_rung_is_coded_and_a_constant_rate_refused() {
-        let base = EncoderConfig { width: 64, height: 48, codec: VideoCodec::Vp9, frame_rate: 25.0, ..Default::default() };
-        let vbr = EncodeOverrides { bitrate: Some(300_000), ..Default::default() };
-        let enc = Vp9Encoder::new(EncoderConfig { overrides: vbr, ..base.clone() }).unwrap();
+        let base = EncoderConfig {
+            width: 64,
+            height: 48,
+            codec: VideoCodec::Vp9,
+            frame_rate: 25.0,
+            ..Default::default()
+        };
+        let vbr = EncodeOverrides {
+            bitrate: Some(300_000),
+            ..Default::default()
+        };
+        let enc = Vp9Encoder::new(EncoderConfig {
+            overrides: vbr,
+            ..base.clone()
+        })
+        .unwrap();
         assert_eq!(enc.cfg.target_bitrate, Some(300_000));
-        let cbr = EncodeOverrides { rate_mode: Some(RateMode::Constant), bitrate: Some(300_000), ..Default::default() };
-        let msg = Vp9Encoder::new(EncoderConfig { overrides: cbr, ..base }).err().unwrap().to_string();
+        let cbr = EncodeOverrides {
+            rate_mode: Some(RateMode::Constant),
+            bitrate: Some(300_000),
+            ..Default::default()
+        };
+        let msg = Vp9Encoder::new(EncoderConfig {
+            overrides: cbr,
+            ..base
+        })
+        .err()
+        .unwrap()
+        .to_string();
         assert!(msg.contains("constant"), "{msg}");
     }
 
     #[test]
     fn the_tier_picks_the_speed() {
         let speed = |t| {
-            let o = EncodeOverrides { speed_tier: Some(t), ..Default::default() };
-            let cfg = EncoderConfig { width: 64, height: 48, codec: VideoCodec::Vp9, overrides: o, ..Default::default() };
+            let o = EncodeOverrides {
+                speed_tier: Some(t),
+                ..Default::default()
+            };
+            let cfg = EncoderConfig {
+                width: 64,
+                height: 48,
+                codec: VideoCodec::Vp9,
+                overrides: o,
+                ..Default::default()
+            };
             let e = Vp9Encoder::new(cfg).unwrap();
             (e.cfg.speed, e.cfg.block_size)
         };

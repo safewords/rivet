@@ -82,7 +82,10 @@ pub fn encode(frame: &VideoFrame, format: FrameFormat) -> Result<Vec<u8>> {
 /// Bits per sample, and whether samples are 16-bit LE words.
 fn depth(format: PixelFormat) -> u32 {
     match format {
-        PixelFormat::Yuv420p10le | PixelFormat::Yuv422p10le | PixelFormat::Yuv444p10le | PixelFormat::Yuva444p10le => 10,
+        PixelFormat::Yuv420p10le
+        | PixelFormat::Yuv422p10le
+        | PixelFormat::Yuv444p10le
+        | PixelFormat::Yuva444p10le => 10,
         PixelFormat::Yuv420p12le | PixelFormat::Yuv422p12le | PixelFormat::Yuv444p12le => 12,
         _ => 8,
     }
@@ -97,11 +100,17 @@ fn plane8(data: &[u8], samples: usize, bits: u32) -> Result<Vec<u8>> {
         return Ok(data[..samples].to_vec());
     }
     if data.len() < samples * 2 {
-        bail!("frame plane is {} bytes, {} expected", data.len(), samples * 2);
+        bail!(
+            "frame plane is {} bytes, {} expected",
+            data.len(),
+            samples * 2
+        );
     }
     let shift = bits - 8;
     Ok(data[..samples * 2]
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| (u16::from_le_bytes([c[0], c[1]]) >> shift).min(255) as u8)
         .collect())
 }
@@ -118,14 +127,25 @@ pub fn luma8(frame: &VideoFrame) -> Result<Vec<u8>> {
     let data = &frame.data[..];
     match frame.format {
         PixelFormat::Rgb24 | PixelFormat::Rgba32 => {
-            let step = if frame.format == PixelFormat::Rgb24 { 3 } else { 4 };
+            let step = if frame.format == PixelFormat::Rgb24 {
+                3
+            } else {
+                4
+            };
             if data.len() < pixels * step {
-                bail!("{} frame is {} bytes, {} expected", frame.format.as_ffmpeg_str(), data.len(), pixels * step);
+                bail!(
+                    "{} frame is {} bytes, {} expected",
+                    frame.format.as_ffmpeg_str(),
+                    data.len(),
+                    pixels * step
+                );
             }
             Ok(data
                 .chunks_exact(step)
                 .take(pixels)
-                .map(|p| ((77 * p[0] as u32 + 150 * p[1] as u32 + 29 * p[2] as u32 + 128) >> 8) as u8)
+                .map(|p| {
+                    ((77 * p[0] as u32 + 150 * p[1] as u32 + 29 * p[2] as u32 + 128) >> 8) as u8
+                })
                 .collect())
         }
         f => plane8(data, pixels, depth(f)),
@@ -144,15 +164,29 @@ pub fn rgb8(frame: &VideoFrame) -> Result<Vec<u8>> {
     match frame.format {
         PixelFormat::Rgb24 => {
             if data.len() < pixels * 3 {
-                bail!("rgb24 frame is {} bytes, {} expected", data.len(), pixels * 3);
+                bail!(
+                    "rgb24 frame is {} bytes, {} expected",
+                    data.len(),
+                    pixels * 3
+                );
             }
             return Ok(data[..pixels * 3].to_vec());
         }
         PixelFormat::Rgba32 => {
             if data.len() < pixels * 4 {
-                bail!("rgba frame is {} bytes, {} expected", data.len(), pixels * 4);
+                bail!(
+                    "rgba frame is {} bytes, {} expected",
+                    data.len(),
+                    pixels * 4
+                );
             }
-            return Ok(data.chunks_exact(4).take(pixels).flat_map(|p| [p[0], p[1], p[2]]).collect());
+            return Ok(data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .take(pixels)
+                .flat_map(|p| [p[0], p[1], p[2]])
+                .collect());
         }
         _ => {}
     }
@@ -166,10 +200,15 @@ pub fn rgb8(frame: &VideoFrame) -> Result<Vec<u8>> {
             let (cw, ch) = chroma_dims(w, h, 2, 2, rest.len() / 2);
             let n = cw * ch;
             if rest.len() < n * 2 {
-                bail!("{} chroma is {} bytes, {} expected", frame.format.as_ffmpeg_str(), rest.len(), n * 2);
+                bail!(
+                    "{} chroma is {} bytes, {} expected",
+                    frame.format.as_ffmpeg_str(),
+                    rest.len(),
+                    n * 2
+                );
             }
             let (mut u, mut v) = (Vec::with_capacity(n), Vec::with_capacity(n));
-            for pair in rest[..n * 2].chunks_exact(2) {
+            for pair in rest[..n * 2].as_chunks::<2>().0 {
                 u.push(pair[0]);
                 v.push(pair[1]);
             }
@@ -180,8 +219,12 @@ pub fn rgb8(frame: &VideoFrame) -> Result<Vec<u8>> {
         }
         f => {
             let (sx, sy) = match f {
-                PixelFormat::Yuv420p | PixelFormat::Yuv420p10le | PixelFormat::Yuv420p12le => (2, 2),
-                PixelFormat::Yuv422p | PixelFormat::Yuv422p10le | PixelFormat::Yuv422p12le => (2, 1),
+                PixelFormat::Yuv420p | PixelFormat::Yuv420p10le | PixelFormat::Yuv420p12le => {
+                    (2, 2)
+                }
+                PixelFormat::Yuv422p | PixelFormat::Yuv422p10le | PixelFormat::Yuv422p12le => {
+                    (2, 1)
+                }
                 _ => (1, 1),
             };
             let (cw, ch) = chroma_dims(w, h, sx, sy, rest.len() / (2 * bps));
@@ -219,7 +262,11 @@ pub fn rgb8(frame: &VideoFrame) -> Result<Vec<u8>> {
 /// data holds a rounded-up plane, else down.
 fn chroma_dims(w: usize, h: usize, sx: usize, sy: usize, available: usize) -> (usize, usize) {
     let up = (w.div_ceil(sx), h.div_ceil(sy));
-    if up.0 * up.1 <= available { up } else { ((w / sx).max(1), (h / sy).max(1)) }
+    if up.0 * up.1 <= available {
+        up
+    } else {
+        ((w / sx).max(1), (h / sy).max(1))
+    }
 }
 
 /// How a letterboxed picture maps onto its source: the source was scaled by
@@ -264,7 +311,9 @@ pub fn rgb8_resized(frame: &VideoFrame, width: u32, height: u32) -> Result<Vec<u
     }
     let mut out = vec![0u8; (width * height * 3) as usize];
     let w = width as usize;
-    Planes::of(frame)?.scaled(width, height, |x, y, rgb| out[(y * w + x) * 3..(y * w + x) * 3 + 3].copy_from_slice(&rgb));
+    Planes::of(frame)?.scaled(width, height, |x, y, rgb| {
+        out[(y * w + x) * 3..(y * w + x) * 3 + 3].copy_from_slice(&rgb)
+    });
     Ok(out)
 }
 
@@ -274,13 +323,23 @@ fn fit(frame: &VideoFrame, width: u32, height: u32) -> Result<(u32, u32, Letterb
     if width == 0 || height == 0 {
         bail!("a letterbox needs a size (got {width}x{height})");
     }
-    let scale = (width as f32 / frame.width.max(1) as f32).min(height as f32 / frame.height.max(1) as f32);
+    let scale =
+        (width as f32 / frame.width.max(1) as f32).min(height as f32 / frame.height.max(1) as f32);
     let (sw, sh) = (
         ((frame.width as f32 * scale).round() as u32).clamp(1, width),
         ((frame.height as f32 * scale).round() as u32).clamp(1, height),
     );
     let (pad_x, pad_y) = ((width - sw) / 2, (height - sh) / 2);
-    Ok((sw, sh, Letterbox { scale, pad_x, pad_y, source: (frame.width, frame.height) }))
+    Ok((
+        sw,
+        sh,
+        Letterbox {
+            scale,
+            pad_x,
+            pad_y,
+            source: (frame.width, frame.height),
+        },
+    ))
 }
 
 /// The frame as 8-bit RGB fitted inside `width × height` with its aspect ratio
@@ -288,11 +347,25 @@ fn fit(frame: &VideoFrame, width: u32, height: u32) -> Result<(u32, u32, Letterb
 /// models (YOLO among them) expect — and the [`Letterbox`] that maps the
 /// model's coordinates back onto the frame. Like [`rgb8_resized`], one pass
 /// from the decoder's planes.
-pub fn rgb8_letterboxed(frame: &VideoFrame, width: u32, height: u32, fill: [u8; 3]) -> Result<(Vec<u8>, Letterbox)> {
+pub fn rgb8_letterboxed(
+    frame: &VideoFrame,
+    width: u32,
+    height: u32,
+    fill: [u8; 3],
+) -> Result<(Vec<u8>, Letterbox)> {
     let planes = Planes::of(frame)?;
     let (sw, sh, letterbox) = fit(frame, width, height)?;
-    let mut out: Vec<u8> = fill.iter().copied().cycle().take((width * height * 3) as usize).collect();
-    let (w, px, py) = (width as usize, letterbox.pad_x as usize, letterbox.pad_y as usize);
+    let mut out: Vec<u8> = fill
+        .iter()
+        .copied()
+        .cycle()
+        .take((width * height * 3) as usize)
+        .collect();
+    let (w, px, py) = (
+        width as usize,
+        letterbox.pad_x as usize,
+        letterbox.pad_y as usize,
+    );
     planes.scaled(sw, sh, |x, y, rgb| {
         let at = ((y + py) * w + px + x) * 3;
         out[at..at + 3].copy_from_slice(&rgb);
@@ -304,7 +377,12 @@ pub fn rgb8_letterboxed(frame: &VideoFrame, width: u32, height: u32, fill: [u8; 
 /// `f32` in `0.0..=1.0`, channel by channel (the NCHW layout, batch of one).
 /// The same values as `rgb8_to_planar_f32(&rgb8_letterboxed(..).0, ..)`,
 /// without the interleaved picture in between.
-pub fn planar_f32_letterboxed(frame: &VideoFrame, width: u32, height: u32, fill: [u8; 3]) -> Result<(Vec<f32>, Letterbox)> {
+pub fn planar_f32_letterboxed(
+    frame: &VideoFrame,
+    width: u32,
+    height: u32,
+    fill: [u8; 3],
+) -> Result<(Vec<f32>, Letterbox)> {
     let planes = Planes::of(frame)?;
     let (sw, sh, letterbox) = fit(frame, width, height)?;
     let n = (width * height) as usize;
@@ -312,7 +390,11 @@ pub fn planar_f32_letterboxed(frame: &VideoFrame, width: u32, height: u32, fill:
     for (c, plane) in out.chunks_exact_mut(n).enumerate() {
         plane.fill(UNIT[fill[c] as usize]);
     }
-    let (w, px, py) = (width as usize, letterbox.pad_x as usize, letterbox.pad_y as usize);
+    let (w, px, py) = (
+        width as usize,
+        letterbox.pad_x as usize,
+        letterbox.pad_y as usize,
+    );
     planes.scaled(sw, sh, |x, y, rgb| {
         let at = (y + py) * w + px + x;
         for (c, v) in rgb.into_iter().enumerate() {
@@ -339,7 +421,7 @@ const UNIT: [f32; 256] = {
 pub fn rgb8_to_planar_f32(rgb: &[u8], width: u32, height: u32) -> Vec<f32> {
     let n = (width * height) as usize;
     let mut out = vec![0f32; n * 3];
-    for (i, px) in rgb.chunks_exact(3).take(n).enumerate() {
+    for (i, px) in rgb.as_chunks::<3>().0.iter().take(n).enumerate() {
         for c in 0..3 {
             out[c * n + i] = UNIT[px[c] as usize];
         }
@@ -382,7 +464,11 @@ fn taps(count: u32, len: usize, scale: usize, at: impl Fn(f32) -> f32) -> Vec<Ta
         .map(|i| {
             let p = at(i as f32).clamp(0.0, (len - 1) as f32);
             let a = p as usize;
-            Tap { a: a * scale, b: (a + 1).min(len - 1) * scale, t: p - a as f32 }
+            Tap {
+                a: a * scale,
+                b: (a + 1).min(len - 1) * scale,
+                t: p - a as f32,
+            }
         })
         .collect()
 }
@@ -439,34 +525,90 @@ impl<'a> Planes<'a> {
         }
         let data = &frame.data[..];
         if let PixelFormat::Rgb24 | PixelFormat::Rgba32 = frame.format {
-            let step = if frame.format == PixelFormat::Rgb24 { 3 } else { 4 };
+            let step = if frame.format == PixelFormat::Rgb24 {
+                3
+            } else {
+                4
+            };
             if data.len() < pixels * step {
-                bail!("{} frame is {} bytes, {} expected", frame.format.as_ffmpeg_str(), data.len(), pixels * step);
+                bail!(
+                    "{} frame is {} bytes, {} expected",
+                    frame.format.as_ffmpeg_str(),
+                    data.len(),
+                    pixels * step
+                );
             }
-            let plane = |offset| PlaneView { data, w, h, stride: w * step, step, offset, bytes: 1, to8: 1.0 };
-            return Ok(Planes { p: [plane(0), plane(1), plane(2)], yuv: None });
+            let plane = |offset| PlaneView {
+                data,
+                w,
+                h,
+                stride: w * step,
+                step,
+                offset,
+                bytes: 1,
+                to8: 1.0,
+            };
+            return Ok(Planes {
+                p: [plane(0), plane(1), plane(2)],
+                yuv: None,
+            });
         }
         let bits = depth(frame.format);
         let bytes = if bits == 8 { 1 } else { 2 };
         let to8 = 1.0 / (1u32 << (bits - 8)) as f32;
         if data.len() < pixels * bytes {
-            bail!("frame plane is {} bytes, {} expected", data.len(), pixels * bytes);
+            bail!(
+                "frame plane is {} bytes, {} expected",
+                data.len(),
+                pixels * bytes
+            );
         }
-        let y = PlaneView { data, w, h, stride: w, step: 1, offset: 0, bytes, to8 };
+        let y = PlaneView {
+            data,
+            w,
+            h,
+            stride: w,
+            step: 1,
+            offset: 0,
+            bytes,
+            to8,
+        };
         let rest = &data[pixels * bytes..];
         let (u, v) = match frame.format {
             PixelFormat::Nv12 | PixelFormat::Nv21 => {
                 let (cw, ch) = chroma_dims(w, h, 2, 2, rest.len() / 2);
                 if rest.len() < cw * ch * 2 {
-                    bail!("{} chroma is {} bytes, {} expected", frame.format.as_ffmpeg_str(), rest.len(), cw * ch * 2);
+                    bail!(
+                        "{} chroma is {} bytes, {} expected",
+                        frame.format.as_ffmpeg_str(),
+                        rest.len(),
+                        cw * ch * 2
+                    );
                 }
-                let c = |offset| PlaneView { data: rest, w: cw, h: ch, stride: cw * 2, step: 2, offset, bytes: 1, to8: 1.0 };
-                if frame.format == PixelFormat::Nv12 { (c(0), c(1)) } else { (c(1), c(0)) }
+                let c = |offset| PlaneView {
+                    data: rest,
+                    w: cw,
+                    h: ch,
+                    stride: cw * 2,
+                    step: 2,
+                    offset,
+                    bytes: 1,
+                    to8: 1.0,
+                };
+                if frame.format == PixelFormat::Nv12 {
+                    (c(0), c(1))
+                } else {
+                    (c(1), c(0))
+                }
             }
             f => {
                 let (sx, sy) = match f {
-                    PixelFormat::Yuv420p | PixelFormat::Yuv420p10le | PixelFormat::Yuv420p12le => (2, 2),
-                    PixelFormat::Yuv422p | PixelFormat::Yuv422p10le | PixelFormat::Yuv422p12le => (2, 1),
+                    PixelFormat::Yuv420p | PixelFormat::Yuv420p10le | PixelFormat::Yuv420p12le => {
+                        (2, 2)
+                    }
+                    PixelFormat::Yuv422p | PixelFormat::Yuv422p10le | PixelFormat::Yuv422p12le => {
+                        (2, 1)
+                    }
                     _ => (1, 1),
                 };
                 let (cw, ch) = chroma_dims(w, h, sx, sy, rest.len() / (2 * bytes));
@@ -474,7 +616,16 @@ impl<'a> Planes<'a> {
                 if rest.len() < n * 2 {
                     bail!("frame chroma is {} bytes, {} expected", rest.len(), n * 2);
                 }
-                let c = |data| PlaneView { data, w: cw, h: ch, stride: cw, step: 1, offset: 0, bytes, to8 };
+                let c = |data| PlaneView {
+                    data,
+                    w: cw,
+                    h: ch,
+                    stride: cw,
+                    step: 1,
+                    offset: 0,
+                    bytes,
+                    to8,
+                };
                 (c(&rest[..n]), c(&rest[n..]))
             }
         };
@@ -483,7 +634,10 @@ impl<'a> Planes<'a> {
             ColorSpace::Bt709 => (0.2126, 0.0722),
             ColorSpace::Bt2020 => (0.2627, 0.0593),
         };
-        Ok(Planes { p: [y, u, v], yuv: Some((kr, kb)) })
+        Ok(Planes {
+            p: [y, u, v],
+            yuv: Some((kr, kb)),
+        })
     }
 
     /// The picture scaled to `dw × dh`, bilinear, each pixel's 8-bit RGB
@@ -527,7 +681,15 @@ impl<'a> Planes<'a> {
                 let yy = (y.bilinear::<S>(row, col) - 16.0) * ys;
                 let cb = u.bilinear::<S>(crow, ccol) - 128.0;
                 let cr = v.bilinear::<S>(crow, ccol) - 128.0;
-                put(ox, oy, [to8(yy + rv * cr), to8(yy - gu * cb - gv * cr), to8(yy + bu * cb)]);
+                put(
+                    ox,
+                    oy,
+                    [
+                        to8(yy + rv * cr),
+                        to8(yy - gu * cb - gv * cr),
+                        to8(yy + bu * cb),
+                    ],
+                );
             }
         }
     }

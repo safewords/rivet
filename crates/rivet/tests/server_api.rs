@@ -129,9 +129,17 @@ async fn swagger_redoc_and_landing_render() {
 #[tokio::test]
 async fn an_output_path_that_is_the_input_is_refused() {
     use rivet::codec::audio::{AudioCodec, AudioEncoderConfig, AudioFrame, create_encoder};
-    let mut enc = create_encoder(AudioEncoderConfig::new(AudioCodec::Mp3, 48_000, 1, 64_000)).unwrap();
+    let mut enc =
+        create_encoder(AudioEncoderConfig::new(AudioCodec::Mp3, 48_000, 1, 64_000)).unwrap();
     let samples = (0..24_000).map(|i| 0.4 * (i as f32 * 0.13).sin()).collect();
-    let mut frames = enc.encode(&AudioFrame { samples, sample_rate: 48_000, channels: 1, pts: 0 }).unwrap();
+    let mut frames = enc
+        .encode(&AudioFrame {
+            samples,
+            sample_rate: 48_000,
+            channels: 1,
+            pts: 0,
+        })
+        .unwrap();
     frames.extend(enc.flush().unwrap());
     let mp3: Vec<u8> = frames.into_iter().flat_map(|p| p.data).collect();
 
@@ -167,8 +175,17 @@ async fn an_output_path_that_is_the_input_is_refused() {
             .await
             .unwrap();
         let (status, v) = json(resp).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{mode} {}: {v}", out.display());
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{mode} {}: {v}",
+            out.display()
+        );
         assert!(v["error"].as_str().unwrap().contains("refusing"), "{v}");
-        assert_eq!(std::fs::read(&input).unwrap(), mp3, "the source is untouched");
+        assert_eq!(
+            std::fs::read(&input).unwrap(),
+            mp3,
+            "the source is untouched"
+        );
     }
 }

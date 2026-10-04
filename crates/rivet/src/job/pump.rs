@@ -15,10 +15,10 @@ use crate::progress::ProgressSink;
 use crate::spec::OutputSpec;
 use crate::validate::needs_chroma_downsample;
 
-use super::{RungArtifact, RungOutput, report_failed};
 use super::audio::{PreparedAudio, build_audio_rendition};
-use super::subtitles::build_subtitle_renditions;
 use super::splice::trim_frame;
+use super::subtitles::build_subtitle_renditions;
+use super::{RungArtifact, RungOutput, report_failed};
 
 // ---------------------------------------------------------------------------
 // Decode-pump config builder
@@ -83,7 +83,11 @@ pub(super) async fn run_hls(
     // the spec trim window (empty plan ⇒ the multi-GPU pump's input fallback).
     // Trims count on the source's clock; `frame_rate` is the output's, after
     // any cap, and a cap below the source's drops frames.
-    let source_fps = if header.info.frame_rate > 0.0 { header.info.frame_rate } else { frame_rate };
+    let source_fps = if header.info.frame_rate > 0.0 {
+        header.info.frame_rate
+    } else {
+        frame_rate
+    };
     let decimate = crate::decode_pump::decimation(header.info.frame_rate, spec.max_frame_rate);
     let start_frame = trim_frame(spec.trim_start, source_fps).unwrap_or(0);
     let end_frame = trim_frame(spec.trim_end, source_fps);
@@ -123,8 +127,7 @@ pub(super) async fn run_hls(
     // by name, before a frame is decoded — see `gpu_pool_for_policy`. Every
     // worker builds its encoder for the output's format on the card it
     // leased, so the pool holds only cards that take that format.
-    let gpu_pool =
-        multigpu::gpu_pool_for_job(spec, output_pixel_format)?;
+    let gpu_pool = multigpu::gpu_pool_for_job(spec, output_pixel_format)?;
     // Bitrate rungs are coded by the software encoder only; the ladder's
     // workers lease from this pool and never read the pin.
     multigpu::check_rate_pool(spec, &gpu_pool, output_pixel_format, None)?;
@@ -170,7 +173,8 @@ pub(super) async fn run_hls(
                 let dir = root.join(&rm.relative_dir);
                 let bytes = dir_size(&dir);
                 let declared = spec.rungs.get(rm.rung_index).and_then(|r| {
-                    codec::encode::tuning::ConstantRate::from_overrides(&r.quality.overrides).map(|c| c.bps)
+                    codec::encode::tuning::ConstantRate::from_overrides(&r.quality.overrides)
+                        .map(|c| c.bps)
                 });
                 settle_sample_entry(&rm);
                 video_specs.push(build_video_variant_spec(&rm, frame_rate, bytes, declared));
@@ -243,7 +247,12 @@ pub(super) async fn run_hls(
 /// / `hev1` when a helper's encoder wrote others (see
 /// `container::cmaf::settle_video_sample_entry`).
 pub(super) fn settle_sample_entry(rm: &RungManifest) {
-    let segments: Vec<PathBuf> = rm.manifest.segments.iter().map(|s| s.path.clone()).collect();
+    let segments: Vec<PathBuf> = rm
+        .manifest
+        .segments
+        .iter()
+        .map(|s| s.path.clone())
+        .collect();
     match container::cmaf::settle_video_sample_entry(&rm.manifest.init_path, &segments) {
         Ok(Some(entry)) if matches!(&entry, b"avc3" | b"hev1") => tracing::info!(
             rung = %rm.label,
@@ -266,7 +275,12 @@ pub(super) fn settle_sample_entry(rm: &RungManifest) {
 /// hardware CBR stream can run a percent or two over its rate (measured on
 /// an Arc: 2.0-2.8%), and an average over the peak is a playlist that
 /// contradicts itself.
-pub(super) fn build_video_variant_spec(rm: &RungManifest, frame_rate: f64, bytes: u64, declared: Option<u32>) -> VideoVariantSpec {
+pub(super) fn build_video_variant_spec(
+    rm: &RungManifest,
+    frame_rate: f64,
+    bytes: u64,
+    declared: Option<u32>,
+) -> VideoVariantSpec {
     let codec_string = cmaf_util::codec_string_from_init(&rm.manifest.init_path)
         .unwrap_or_else(|_| "av01.0.08M.08.0.110.01.01.01.0".to_string());
     // RFC 8216 §4.3.4.2: BANDWIDTH is the peak segment bit rate and
@@ -334,8 +348,14 @@ fn add_rendition_rates(
         .map(|s| cmaf_util::measure_segments(&s.manifest.segments, s.manifest.timescale))
         .fold((0, 0), |(avg, peak), (a, p)| (avg.max(a), peak.max(p)));
     for v in video {
-        v.average_bandwidth_bps = v.average_bandwidth_bps.saturating_add(audio_avg).saturating_add(subs_avg);
-        v.bandwidth_bps = v.bandwidth_bps.saturating_add(audio_peak).saturating_add(subs_peak);
+        v.average_bandwidth_bps = v
+            .average_bandwidth_bps
+            .saturating_add(audio_avg)
+            .saturating_add(subs_avg);
+        v.bandwidth_bps = v
+            .bandwidth_bps
+            .saturating_add(audio_peak)
+            .saturating_add(subs_peak);
     }
 }
 
@@ -387,9 +407,20 @@ mod tests {
     /// rung's average, not the peak twice.
     #[test]
     fn average_bandwidth_is_the_average_and_bandwidth_the_peak() {
-        let v = build_video_variant_spec(&rung(&[(100_000, 1), (50_000, 1), (60_000, 2)]), 30.0, 210_000, None);
-        assert_eq!(v.bandwidth_bps, 800_000, "peak: 100 000 bytes in one second");
-        assert_eq!(v.average_bandwidth_bps, 420_000, "average: 210 000 bytes in four seconds");
+        let v = build_video_variant_spec(
+            &rung(&[(100_000, 1), (50_000, 1), (60_000, 2)]),
+            30.0,
+            210_000,
+            None,
+        );
+        assert_eq!(
+            v.bandwidth_bps, 800_000,
+            "peak: 100 000 bytes in one second"
+        );
+        assert_eq!(
+            v.average_bandwidth_bps, 420_000,
+            "average: 210 000 bytes in four seconds"
+        );
     }
 
     /// Every variant's rates grow by the audio rendition's and by the
@@ -413,16 +444,41 @@ mod tests {
             name: "English".into(),
             relative_dir: "subs/en".into(),
             default: false,
-            manifest: container::webvtt::WebVttManifest { segments: track(segs).segments, timescale: 90_000 },
+            manifest: container::webvtt::WebVttManifest {
+                segments: track(segs).segments,
+                timescale: 90_000,
+            },
         };
-        let video = || vec![build_video_variant_spec(&rung(&[(100_000, 1), (50_000, 1)]), 30.0, 150_000, None)];
+        let video = || {
+            vec![build_video_variant_spec(
+                &rung(&[(100_000, 1), (50_000, 1)]),
+                30.0,
+                150_000,
+                None,
+            )]
+        };
         let mut v = video();
-        add_rendition_rates(&mut v, std::slice::from_ref(&audio), &[subs(&[(100, 1), (100, 1)]), subs(&[(300, 1), (100, 1)])]);
-        assert_eq!(v[0].bandwidth_bps, 800_000 + 128_000 + 2_400, "video peak + audio peak + largest subtitle peak");
-        assert_eq!(v[0].average_bandwidth_bps, 600_000 + 96_000 + 1_600, "the same sum of averages");
+        add_rendition_rates(
+            &mut v,
+            std::slice::from_ref(&audio),
+            &[subs(&[(100, 1), (100, 1)]), subs(&[(300, 1), (100, 1)])],
+        );
+        assert_eq!(
+            v[0].bandwidth_bps,
+            800_000 + 128_000 + 2_400,
+            "video peak + audio peak + largest subtitle peak"
+        );
+        assert_eq!(
+            v[0].average_bandwidth_bps,
+            600_000 + 96_000 + 1_600,
+            "the same sum of averages"
+        );
         let mut bare = video();
         add_rendition_rates(&mut bare, &[], &[]);
-        assert_eq!((bare[0].bandwidth_bps, bare[0].average_bandwidth_bps), (800_000, 600_000));
+        assert_eq!(
+            (bare[0].bandwidth_bps, bare[0].average_bandwidth_bps),
+            (800_000, 600_000)
+        );
     }
 
     /// A constant-rate rung's BANDWIDTH is its declared rate, not the peak
@@ -432,7 +488,10 @@ mod tests {
     fn a_constant_rate_rung_declares_its_rate_plus_the_audio() {
         let segs = [(100_000, 1), (50_000, 1)];
         let v = build_video_variant_spec(&rung(&segs), 30.0, 150_000, Some(700_000));
-        assert_eq!(v.bandwidth_bps, 700_000, "the declared rate, not the 800 000 peak");
+        assert_eq!(
+            v.bandwidth_bps, 700_000,
+            "the declared rate, not the 800 000 peak"
+        );
         assert_eq!(v.average_bandwidth_bps, 600_000, "measured");
         let audio = AudioVariantSpec {
             codec_string: "opus".into(),
@@ -445,11 +504,18 @@ mod tests {
         };
         let mut vs = vec![v];
         add_rendition_rates(&mut vs, std::slice::from_ref(&audio), &[]);
-        assert_eq!(vs[0].bandwidth_bps, 700_000 + 128_000, "declared rate + audio peak");
+        assert_eq!(
+            vs[0].bandwidth_bps,
+            700_000 + 128_000,
+            "declared rate + audio peak"
+        );
         assert_eq!(vs[0].average_bandwidth_bps, 600_000 + 96_000);
         // A stream that ran over its rate on average declares its average,
         // never an AVERAGE-BANDWIDTH over its BANDWIDTH.
         let over = build_video_variant_spec(&rung(&segs), 30.0, 150_000, Some(580_000));
-        assert_eq!((over.bandwidth_bps, over.average_bandwidth_bps), (600_000, 600_000));
+        assert_eq!(
+            (over.bandwidth_bps, over.average_bandwidth_bps),
+            (600_000, 600_000)
+        );
     }
 }

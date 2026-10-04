@@ -21,7 +21,9 @@
 //!   without the magic; the `dOps` box's fields, little-endian as in Ogg).
 
 use crate::audio::resample::AlignedResampler;
-use crate::audio::{AudioCodec, AudioEncoder, AudioEncoderConfig, AudioError, AudioFrame, EncodedAudioPacket};
+use crate::audio::{
+    AudioCodec, AudioEncoder, AudioEncoderConfig, AudioError, AudioFrame, EncodedAudioPacket,
+};
 
 /// Samples per channel in one packet: 20 ms at 48 kHz.
 pub const FRAME_SAMPLES: usize = 960;
@@ -39,7 +41,8 @@ pub const STREAM_BITRATE_MAX: u32 = 510_000;
 pub fn default_bitrate(channels: u8) -> u32 {
     match ::opus::family1_layout(channels) {
         Some((streams, coupled, _)) => {
-            u32::from(coupled) * DEFAULT_BITRATE_STEREO + u32::from(streams - coupled) * DEFAULT_BITRATE_MONO
+            u32::from(coupled) * DEFAULT_BITRATE_STEREO
+                + u32::from(streams - coupled) * DEFAULT_BITRATE_MONO
         }
         None => DEFAULT_BITRATE_STEREO,
     }
@@ -54,7 +57,9 @@ pub fn bitrate_range(channels: u8) -> (u32, u32) {
 
 fn encode_error(e: ::opus::Error) -> AudioError {
     match e {
-        ::opus::Error::Config(m) | ::opus::Error::Unsupported(m) => AudioError::Unsupported(format!("opus: {m}")),
+        ::opus::Error::Config(m) | ::opus::Error::Unsupported(m) => {
+            AudioError::Unsupported(format!("opus: {m}"))
+        }
         other => AudioError::Encode(format!("opus: {other}")),
     }
 }
@@ -78,7 +83,10 @@ pub struct OpusEncoder {
 impl OpusEncoder {
     pub fn new(config: AudioEncoderConfig) -> Result<Self, AudioError> {
         if config.codec != AudioCodec::Opus {
-            return Err(AudioError::Encode(format!("OpusEncoder constructed with codec {:?}", config.codec)));
+            return Err(AudioError::Encode(format!(
+                "OpusEncoder constructed with codec {:?}",
+                config.codec
+            )));
         }
         if !(1..=8).contains(&config.channels) {
             return Err(AudioError::Unsupported(format!(
@@ -89,7 +97,11 @@ impl OpusEncoder {
         if config.sample_rate == 0 {
             return Err(AudioError::Encode("input sample_rate is 0".to_string()));
         }
-        let bitrate = if config.bitrate == 0 { default_bitrate(config.channels) } else { config.bitrate };
+        let bitrate = if config.bitrate == 0 {
+            default_bitrate(config.channels)
+        } else {
+            config.bitrate
+        };
         let (lo, hi) = bitrate_range(config.channels);
         if !(lo..=hi).contains(&bitrate) {
             return Err(AudioError::Unsupported(format!(
@@ -149,10 +161,16 @@ impl OpusEncoder {
             }
             let data = self.inner.encode(&frame).map_err(encode_error)?;
             let first = self.first_pts.unwrap_or(0);
-            let pts = first + (self.packets_out * FRAME_SAMPLES as u64 * 1_000_000 / u64::from(OPUS_RATE)) as i64;
+            let pts = first
+                + (self.packets_out * FRAME_SAMPLES as u64 * 1_000_000 / u64::from(OPUS_RATE))
+                    as i64;
             self.packets_out += 1;
             self.coded += FRAME_SAMPLES as u64;
-            out.push(EncodedAudioPacket { data, pts, duration: FRAME_SAMPLES as i64 });
+            out.push(EncodedAudioPacket {
+                data,
+                pts,
+                duration: FRAME_SAMPLES as i64,
+            });
             at += len;
         }
         self.carry.drain(..at);
@@ -189,7 +207,8 @@ impl AudioEncoder for OpusEncoder {
         let need = self.resampler.target_len() + u64::from(self.pre_skip);
         let have = self.coded + (self.carry.len() / ch) as u64;
         let total = need.max(have).div_ceil(FRAME_SAMPLES as u64) * FRAME_SAMPLES as u64;
-        self.carry.resize(self.carry.len() + (total - have) as usize * ch, 0.0);
+        self.carry
+            .resize(self.carry.len() + (total - have) as usize * ch, 0.0);
         self.drain()
     }
 
@@ -211,7 +230,15 @@ mod tests {
     use crate::audio::decode::opus::OpusDecoder;
 
     fn config(sample_rate: u32, channels: u8, bitrate: u32) -> AudioEncoderConfig {
-        AudioEncoderConfig { codec: AudioCodec::Opus, sample_rate, channels, bitrate, quality: None, layout: None, threads: 0 }
+        AudioEncoderConfig {
+            codec: AudioCodec::Opus,
+            sample_rate,
+            channels,
+            bitrate,
+            quality: None,
+            layout: None,
+            threads: 0,
+        }
     }
 
     /// Interleaved frames where channel `c` is a tone at `freqs[c]`.
@@ -225,10 +252,20 @@ mod tests {
             .collect()
     }
 
-    fn encode_all(enc: &mut OpusEncoder, pcm: &[f32], rate: u32, channels: u8) -> Vec<EncodedAudioPacket> {
+    fn encode_all(
+        enc: &mut OpusEncoder,
+        pcm: &[f32],
+        rate: u32,
+        channels: u8,
+    ) -> Vec<EncodedAudioPacket> {
         let mut packets = Vec::new();
         for (i, chunk) in pcm.chunks(usize::from(channels) * 1000).enumerate() {
-            let frame = AudioFrame { samples: chunk.to_vec(), sample_rate: rate, channels, pts: i as i64 * 1000 };
+            let frame = AudioFrame {
+                samples: chunk.to_vec(),
+                sample_rate: rate,
+                channels,
+                pts: i as i64 * 1000,
+            };
             packets.extend(enc.encode(&frame).unwrap());
         }
         packets.extend(enc.flush().unwrap());
@@ -261,10 +298,18 @@ mod tests {
             let enc = OpusEncoder::new(config(44_100, ch, 0)).unwrap();
             let d = enc.extra_data();
             let family = if ch <= 2 { 0 } else { 1 };
-            assert_eq!(d.len(), if ch <= 2 { 11 } else { 13 + usize::from(ch) }, "{ch}");
+            assert_eq!(
+                d.len(),
+                if ch <= 2 { 11 } else { 13 + usize::from(ch) },
+                "{ch}"
+            );
             assert_eq!((d[0], d[1], d[10]), (0, ch, family), "{ch}");
             assert_eq!(u16::from_le_bytes([d[2], d[3]]), enc.pre_skip());
-            assert_eq!(u32::from_le_bytes([d[4], d[5], d[6], d[7]]), 44_100, "InputSampleRate is the source's");
+            assert_eq!(
+                u32::from_le_bytes([d[4], d[5], d[6], d[7]]),
+                44_100,
+                "InputSampleRate is the source's"
+            );
             assert_eq!(i16::from_le_bytes([d[8], d[9]]), 0);
             if ch > 2 {
                 let (streams, coupled, mapping) = ::opus::family1_layout(ch).unwrap();
@@ -272,7 +317,10 @@ mod tests {
                 assert_eq!(&d[13..], mapping);
             }
         }
-        assert_eq!(OpusEncoder::new(config(48_000, 2, 0)).unwrap().pre_skip(), 312);
+        assert_eq!(
+            OpusEncoder::new(config(48_000, 2, 0)).unwrap().pre_skip(),
+            312
+        );
         assert_eq!(default_bitrate(1), 64_000);
         assert_eq!(default_bitrate(2), 96_000);
         assert_eq!(default_bitrate(6), 320_000);
@@ -281,12 +329,29 @@ mod tests {
 
     #[test]
     fn bad_configurations_are_refused() {
-        assert!(matches!(OpusEncoder::new(config(48_000, 0, 0)), Err(AudioError::Unsupported(_))));
-        assert!(matches!(OpusEncoder::new(config(48_000, 9, 0)), Err(AudioError::Unsupported(_))));
-        assert!(matches!(OpusEncoder::new(config(48_000, 2, 1_000)), Err(AudioError::Unsupported(_))));
-        assert!(matches!(OpusEncoder::new(config(0, 2, 0)), Err(AudioError::Encode(_))));
+        assert!(matches!(
+            OpusEncoder::new(config(48_000, 0, 0)),
+            Err(AudioError::Unsupported(_))
+        ));
+        assert!(matches!(
+            OpusEncoder::new(config(48_000, 9, 0)),
+            Err(AudioError::Unsupported(_))
+        ));
+        assert!(matches!(
+            OpusEncoder::new(config(48_000, 2, 1_000)),
+            Err(AudioError::Unsupported(_))
+        ));
+        assert!(matches!(
+            OpusEncoder::new(config(0, 2, 0)),
+            Err(AudioError::Encode(_))
+        ));
         let mut enc = OpusEncoder::new(config(48_000, 2, 0)).unwrap();
-        let nine = AudioFrame { samples: vec![0.0; 960 * 9], sample_rate: 48_000, channels: 9, pts: 0 };
+        let nine = AudioFrame {
+            samples: vec![0.0; 960 * 9],
+            sample_rate: 48_000,
+            channels: 9,
+            pts: 0,
+        };
         assert!(enc.encode(&nine).is_err());
     }
 

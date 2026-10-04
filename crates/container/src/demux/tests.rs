@@ -243,7 +243,10 @@ fn the_video_track_is_found_when_audio_comes_first() {
 
     let stsd = super::find_video_stsd(&file).expect("a video track exists");
     let entry = &stsd[12..16];
-    assert_eq!(entry, b"hvc1", "picked the audio track's sample entry: {entry:?}");
+    assert_eq!(
+        entry, b"hvc1",
+        "picked the audio track's sample entry: {entry:?}"
+    );
 }
 
 #[test]
@@ -253,7 +256,10 @@ fn video_first_files_are_unaffected() {
     moov.extend_from_slice(&trak_with(b"soun", b"mp4a"));
     let file = mkbox(b"moov", &moov);
 
-    assert_eq!(&super::find_video_stsd(&file).expect("video track")[12..16], b"avc1");
+    assert_eq!(
+        &super::find_video_stsd(&file).expect("video track")[12..16],
+        b"avc1"
+    );
 }
 
 #[test]
@@ -267,7 +273,10 @@ fn a_track_with_no_handler_still_yields_its_stsd() {
     mdia_body.extend_from_slice(&mkbox(b"minf", &mkbox(b"stbl", &mkbox(b"stsd", &stsd))));
     let file = mkbox(b"moov", &mkbox(b"trak", &mkbox(b"mdia", &mdia_body)));
 
-    assert_eq!(&super::find_video_stsd(&file).expect("falls back")[12..16], b"av01");
+    assert_eq!(
+        &super::find_video_stsd(&file).expect("falls back")[12..16],
+        b"av01"
+    );
 }
 
 /// A `trak` with the given handler and 3x3 transform matrix.
@@ -313,7 +322,11 @@ fn the_four_right_angles_are_recognised() {
     ];
     for (matrix, want) in cases {
         let file = mkbox(b"moov", &trak_with_matrix(b"vide", matrix));
-        assert_eq!(super::video_rotation_degrees(&file), want, "matrix {matrix:?}");
+        assert_eq!(
+            super::video_rotation_degrees(&file),
+            want,
+            "matrix {matrix:?}"
+        );
     }
 }
 
@@ -322,7 +335,10 @@ fn an_audio_tracks_matrix_is_not_the_videos() {
     // Audio comes first in plenty of files and carries its own identity
     // matrix; reading the first track's would report 0 for a rotated video.
     let mut moov = trak_with_matrix(b"soun", [ONE, 0, 0, 0, ONE, 0, 0, 0, ONE]);
-    moov.extend_from_slice(&trak_with_matrix(b"vide", [-ONE, 0, 0, 0, -ONE, 0, 0, 0, ONE]));
+    moov.extend_from_slice(&trak_with_matrix(
+        b"vide",
+        [-ONE, 0, 0, 0, -ONE, 0, 0, 0, ONE],
+    ));
 
     assert_eq!(super::video_rotation_degrees(&mkbox(b"moov", &moov)), 180);
 }
@@ -334,7 +350,10 @@ fn a_matrix_that_is_not_a_right_angle_is_left_alone() {
     // such a file exactly as it behaved before this existed, rather than
     // rotating it by a wrong guess.
     let sheared = [ONE, ONE / 2, 0, 0, ONE, 0, 0, 0, ONE];
-    assert_eq!(super::video_rotation_degrees(&mkbox(b"moov", &trak_with_matrix(b"vide", sheared))), 0);
+    assert_eq!(
+        super::video_rotation_degrees(&mkbox(b"moov", &trak_with_matrix(b"vide", sheared))),
+        0
+    );
 }
 
 #[test]
@@ -366,13 +385,20 @@ fn upright_dims_swap_only_for_a_quarter_turn() {
     };
 
     assert_eq!(header(0).upright_dims(), (1920, 1080));
-    assert_eq!(header(180).upright_dims(), (1920, 1080), "a half turn keeps the shape");
+    assert_eq!(
+        header(180).upright_dims(),
+        (1920, 1080),
+        "a half turn keeps the shape"
+    );
     assert_eq!(header(90).upright_dims(), (1080, 1920));
     assert_eq!(header(270).upright_dims(), (1080, 1920));
 
     let info = header(90).upright_info();
     assert_eq!((info.width, info.height), (1080, 1920));
-    assert_eq!(info.frame_rate, 30.0, "everything but the dimensions is untouched");
+    assert_eq!(
+        info.frame_rate, 30.0,
+        "everything but the dimensions is untouched"
+    );
 }
 
 #[test]
@@ -380,34 +406,44 @@ fn display_aspect_counts_non_square_samples_and_turns_with_the_picture() {
     use crate::streaming::DemuxHeader;
     use frame::{ColorSpace, PixelFormat, StreamInfo};
 
-    let header = |width: u32, height: u32, rotation_degrees: u32, sample_aspect: (u32, u32)| DemuxHeader {
-        codec: "h264".into(),
-        info: StreamInfo {
+    let header =
+        |width: u32, height: u32, rotation_degrees: u32, sample_aspect: (u32, u32)| DemuxHeader {
             codec: "h264".into(),
-            width,
-            height,
-            frame_rate: 25.0,
-            duration: 1.0,
-            pixel_format: PixelFormat::Yuv420p,
-            color_space: ColorSpace::Bt709,
-            total_frames: 25,
-            bitrate: 0,
-            color_metadata: Default::default(),
-        },
-        timescale: 90_000,
-        rotation_degrees,
-        sample_aspect,
-    };
+            info: StreamInfo {
+                codec: "h264".into(),
+                width,
+                height,
+                frame_rate: 25.0,
+                duration: 1.0,
+                pixel_format: PixelFormat::Yuv420p,
+                color_space: ColorSpace::Bt709,
+                total_frames: 25,
+                bitrate: 0,
+                color_metadata: Default::default(),
+            },
+            timescale: 90_000,
+            rotation_degrees,
+            sample_aspect,
+        };
     let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
 
-    assert!(near(header(1920, 1080, 0, (1, 1)).display_aspect(), 16.0 / 9.0));
+    assert!(near(
+        header(1920, 1080, 0, (1, 1)).display_aspect(),
+        16.0 / 9.0
+    ));
     // PAL 16:9: 720x576 at 64:45.
-    assert!(near(header(720, 576, 0, (64, 45)).display_aspect(), 16.0 / 9.0));
+    assert!(near(
+        header(720, 576, 0, (64, 45)).display_aspect(),
+        16.0 / 9.0
+    ));
     // A quarter turn swaps the sample's sides with the picture's.
     let turned = header(720, 576, 90, (64, 45));
     assert_eq!(turned.upright_sample_aspect(), (45, 64));
     assert!(near(turned.display_aspect(), 9.0 / 16.0));
-    assert!(near(header(720, 576, 180, (64, 45)).display_aspect(), 16.0 / 9.0));
+    assert!(near(
+        header(720, 576, 180, (64, 45)).display_aspect(),
+        16.0 / 9.0
+    ));
 }
 
 mod box_sizes {
@@ -437,7 +473,12 @@ mod box_sizes {
 
     #[test]
     fn moov_is_found_behind_a_64_bit_mdat() {
-        let file = [boxed(b"ftyp", b"isom"), boxed_large(b"mdat", &[7; 64]), moov_with_two_traks()].concat();
+        let file = [
+            boxed(b"ftyp", b"isom"),
+            boxed_large(b"mdat", &[7; 64]),
+            moov_with_two_traks(),
+        ]
+        .concat();
         let moov = find_direct_child(&file, b"moov").expect("moov behind a largesize mdat");
         let traks: Vec<&[u8]> = direct_children(moov, b"trak").collect();
         assert_eq!(traks, [&b"audio"[..], &b"video"[..]]);
@@ -445,7 +486,13 @@ mod box_sizes {
 
     #[test]
     fn a_size_of_zero_runs_to_the_end() {
-        let file = [boxed(b"ftyp", b"isom"), 0u32.to_be_bytes().to_vec(), b"mdat".to_vec(), vec![9; 20]].concat();
+        let file = [
+            boxed(b"ftyp", b"isom"),
+            0u32.to_be_bytes().to_vec(),
+            b"mdat".to_vec(),
+            vec![9; 20],
+        ]
+        .concat();
         let (kind, body, end) = box_at(&file, 12).unwrap();
         assert_eq!((&kind, body, end), (b"mdat", 20, file.len()));
         assert!(find_direct_child(&file, b"moov").is_none());
@@ -457,9 +504,19 @@ mod box_sizes {
         // own header, and a box claiming more bytes than exist.
         for bad in [
             [2u32.to_be_bytes().to_vec(), b"free".to_vec()].concat(),
-            [1u32.to_be_bytes().to_vec(), b"mdat".to_vec(), 8u64.to_be_bytes().to_vec()].concat(),
+            [
+                1u32.to_be_bytes().to_vec(),
+                b"mdat".to_vec(),
+                8u64.to_be_bytes().to_vec(),
+            ]
+            .concat(),
             [100u32.to_be_bytes().to_vec(), b"moov".to_vec(), vec![0; 10]].concat(),
-            [1u32.to_be_bytes().to_vec(), b"mdat".to_vec(), u64::MAX.to_be_bytes().to_vec()].concat(),
+            [
+                1u32.to_be_bytes().to_vec(),
+                b"mdat".to_vec(),
+                u64::MAX.to_be_bytes().to_vec(),
+            ]
+            .concat(),
         ] {
             assert!(box_at(&bad, 0).is_none(), "{bad:?}");
             assert!(find_direct_child(&bad, b"moov").is_none());

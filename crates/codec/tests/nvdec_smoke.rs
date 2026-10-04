@@ -45,7 +45,7 @@ fn try_decode_matrix(file: &str, label: &str) -> (bool, usize, Option<String>) {
         demuxed.info.width,
         demuxed.info.height,
         demuxed.samples.len(),
-        &demuxed
+        demuxed
             .samples
             .first()
             .map(|s| &s[..s.len().min(32)])
@@ -429,6 +429,7 @@ fn test_nvdec_rejects_14bit_with_typed_error() {
 ///   2. UV interleaved input split into planar U and V planes.
 ///   3. Byte counts match expected Yuv420p10le layout.
 #[test]
+#[allow(clippy::needless_range_loop)] // each plane index also places its bytes in the buffer
 fn test_p016_deinterleave_round_trip() {
     // 4×2 frame → 8 Y samples, ceil(4/2) × ceil(2/2) = 2×1 = 2 UV pairs.
     let w: usize = 4;

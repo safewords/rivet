@@ -16,11 +16,9 @@ use crate::spec::{
     output_codec_label,
 };
 
-use super::{
-    ApiError, AppState, ArtifactEntry, JobHandle, Json, Phase, RegistrySink,
-};
-use super::docs::{openapi_spec, LANDING_HTML, REDOC_HTML, SWAGGER_HTML};
+use super::docs::{LANDING_HTML, REDOC_HTML, SWAGGER_HTML, openapi_spec};
 use super::spec::{TranscodeParams, TranscodeRequest, hook_names, read_input, resolve_path};
+use super::{ApiError, AppState, ArtifactEntry, JobHandle, Json, Phase, RegistrySink};
 
 // ---------------------------------------------------------------------------
 // Status / probe handlers
@@ -118,7 +116,14 @@ pub(super) async fn transcode(
             None => None,
         };
         let hook_list = req.hooks.clone();
-        (media, input_path, req.spec.into_params(), output_path, req.sync, hook_list)
+        (
+            media,
+            input_path,
+            req.spec.into_params(),
+            output_path,
+            req.sync,
+            hook_list,
+        )
     } else {
         if body.is_empty() {
             return Err(ApiError::bad_request(anyhow::anyhow!(
@@ -145,7 +150,11 @@ pub(super) async fn transcode(
     if let (Some(input), Some(output)) = (&input_path, &output_path) {
         let inputs = [input.as_path()];
         let refused = if matches!(spec.mode, crate::spec::OutputMode::Hls { .. }) {
-            crate::output_guard::refuse_input_in_dir(output, &inputs, crate::output_guard::hls_package_writes_at)
+            crate::output_guard::refuse_input_in_dir(
+                output,
+                &inputs,
+                crate::output_guard::hls_package_writes_at,
+            )
         } else if spec.rungs.len() > 1 {
             // A directory of `<label>.<ext>` files, each checked as written.
             crate::output_guard::refuse_input_in_dir(output, &inputs, |_| false)
@@ -163,19 +172,33 @@ pub(super) async fn transcode(
     };
     // The required hooks and the optional ones the request names, in a session
     // the handle keeps so the status can report them whatever the job does.
-    let selected = state.hooks.select(&hook_list).map_err(ApiError::bad_request)?;
+    let selected = state
+        .hooks
+        .select(&hook_list)
+        .map_err(ApiError::bad_request)?;
     let kind = if spec.mode == crate::spec::OutputMode::AudioOnly {
         crate::hooks::JobKind::AudioOnly
     } else {
         crate::hooks::JobKind::Transcode
     };
-    let session = if selected.is_empty() { selected } else { selected.session(id.to_string(), kind) };
+    let session = if selected.is_empty() {
+        selected
+    } else {
+        selected.session(id.to_string(), kind)
+    };
     let spec = spec.with_hooks(session.clone());
     let handle = Arc::new(JobHandle::new(id, mode));
     *handle.hooks.lock().unwrap() = session;
     state.jobs.write().unwrap().insert(id, Arc::clone(&handle));
 
-    let task = run_job_task(Arc::clone(&handle), state.running.clone(), media, spec, output_path, input_path);
+    let task = run_job_task(
+        Arc::clone(&handle),
+        state.running.clone(),
+        media,
+        spec,
+        output_path,
+        input_path,
+    );
 
     if sync {
         task.await; // run inline
@@ -206,15 +229,21 @@ fn write_single_file(
     input: Option<&std::path::Path>,
 ) -> Result<String, String> {
     let dest = if multi {
-        std::fs::create_dir_all(output).map_err(|e| format!("creating {}: {e}", output.display()))?;
-        output.join(format!("{label}.{}", crate::job::single_file_extension(bytes)))
+        std::fs::create_dir_all(output)
+            .map_err(|e| format!("creating {}: {e}", output.display()))?;
+        output.join(format!(
+            "{label}.{}",
+            crate::job::single_file_extension(bytes)
+        ))
     } else {
         output.to_path_buf()
     };
     if let Some(input) = input {
-        crate::output_guard::refuse_input_as_output(&dest, &[input]).map_err(|e| format!("{e:#}"))?;
+        crate::output_guard::refuse_input_as_output(&dest, &[input])
+            .map_err(|e| format!("{e:#}"))?;
     }
-    crate::output_guard::write_atomic(&dest, bytes).map_err(|e| format!("writing {}: {e}", dest.display()))?;
+    crate::output_guard::write_atomic(&dest, bytes)
+        .map_err(|e| format!("writing {}: {e}", dest.display()))?;
     Ok(dest.display().to_string())
 }
 
@@ -307,7 +336,13 @@ pub(super) async fn run_job_task(
                     let (data, written) = match r.artifact {
                         crate::job::RungArtifact::File(bytes) => {
                             if let Some(p) = &output_path {
-                                match write_single_file(&bytes, p, &r.label, multi, input_path.as_deref()) {
+                                match write_single_file(
+                                    &bytes,
+                                    p,
+                                    &r.label,
+                                    multi,
+                                    input_path.as_deref(),
+                                ) {
                                     Ok(dest) => (None, Some(dest)),
                                     Err(e) => {
                                         write_err.get_or_insert(e);
@@ -344,7 +379,11 @@ pub(super) async fn run_job_task(
         }
         Err(e) => {
             *handle.error.lock().unwrap() = Some(format!("{e:#}"));
-            handle.set_phase(if crate::hooks::rejection_of(&e).is_some() { Phase::Rejected } else { Phase::Failed });
+            handle.set_phase(if crate::hooks::rejection_of(&e).is_some() {
+                Phase::Rejected
+            } else {
+                Phase::Failed
+            });
         }
     }
     // Keep the HLS tempdir alive for the process lifetime so /files works.
@@ -377,7 +416,12 @@ pub(super) fn sync_response(handle: &Arc<JobHandle>) -> Result<Response, ApiErro
         }
     };
     if let Some(data) = streamable {
-        return Ok((StatusCode::OK, [(header::CONTENT_TYPE, artifact_content_type(&data))], data).into_response());
+        return Ok((
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, artifact_content_type(&data))],
+            data,
+        )
+            .into_response());
     }
     // output.path / multi-rung / HLS: return the status JSON (paths + progress).
     Ok(Json(handle.status_json()).into_response())
@@ -406,7 +450,12 @@ pub(super) async fn artifact(
         .find(|a| a.label == label && a.data.is_some())
         .ok_or_else(|| ApiError::not_found(format!("artifact '{label}'")))?;
     let data = entry.data.clone().unwrap();
-    Ok((StatusCode::OK, [(header::CONTENT_TYPE, artifact_content_type(&data))], data).into_response())
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, artifact_content_type(&data))],
+        data,
+    )
+        .into_response())
 }
 
 /// A single-file artifact's media type: an audio-only output is an `.mp3`,

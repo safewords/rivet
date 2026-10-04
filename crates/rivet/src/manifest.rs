@@ -269,7 +269,8 @@ impl JobSpec {
             s.audio = Some(parse_audio(a)?);
         }
         if let Some(b) = &self.audio_bitrate {
-            s.audio_bitrate = crate::settings::parse_bitrate_or_standard(b).context("audio_bitrate")?;
+            s.audio_bitrate =
+                crate::settings::parse_bitrate_or_standard(b).context("audio_bitrate")?;
         }
         if let Some(q) = &self.audio_quality {
             s.apply_kv("audio-quality", q.as_str())?;
@@ -293,7 +294,8 @@ impl JobSpec {
             }
         }
         if let Some(b) = &self.video_bitrate {
-            s.video_bitrate = crate::settings::parse_bitrate_or_standard(b).context("video_bitrate")?;
+            s.video_bitrate =
+                crate::settings::parse_bitrate_or_standard(b).context("video_bitrate")?;
         }
         if let Some(b) = &self.video_buffer {
             s.video_buffer_ms = Some(crate::settings::parse_buffer(b).context("video_buffer")?);
@@ -340,9 +342,10 @@ impl JobSpec {
         // works when it is absent (absent ⇒ Auto).
         s.decode_policy = match &self.decode {
             Some(d) => parse_decode_plan(d)?,
-            None => self
-                .decode_gpu
-                .map_or(crate::spec::DecodePolicy::Auto, crate::spec::DecodePolicy::SpecificGpu),
+            None => self.decode_gpu.map_or(
+                crate::spec::DecodePolicy::Auto,
+                crate::spec::DecodePolicy::SpecificGpu,
+            ),
         };
         s.width = self.width;
         s.height = self.height;
@@ -475,8 +478,8 @@ pub fn plan_manifest(manifest: &Manifest, base_dir: &Path) -> Result<Vec<Planned
 /// Run a manifest from a file. Relative paths resolve against the manifest's
 /// directory. Returns a [`BatchReport`]; emits one `tracing::info!` per job.
 pub fn run_manifest_file(path: &Path) -> Result<BatchReport> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("reading manifest {}", path.display()))?;
+    let text =
+        fs::read_to_string(path).with_context(|| format!("reading manifest {}", path.display()))?;
     let manifest = parse_manifest(&text, Format::from_path(path))?;
     let base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     run_manifest(&manifest, &base_dir)
@@ -494,10 +497,7 @@ pub fn run_manifest(manifest: &Manifest, base_dir: &Path) -> Result<BatchReport>
     for (i, job) in planned.iter().enumerate() {
         let n = i + 1;
         let total = planned.len();
-        tracing::info!(
-            "batch: [{n}/{total}] {} -> converting",
-            job.input.display()
-        );
+        tracing::info!("batch: [{n}/{total}] {} -> converting", job.input.display());
         let outcome = match run_one(&job.input, &job.spec, manifest_out_dir.as_deref(), base_dir) {
             Ok((output, frames, bytes)) => {
                 tracing::info!(
@@ -576,7 +576,9 @@ fn run_one(
 
     // Never the source: an output resolving to the input would replace it.
     match &plan {
-        OutputPlan::SingleFile(target) => crate::output_guard::refuse_input_as_output(target, &[input])?,
+        OutputPlan::SingleFile(target) => {
+            crate::output_guard::refuse_input_as_output(target, &[input])?
+        }
         OutputPlan::Directory(dir) => {
             let writes_at = |rel: &Path| is_hls && crate::output_guard::hls_package_writes_at(rel);
             crate::output_guard::refuse_input_in_dir(dir, &[input], writes_at)?
@@ -601,7 +603,8 @@ fn run_one(
                     written += b.len() as u64;
                     let f = dir.join(format!("{}.{ext}", r.label));
                     crate::output_guard::refuse_input_as_output(&f, &[input])?;
-                    crate::output_guard::write_atomic(&f, &b).with_context(|| format!("writing {}", f.display()))?;
+                    crate::output_guard::write_atomic(&f, &b)
+                        .with_context(|| format!("writing {}", f.display()))?;
                 }
             }
             Ok((dir, frames, written))
@@ -621,7 +624,8 @@ fn run_one(
                     _ => None,
                 })
                 .context("no single-file output produced")?;
-            crate::output_guard::write_atomic(&target, &data).with_context(|| format!("writing {}", target.display()))?;
+            crate::output_guard::write_atomic(&target, &data)
+                .with_context(|| format!("writing {}", target.display()))?;
             Ok((target, frames, data.len() as u64))
         }
     }
@@ -784,7 +788,10 @@ jobs:
         let s = m.jobs[0].over(&m.defaults).to_settings().unwrap();
         assert!(s.is_empty(), "every value stated is the default");
         let s = m.jobs[1].over(&m.defaults).to_settings().unwrap();
-        assert_eq!((s.gop, s.max_fps, s.max_short_side), (Some(48), Some(29.97), Some(720)));
+        assert_eq!(
+            (s.gop, s.max_fps, s.max_short_side),
+            (Some(48), Some(29.97), Some(720))
+        );
         let s = m.jobs[2].over(&m.defaults).to_settings().unwrap();
         assert_eq!((s.gop, s.gop_seconds, s.max_fps), (None, Some(1.5), None));
         let json = r#"{ "jobs": [ { "input": "a.mkv", "gop": 48, "max_fps": 30 }, { "input": "b.mkv", "gop": "0s" } ] }"#;
@@ -829,14 +836,25 @@ jobs:
 ";
         let m = parse_manifest(yaml, Format::Yaml).unwrap();
         let a = m.jobs[0].over(&m.defaults).to_settings().unwrap();
-        assert_eq!(a.subtitles, Some(SubtitlePolicy::Only(vec!["eng".into(), "deu".into()])));
+        assert_eq!(
+            a.subtitles,
+            Some(SubtitlePolicy::Only(vec!["eng".into(), "deu".into()]))
+        );
         let b = m.jobs[1].over(&m.defaults).to_settings().unwrap();
-        assert_eq!(b.subtitles, Some(SubtitlePolicy::Drop), "the default applies where the job is silent");
+        assert_eq!(
+            b.subtitles,
+            Some(SubtitlePolicy::Drop),
+            "the default applies where the job is silent"
+        );
         let bad = "jobs:
   - input: a.mkv
     subtitles: english
 ";
-        assert!(parse_manifest(bad, Format::Yaml).unwrap().jobs[0].to_settings().is_err());
+        assert!(
+            parse_manifest(bad, Format::Yaml).unwrap().jobs[0]
+                .to_settings()
+                .is_err()
+        );
     }
 
     #[test]
@@ -848,29 +866,50 @@ jobs:
     #[test]
     fn codec_field_selects_output_codec() {
         let yaml = "jobs:\n  - input: a.mkv\n    output: a.mp4\n    codec: h265\n";
-        let s = parse_manifest(yaml, Format::Yaml).unwrap().jobs[0].to_settings().unwrap();
+        let s = parse_manifest(yaml, Format::Yaml).unwrap().jobs[0]
+            .to_settings()
+            .unwrap();
         assert_eq!(s.video_codec, Some(crate::spec::VideoCodecPolicy::H265));
         // omitted → None → AV1 default at spec-build time
         let plain = "jobs:\n  - input: a.mkv\n    output: a.mp4\n";
-        let s2 = parse_manifest(plain, Format::Yaml).unwrap().jobs[0].to_settings().unwrap();
+        let s2 = parse_manifest(plain, Format::Yaml).unwrap().jobs[0]
+            .to_settings()
+            .unwrap();
         assert_eq!(s2.video_codec, None);
     }
 
     #[test]
     fn filter_structured_objects_and_string_resolve_equal() {
         use codec::filter::VideoFilter::{Crop, HFlip, Rotate};
-        let expect = vec![Crop { w: 1280, h: 720, x: None, y: None }, HFlip, Rotate(90)];
+        let expect = vec![
+            Crop {
+                w: 1280,
+                h: 720,
+                x: None,
+                y: None,
+            },
+            HFlip,
+            Rotate(90),
+        ];
         // structured object list (the DSL benefit) — block-style YAML
         let structured = "jobs:\n  - input: a.mkv\n    output: a.mp4\n    filter:\n      - crop:\n          w: 1280\n          h: 720\n      - hflip\n      - rotate: 90\n";
-        let s = parse_manifest(structured, Format::Yaml).unwrap().jobs[0].to_settings().unwrap();
+        let s = parse_manifest(structured, Format::Yaml).unwrap().jobs[0]
+            .to_settings()
+            .unwrap();
         assert_eq!(s.filters, expect);
         // the equivalent chain string (interop) resolves identically
         let string = "jobs:\n  - input: a.mkv\n    output: a.mp4\n    filter: \"crop=1280:720,hflip,rotate=90\"\n";
-        let s2 = parse_manifest(string, Format::Yaml).unwrap().jobs[0].to_settings().unwrap();
+        let s2 = parse_manifest(string, Format::Yaml).unwrap().jobs[0]
+            .to_settings()
+            .unwrap();
         assert_eq!(s2.filters, expect);
         // a bogus structured filter is rejected
         let bad = "jobs:\n  - input: a.mkv\n    filter:\n      - rotate: 45\n";
-        assert!(parse_manifest(bad, Format::Yaml).unwrap().jobs[0].to_settings().is_err());
+        assert!(
+            parse_manifest(bad, Format::Yaml).unwrap().jobs[0]
+                .to_settings()
+                .is_err()
+        );
     }
 
     #[test]
@@ -925,14 +964,39 @@ jobs:
             OutputPlan::SingleFile(p) => p,
             OutputPlan::Directory(_) => panic!("a single file"),
         };
-        assert_eq!(file(resolve_output(None, None, base, &clip, false, false, "mp4")), base.join("clip.rivet.mp4"));
-        assert_eq!(file(resolve_output(None, None, base, &clip, false, false, "mov")), base.join("clip.mov"));
-        let base_str = format!("{}/", base.display());
         assert_eq!(
-            file(resolve_output(Some(&base_str), None, base, &clip, false, false, "mp4")),
+            file(resolve_output(None, None, base, &clip, false, false, "mp4")),
             base.join("clip.rivet.mp4")
         );
-        assert_eq!(file(resolve_output(Some("clip.mp4"), None, base, &clip, false, false, "mp4")), base.join("clip.mp4"));
+        assert_eq!(
+            file(resolve_output(None, None, base, &clip, false, false, "mov")),
+            base.join("clip.mov")
+        );
+        let base_str = format!("{}/", base.display());
+        assert_eq!(
+            file(resolve_output(
+                Some(&base_str),
+                None,
+                base,
+                &clip,
+                false,
+                false,
+                "mp4"
+            )),
+            base.join("clip.rivet.mp4")
+        );
+        assert_eq!(
+            file(resolve_output(
+                Some("clip.mp4"),
+                None,
+                base,
+                &clip,
+                false,
+                false,
+                "mp4"
+            )),
+            base.join("clip.mp4")
+        );
         // An HLS directory `<stem>/` for an input with no extension is the
         // input's own name.
         let bare = base.join("clip");
@@ -995,6 +1059,10 @@ jobs:
         )
         .expect("batch.json parses");
 
-        assert_eq!(yaml.jobs.len(), json.jobs.len(), "the samples describe different job counts");
+        assert_eq!(
+            yaml.jobs.len(),
+            json.jobs.len(),
+            "the samples describe different job counts"
+        );
     }
 }

@@ -2,9 +2,9 @@
 //! Declared by `#[cfg(test)] mod tests;` in mod.rs — this file is the
 //! inner content only (no outer `mod tests { }` wrapper needed).
 
-use super::*;
 use super::opendml::{parse_indx_body, read_dmlh_total_frames};
 use super::streaming::Backend;
+use super::*;
 use crate::streaming::StreamingDemuxer;
 
 /// Build a minimal RIFF chunk: little-endian 4-byte size header.
@@ -118,7 +118,12 @@ fn demux_rejects_unknown_fourcc() {
 
 #[test]
 fn demux_handles_divx_variants() {
-    for (fcc, codec) in [(b"DIVX", "mpeg4"), (b"DX50", "mpeg4"), (b"XviD", "mpeg4"), (b"DIV3", "msmpeg4v3")] {
+    for (fcc, codec) in [
+        (b"DIVX", "mpeg4"),
+        (b"DX50", "mpeg4"),
+        (b"XviD", "mpeg4"),
+        (b"DIV3", "msmpeg4v3"),
+    ] {
         let mut hdrl_body = Vec::new();
         hdrl_body.extend_from_slice(&chunk(b"avih", &[0u8; 56]));
         hdrl_body.extend_from_slice(&video_strl(fcc, fcc, 640, 480, 25, 1));
@@ -598,17 +603,24 @@ fn read_dmlh_total_frames_returns_none_when_odml_absent() {
 const CLIP_AVCC: &str = "0164001effe1001e6764001eacd940a02ff97016a0c0c0d4a0000003002000000791e2c5b2c001000568ebecb22cfdf8f800";
 
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 
 /// Length-prefixed (4-byte) access unit from NAL units.
 fn length_prefixed_au(nals: &[&[u8]]) -> Vec<u8> {
-    nals.iter().flat_map(|n| [&(n.len() as u32).to_be_bytes()[..], *n].concat()).collect()
+    nals.iter()
+        .flat_map(|n| [&(n.len() as u32).to_be_bytes()[..], *n].concat())
+        .collect()
 }
 
 /// Annex-B access unit from NAL units.
 fn annexb_au(nals: &[&[u8]]) -> Vec<u8> {
-    nals.iter().flat_map(|n| [&[0u8, 0, 0, 1][..], *n].concat()).collect()
+    nals.iter()
+        .flat_map(|n| [&[0u8, 0, 0, 1][..], *n].concat())
+        .collect()
 }
 
 /// A one-stream H.264 AVI (fourcc `H264`, 640x360 at 30/1) whose `strf`
@@ -660,7 +672,9 @@ fn drain_samples(file: &[u8]) -> Vec<Vec<u8>> {
 /// out exactly what that converter makes of them.
 #[test]
 fn length_prefixed_h264_in_avi_is_converted_to_annexb_like_mp4() {
-    use crate::annexb::{NaluCodec, ParamSetTracker, length_prefixed_to_annexb_tracked, parse_avcc};
+    use crate::annexb::{
+        NaluCodec, ParamSetTracker, length_prefixed_to_annexb_tracked, parse_avcc,
+    };
     let avcc = unhex(CLIP_AVCC);
     let (sps, pps) = (&avcc[8..38], &avcc[41..46]);
     assert_eq!((sps[0] & 0x1f, pps[0] & 0x1f), (7, 8), "fixture offsets");
@@ -677,7 +691,9 @@ fn length_prefixed_h264_in_avi_is_converted_to_annexb_like_mp4() {
     let mut tracker = ParamSetTracker::new(NaluCodec::Avc);
     let mp4_way: Vec<Vec<u8>> = samples
         .iter()
-        .map(|s| length_prefixed_to_annexb_tracked(s, cfg.length_size, &mut tracker, &cfg.parameter_sets))
+        .map(|s| {
+            length_prefixed_to_annexb_tracked(s, cfg.length_size, &mut tracker, &cfg.parameter_sets)
+        })
         .collect();
     assert_eq!(got, mp4_way, "the MP4 path's converter, sample for sample");
     assert_eq!(demux_avi(&file).expect("legacy demux").samples, want);
@@ -763,19 +779,36 @@ fn empty_chunks_are_slots_not_frames() {
 
     let mut d = demux_avi_streaming_init(bytes::Bytes::from(file.clone())).expect("init");
     assert_eq!(d.header.info.total_frames, 6);
-    assert!((d.header.info.frame_rate - 30.0).abs() < 1e-9, "fps {}", d.header.info.frame_rate);
-    assert!((d.header.info.duration - 0.2).abs() < 1e-9, "duration {}", d.header.info.duration);
+    assert!(
+        (d.header.info.frame_rate - 30.0).abs() < 1e-9,
+        "fps {}",
+        d.header.info.frame_rate
+    );
+    assert!(
+        (d.header.info.duration - 0.2).abs() < 1e-9,
+        "duration {}",
+        d.header.info.duration
+    );
     assert_eq!(d.header.timescale, 600);
-    let want: Vec<(i64, Vec<u8>)> =
-        (0..6).map(|i| (i * 20, format!("frame-{i}").into_bytes())).collect();
+    let want: Vec<(i64, Vec<u8>)> = (0..6)
+        .map(|i| (i * 20, format!("frame-{i}").into_bytes()))
+        .collect();
     assert_eq!(drain_timed(&mut d), want);
 
     let legacy = demux_avi(&file).expect("legacy demux");
     let want_samples: Vec<Vec<u8>> = want.into_iter().map(|(_, s)| s).collect();
     assert_eq!(legacy.samples, want_samples);
     assert_eq!(legacy.info.total_frames, 6);
-    assert!((legacy.info.frame_rate - 30.0).abs() < 1e-9, "fps {}", legacy.info.frame_rate);
-    assert!((legacy.info.duration - 0.2).abs() < 1e-9, "duration {}", legacy.info.duration);
+    assert!(
+        (legacy.info.frame_rate - 30.0).abs() < 1e-9,
+        "fps {}",
+        legacy.info.frame_rate
+    );
+    assert!(
+        (legacy.info.duration - 0.2).abs() < 1e-9,
+        "duration {}",
+        legacy.info.duration
+    );
 }
 
 /// A rate that is not a whole number of ticks a second keeps exact
@@ -787,7 +820,11 @@ fn a_fractional_time_base_keeps_exact_chunk_timestamps() {
     let mut d = demux_avi_streaming_init(bytes::Bytes::from(file)).expect("init");
     assert_eq!(d.header.timescale, 60000);
     assert_eq!(d.header.info.total_frames, 5);
-    assert!((d.header.info.frame_rate - 30000.0 / 1001.0).abs() < 1e-9, "fps {}", d.header.info.frame_rate);
+    assert!(
+        (d.header.info.frame_rate - 30000.0 / 1001.0).abs() < 1e-9,
+        "fps {}",
+        d.header.info.frame_rate
+    );
     let pts: Vec<i64> = drain_timed(&mut d).into_iter().map(|(p, _)| p).collect();
     assert_eq!(pts, [0, 2002, 4004, 6006, 8008]);
     assert!((d.header.pts_seconds(pts[1]) - 1001.0 / 30000.0).abs() < 1e-12);
@@ -831,16 +868,25 @@ fn count_movi_video_chunks_matches_the_sample_walk() {
     movi_body.extend_from_slice(&100u32.to_le_bytes());
     movi_body.extend_from_slice(b"short");
 
-    assert_eq!(count_movi_video_chunks(&movi_body, &[(0, movi_body.len())], b"00"), (4, 2));
+    assert_eq!(
+        count_movi_video_chunks(&movi_body, &[(0, movi_body.len())], b"00"),
+        (4, 2)
+    );
     let mut samples = Vec::new();
     let chunks = collect_movi_samples(&movi_body, "00", &mut samples).expect("walk");
     assert_eq!((chunks, samples.len() as u64), (4, 2));
     assert_eq!(samples, [b"a".to_vec(), b"in-rec".to_vec()]);
-    assert_eq!(count_movi_video_chunks(&movi_body, &[(0, whole)], b"00"), (4, 2));
+    assert_eq!(
+        count_movi_video_chunks(&movi_body, &[(0, whole)], b"00"),
+        (4, 2)
+    );
     // A stream with no chunks counts nothing. (Like both sample walks, the
     // count matches `##dc` / `##db` by prefix and last byte only, so it is
     // only ever asked about the video stream's prefix: `01wb` ends in `b`.)
-    assert_eq!(count_movi_video_chunks(&movi_body, &[(0, whole)], b"02"), (0, 0));
+    assert_eq!(
+        count_movi_video_chunks(&movi_body, &[(0, whole)], b"02"),
+        (0, 0)
+    );
 
     assert_eq!(frames_per_second(600.0, 2400, 120), 30.0);
     assert_eq!(frames_per_second(30.0, 120, 120), 30.0);
@@ -851,7 +897,15 @@ fn count_movi_video_chunks_matches_the_sample_walk() {
 
 /// An `auds` strl: strh (`dwScale`, `dwRate`, `dwStart`, `dwSampleSize`) and
 /// a WAVEFORMATEX with `extra` after it.
-fn audio_strl(tag: u16, channels: u16, rate_hz: u32, block_align: u16, bits: u16, extra: &[u8], strh: (u32, u32, u32, u32)) -> Vec<u8> {
+fn audio_strl(
+    tag: u16,
+    channels: u16,
+    rate_hz: u32,
+    block_align: u16,
+    bits: u16,
+    extra: &[u8],
+    strh: (u32, u32, u32, u32),
+) -> Vec<u8> {
     let (scale, rate, start, sample_size) = strh;
     let mut h = b"auds".to_vec();
     h.extend_from_slice(&[0u8; 4]); // fccHandler
@@ -902,7 +956,12 @@ fn both_audio(file: &[u8]) -> (crate::demux::AudioTrack, Option<crate::edit::Aud
     let l = legacy.audio.expect("legacy audio");
     assert_eq!(
         (&l.codec, &l.samples, &l.durations, l.timescale),
-        (&track.codec, &track.samples, &track.durations, track.timescale)
+        (
+            &track.codec,
+            &track.samples,
+            &track.durations,
+            track.timescale
+        )
     );
     assert_eq!(legacy.audio_edit, d.audio_edit());
     (track, d.audio_edit())
@@ -919,24 +978,47 @@ fn pcm_audio_is_read_with_its_timeline() {
     let file = audio_avi(strl, &[&a, &b, &[3u8; 2]]);
     let (track, edit) = both_audio(&file);
     assert_eq!(track.codec, "pcm_s16le");
-    assert_eq!((track.sample_rate, track.channels, track.timescale), (48_000, 2, 48_000));
+    assert_eq!(
+        (track.sample_rate, track.channels, track.timescale),
+        (48_000, 2, 48_000)
+    );
     assert_eq!(track.samples, vec![a, b, vec![3u8; 2]]);
     // 1000 blocks, then 1000 (bytes 4000..8002: blocks 1000..2000), then a
     // 2-byte chunk that completes the block split across the two (2000..2001).
     assert_eq!(track.durations, vec![1000, 1000, 1]);
     assert_eq!(edit, None);
     for (bits, codec) in [(8u16, "pcm_u8"), (24, "pcm_s24le"), (32, "pcm_s32le")] {
-        let strl = audio_strl(0x0001, 1, 44_100, bits / 8, bits, &[], (1, 44_100, 0, u32::from(bits / 8)));
+        let strl = audio_strl(
+            0x0001,
+            1,
+            44_100,
+            bits / 8,
+            bits,
+            &[],
+            (1, 44_100, 0, u32::from(bits / 8)),
+        );
         assert_eq!(both_audio(&audio_avi(strl, &[&[0u8; 12]])).0.codec, codec);
     }
     let float = audio_strl(0x0003, 1, 48_000, 4, 32, &[], (1, 48_000, 0, 4));
-    assert_eq!(both_audio(&audio_avi(float, &[&[0u8; 8]])).0.codec, "pcm_f32le");
+    assert_eq!(
+        both_audio(&audio_avi(float, &[&[0u8; 8]])).0.codec,
+        "pcm_f32le"
+    );
     // WAVE_FORMAT_EXTENSIBLE (5.1): the sub-format GUID names the format.
     let mut ext = vec![16, 0, 0x3f, 0, 0, 0]; // valid bits, channel mask
-    ext.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]); // KSDATAFORMAT_SUBTYPE_PCM
+    ext.extend_from_slice(&[
+        1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
+    ]); // KSDATAFORMAT_SUBTYPE_PCM
     let strl = audio_strl(0xFFFE, 6, 48_000, 12, 16, &ext, (1, 48_000, 0, 12));
     let (track, _) = both_audio(&audio_avi(strl, &[&[0u8; 120]]));
-    assert_eq!((track.codec.as_str(), track.channels, track.durations.as_slice()), ("pcm_s16le", 6, &[10u32][..]));
+    assert_eq!(
+        (
+            track.codec.as_str(),
+            track.channels,
+            track.durations.as_slice()
+        ),
+        ("pcm_s16le", 6, &[10u32][..])
+    );
 }
 
 /// One frame to a chunk (`dwSampleSize` 0): every chunk holding data one
@@ -945,23 +1027,53 @@ fn pcm_audio_is_read_with_its_timeline() {
 /// ASC comes from the WAVEFORMATEX extra bytes.
 #[test]
 fn aac_frames_are_timed_by_the_stream_header_and_empty_chunks_take_no_time() {
-    let strl = audio_strl(0x00FF, 2, 48_000, 768, 16, &[0x11, 0x90], (1024, 48_000, 0, 0));
+    let strl = audio_strl(
+        0x00FF,
+        2,
+        48_000,
+        768,
+        16,
+        &[0x11, 0x90],
+        (1024, 48_000, 0, 0),
+    );
     let file = audio_avi(strl, &[b"f0", b"", b"", b"f1", b"f2"]);
     let (track, edit) = both_audio(&file);
     assert_eq!(track.codec, "aac");
     assert_eq!(track.asc, vec![0x11, 0x90]);
-    assert_eq!((track.sample_rate, track.channels, track.timescale), (48_000, 2, 48_000));
-    assert_eq!(track.samples, vec![b"f0".to_vec(), b"f1".to_vec(), b"f2".to_vec()]);
+    assert_eq!(
+        (track.sample_rate, track.channels, track.timescale),
+        (48_000, 2, 48_000)
+    );
+    assert_eq!(
+        track.samples,
+        vec![b"f0".to_vec(), b"f1".to_vec(), b"f2".to_vec()]
+    );
     assert_eq!(track.durations, vec![1024, 1024, 1024]);
     assert_eq!(edit, None);
     // The rule does not depend on nBlockAlign: with none, the empty chunks
     // still hold no sample. A late start is `dwStart`'s to say.
-    let strl = audio_strl(0x00FF, 2, 48_000, 0, 16, &[0x11, 0x90], (1024, 48_000, 0, 0));
+    let strl = audio_strl(
+        0x00FF,
+        2,
+        48_000,
+        0,
+        16,
+        &[0x11, 0x90],
+        (1024, 48_000, 0, 0),
+    );
     let (track, edit) = both_audio(&audio_avi(strl, &[b"", b"f0", b"", b"", b"f1"]));
     assert_eq!(track.durations, vec![1024, 1024]);
     assert_eq!(edit, None);
     // A frame larger than nBlockAlign is still one sample.
-    let strl = audio_strl(0x00FF, 2, 48_000, 768, 16, &[0x11, 0x90], (1024, 48_000, 0, 0));
+    let strl = audio_strl(
+        0x00FF,
+        2,
+        48_000,
+        768,
+        16,
+        &[0x11, 0x90],
+        (1024, 48_000, 0, 0),
+    );
     let big = vec![9u8; 1500];
     let (track, _) = both_audio(&audio_avi(strl, &[&big, b"f1"]));
     assert_eq!(track.durations, vec![1024, 1024]);
@@ -981,12 +1093,22 @@ fn a_late_start_is_a_delay() {
     let strl = audio_strl(0x0001, 1, 48_000, 2, 16, &[], (1, 48_000, 24_000, 2));
     let (track, edit) = both_audio(&audio_avi(strl, &[&[0u8; 960]]));
     assert_eq!(track.durations, vec![480]);
-    assert_eq!(edit, Some(crate::edit::AudioEdit { delay: 24_000, media_start: 0, media_end: None }));
+    assert_eq!(
+        edit,
+        Some(crate::edit::AudioEdit {
+            delay: 24_000,
+            media_start: 0,
+            media_end: None
+        })
+    );
     // On a coarser time base: 15 AC-3 frame units of 4/125 s = 0.48 s.
     let ac3 = ac3_frame();
     let strl = audio_strl(0x2000, 2, 48_000, 3840, 0, &[], (4, 125, 15, 0));
     let (track, edit) = both_audio(&audio_avi(strl, &[&ac3, &ac3]));
-    assert_eq!((track.codec.as_str(), track.sample_rate, track.channels), ("ac3", 48_000, 2));
+    assert_eq!(
+        (track.codec.as_str(), track.sample_rate, track.channels),
+        ("ac3", 48_000, 2)
+    );
     assert_eq!(track.codec_private.len(), 3, "a dac3 body");
     assert_eq!(track.durations, vec![1536, 1536]);
     assert_eq!(edit.map(|e| e.delay), Some(15 * 1536));
@@ -997,15 +1119,28 @@ fn a_late_start_is_a_delay() {
 /// AudioSpecificConfig and AC-3 that is not stored a syncframe a chunk.
 #[test]
 fn an_unusable_format_is_named_not_guessed() {
-    for (tag, name) in [(0x0161u16, "wmav2"), (0x0002, "adpcm_ms"), (0x0007, "pcm_mulaw"), (0x1234, "wave_format_0x1234")] {
+    for (tag, name) in [
+        (0x0161u16, "wmav2"),
+        (0x0002, "adpcm_ms"),
+        (0x0007, "pcm_mulaw"),
+        (0x1234, "wave_format_0x1234"),
+    ] {
         let strl = audio_strl(tag, 1, 48_000, 682, 16, &[], (341, 8000, 0, 682));
         let (track, edit) = both_audio(&audio_avi(strl, &[&[7u8; 682]]));
         assert_eq!(track.codec, name);
-        assert!(track.samples.is_empty() && track.durations.is_empty(), "{name}");
+        assert!(
+            track.samples.is_empty() && track.durations.is_empty(),
+            "{name}"
+        );
         assert_eq!(edit, None);
     }
     let strl = audio_strl(0x00FF, 2, 48_000, 768, 16, &[], (1024, 48_000, 0, 0));
-    assert_eq!(both_audio(&audio_avi(strl, &[&[0xFF, 0xF1, 0x50, 0x80]])).0.codec, "aac_adts");
+    assert_eq!(
+        both_audio(&audio_avi(strl, &[&[0xFF, 0xF1, 0x50, 0x80]]))
+            .0
+            .codec,
+        "aac_adts"
+    );
     let strl = audio_strl(0x2000, 2, 48_000, 1, 0, &[], (1, 24_000, 0, 1));
     let (track, _) = both_audio(&audio_avi(strl, &[&[0x12, 0x34, 0x56]]));
     assert_eq!((track.codec.as_str(), track.samples.len()), ("ac3", 0));
@@ -1019,7 +1154,12 @@ fn no_audio_stream_no_track() {
     let d = demux_avi_streaming_init(bytes::Bytes::from(file)).expect("init");
     assert!(d.audio().is_none() && d.audio_edit().is_none());
     let strl = audio_strl(0x0001, 1, 48_000, 2, 16, &[], (1, 48_000, 0, 2));
-    assert!(demux_avi(&audio_avi(strl, &[b"", b""])).expect("demux").audio.is_none());
+    assert!(
+        demux_avi(&audio_avi(strl, &[b"", b""]))
+            .expect("demux")
+            .audio
+            .is_none()
+    );
 }
 
 // ----- dropped frames (constant-rate pacing) -----
@@ -1032,7 +1172,11 @@ fn dropped_avi(rate: u32, scale: u32, pattern: &[bool]) -> Vec<u8> {
     hdrl_body.extend_from_slice(&video_strl(b"XVID", b"XVID", 320, 240, rate, scale));
     let mut movi_body = Vec::new();
     for (i, &frame) in pattern.iter().enumerate() {
-        let payload = if frame { format!("frame-{i}").into_bytes() } else { Vec::new() };
+        let payload = if frame {
+            format!("frame-{i}").into_bytes()
+        } else {
+            Vec::new()
+        };
         movi_body.extend_from_slice(&chunk(b"00dc", &payload));
     }
     let mut riff_body = b"AVI ".to_vec();
@@ -1051,11 +1195,21 @@ fn dropped_avi(rate: u32, scale: u32, pattern: &[bool]) -> Vec<u8> {
 /// 7 frames over 10 periods, 21 fps, every frame after the first drop early.
 #[test]
 fn dropped_frames_are_periods_the_frame_before_fills() {
-    let pattern = [true, true, false, true, true, false, false, true, true, true];
-    let d = demux_avi_streaming_init(bytes::Bytes::from(dropped_avi(30, 1, &pattern))).expect("init");
+    let pattern = [
+        true, true, false, true, true, false, false, true, true, true,
+    ];
+    let d =
+        demux_avi_streaming_init(bytes::Bytes::from(dropped_avi(30, 1, &pattern))).expect("init");
     assert_eq!(d.frame_repeats(), Some(&[1u32, 2, 1, 3, 1, 1, 1][..]));
-    assert_eq!(d.header.info.total_frames, 10, "output frames: every period");
-    assert!((d.header.info.frame_rate - 30.0).abs() < 1e-9, "fps {}", d.header.info.frame_rate);
+    assert_eq!(
+        d.header.info.total_frames, 10,
+        "output frames: every period"
+    );
+    assert!(
+        (d.header.info.frame_rate - 30.0).abs() < 1e-9,
+        "fps {}",
+        d.header.info.frame_rate
+    );
     assert!((d.header.info.duration - 10.0 / 30.0).abs() < 1e-9);
     // The frames themselves, and their chunk-position timestamps, as before.
     let mut d = d;
@@ -1070,8 +1224,10 @@ fn dropped_frames_are_periods_the_frame_before_fills() {
 #[test]
 fn drops_on_a_fine_time_base_are_told_from_ticks_by_the_typical_gap() {
     // Frames at round(k * 1000 / 30) for k in 0..30, frame 10 and 20..=22 dropped.
-    let positions: Vec<u64> =
-        (0..30u64).filter(|k| *k != 10 && !(20..=22).contains(k)).map(|k| (k * 1000 + 15) / 30).collect();
+    let positions: Vec<u64> = (0..30u64)
+        .filter(|k| *k != 10 && !(20..=22).contains(k))
+        .map(|k| (k * 1000 + 15) / 30)
+        .collect();
     let chunks = 1000;
     let (repeats, period) = super::riff::frame_pacing(&positions, chunks).expect("drops found");
     assert!((period - 1000.0 / 30.0).abs() < 1e-9, "period {period}");
@@ -1094,7 +1250,10 @@ fn drops_on_a_fine_time_base_are_told_from_ticks_by_the_typical_gap() {
 fn a_regular_stream_has_no_repeats() {
     use super::riff::frame_pacing;
     assert_eq!(frame_pacing(&[0, 1, 2, 3], 4), None);
-    assert_eq!(frame_pacing(&(0..120).map(|k| k * 20).collect::<Vec<_>>(), 2400), None);
+    assert_eq!(
+        frame_pacing(&(0..120).map(|k| k * 20).collect::<Vec<_>>(), 2400),
+        None
+    );
     let ntsc: Vec<u64> = (0..120u64).map(|k| k * 1001 * 600 / 30000).collect();
     assert_eq!(frame_pacing(&ntsc, 2402), None);
     assert_eq!(frame_pacing(&[5], 10), None, "one frame");

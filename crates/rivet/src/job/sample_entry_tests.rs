@@ -37,9 +37,18 @@ fn frame(pts: u64, ten: bool) -> VideoFrame {
         .chain(std::iter::repeat_n(128, w * h / 2))
         .collect();
     let (data, format) = if ten {
-        (samples.iter().flat_map(|s| (s << 2).to_le_bytes()).collect::<Vec<u8>>(), PixelFormat::Yuv420p10le)
+        (
+            samples
+                .iter()
+                .flat_map(|s| (s << 2).to_le_bytes())
+                .collect::<Vec<u8>>(),
+            PixelFormat::Yuv420p10le,
+        )
     } else {
-        (samples.iter().map(|&s| s as u8).collect(), PixelFormat::Yuv420p)
+        (
+            samples.iter().map(|&s| s as u8).collect(),
+            PixelFormat::Yuv420p,
+        )
     };
     VideoFrame::new(data.into(), W, H, format, ColorSpace::Bt709, pts)
 }
@@ -52,15 +61,24 @@ fn config(codec: VideoCodec, ten: bool) -> EncoderConfig {
         keyframe_interval: CHUNK as u32,
         tier: SpeedTier::Draft,
         threads: 1,
-        pixel_format: if ten { PixelFormat::Yuv420p10le } else { PixelFormat::Yuv420p },
+        pixel_format: if ten {
+            PixelFormat::Yuv420p10le
+        } else {
+            PixelFormat::Yuv420p
+        },
         codec,
         ..EncoderConfig::default()
     }
 }
 
 /// One software-encoder session over `frames` — one chunk of a stitch.
-fn software_chunk(codec: VideoCodec, frames: std::ops::Range<u64>, ten: bool) -> Vec<EncodedPacket> {
-    let mut enc = encode::select_encoder(config(codec, ten), Some(EncoderBackend::H26x)).expect("the software encoder");
+fn software_chunk(
+    codec: VideoCodec,
+    frames: std::ops::Range<u64>,
+    ten: bool,
+) -> Vec<EncodedPacket> {
+    let mut enc = encode::select_encoder(config(codec, ten), Some(EncoderBackend::H26x))
+        .expect("the software encoder");
     let mut packets = Vec::new();
     for pts in frames {
         enc.send_frame(&frame(pts, ten)).unwrap();
@@ -90,7 +108,12 @@ fn trimmed(nal: &[u8]) -> Vec<u8> {
 fn stream_sets(packets: &[EncodedPacket], codec: VideoCodec) -> Vec<Vec<u8>> {
     let mut sets: Vec<Vec<u8>> = packets
         .iter()
-        .flat_map(|p| split_annexb_nals(&p.data).into_iter().map(trimmed).collect::<Vec<_>>())
+        .flat_map(|p| {
+            split_annexb_nals(&p.data)
+                .into_iter()
+                .map(trimmed)
+                .collect::<Vec<_>>()
+        })
         .filter(|n| !n.is_empty() && is_param_set(n, codec))
         .collect();
     sets.sort();
@@ -100,19 +123,32 @@ fn stream_sets(packets: &[EncodedPacket], codec: VideoCodec) -> Vec<Vec<u8>> {
 
 /// The visual sample entry's fourcc and body, from `stsd`.
 fn sample_entry(mp4: &[u8]) -> ([u8; 4], &[u8]) {
-    let at = mp4.windows(4).position(|w| w == b"stsd").expect("an stsd box");
+    let at = mp4
+        .windows(4)
+        .position(|w| w == b"stsd")
+        .expect("an stsd box");
     // stsd type, version/flags, entry_count, then the entry's size + type.
     let entry = at + 4 + 8;
     let size = u32::from_be_bytes(mp4[entry..entry + 4].try_into().unwrap()) as usize;
-    (mp4[entry + 4..entry + 8].try_into().unwrap(), &mp4[entry..entry + size])
+    (
+        mp4[entry + 4..entry + 8].try_into().unwrap(),
+        &mp4[entry..entry + size],
+    )
 }
 
 /// The config box's parameter sets, sorted, and (for `hvcC`) every array's
 /// `array_completeness` bit. Parsing it through is the check that it parses.
 fn config_sets(mp4: &[u8], codec: VideoCodec) -> (Vec<Vec<u8>>, Vec<u8>) {
     let (_, entry) = sample_entry(mp4);
-    let tag: &[u8; 4] = if codec == VideoCodec::H264 { b"avcC" } else { b"hvcC" };
-    let at = entry.windows(4).position(|w| w == tag).expect("a config box");
+    let tag: &[u8; 4] = if codec == VideoCodec::H264 {
+        b"avcC"
+    } else {
+        b"hvcC"
+    };
+    let at = entry
+        .windows(4)
+        .position(|w| w == tag)
+        .expect("a config box");
     let size = u32::from_be_bytes(entry[at - 4..at].try_into().unwrap()) as usize;
     let body = &entry[at + 4..at - 4 + size];
     let mut sets = Vec::new();
@@ -179,18 +215,29 @@ fn samples_carry_sets(mp4: &[u8], codec: VideoCodec) -> bool {
 /// error, only when those are the sets the pictures were coded with (the
 /// pictures of an `avc1` / `hvc1` file carry none of their own).
 fn decoded_frames(mp4: &[u8], name: &str) -> u64 {
-    let mut demux = container::streaming::demux_streaming(mp4).unwrap_or_else(|e| panic!("{name}: demux: {e:#}"));
+    let mut demux = container::streaming::demux_streaming(mp4)
+        .unwrap_or_else(|e| panic!("{name}: demux: {e:#}"));
     let header = demux.header().clone();
-    let mut dec = codec::decode::create_decoder(&header.codec, header.info.clone()).expect("a decoder");
+    let mut dec =
+        codec::decode::create_decoder(&header.codec, header.info.clone()).expect("a decoder");
     let mut frames = 0;
     while let Some(s) = demux.next_video_sample().unwrap() {
-        dec.push_sample(&s.data).unwrap_or_else(|e| panic!("{name}: a sample does not decode: {e:#}"));
-        while dec.decode_next().unwrap_or_else(|e| panic!("{name}: {e:#}")).is_some() {
+        dec.push_sample(&s.data)
+            .unwrap_or_else(|e| panic!("{name}: a sample does not decode: {e:#}"));
+        while dec
+            .decode_next()
+            .unwrap_or_else(|e| panic!("{name}: {e:#}"))
+            .is_some()
+        {
             frames += 1;
         }
     }
     dec.finish().unwrap();
-    while dec.decode_next().unwrap_or_else(|e| panic!("{name}: {e:#}")).is_some() {
+    while dec
+        .decode_next()
+        .unwrap_or_else(|e| panic!("{name}: {e:#}"))
+        .is_some()
+    {
         frames += 1;
     }
     frames
@@ -206,20 +253,41 @@ fn file_bytes(artifact: RungArtifact) -> Vec<u8> {
 /// Out of band: the entry, every set the encoder wrote (when the test holds
 /// the packets) in the config box and none in the samples, and every frame
 /// decoding from them.
-fn assert_out_of_band(mp4: &[u8], packets: Option<&[EncodedPacket]>, codec: VideoCodec, name: &str) {
-    let expect: &[u8; 4] = if codec == VideoCodec::H264 { b"avc1" } else { b"hvc1" };
+fn assert_out_of_band(
+    mp4: &[u8],
+    packets: Option<&[EncodedPacket]>,
+    codec: VideoCodec,
+    name: &str,
+) {
+    let expect: &[u8; 4] = if codec == VideoCodec::H264 {
+        b"avc1"
+    } else {
+        b"hvc1"
+    };
     assert_eq!(&sample_entry(mp4).0, expect, "{name}: sample entry");
     let (sets, complete) = config_sets(mp4, codec);
     let kinds = if codec == VideoCodec::H264 { 2 } else { 3 };
-    assert_eq!(sets.len(), kinds, "{name}: one set of each kind: {sets:02x?}");
+    assert_eq!(
+        sets.len(),
+        kinds,
+        "{name}: one set of each kind: {sets:02x?}"
+    );
     if let Some(packets) = packets {
-        assert_eq!(sets, stream_sets(packets, codec), "{name}: the config box holds the stream's sets");
+        assert_eq!(
+            sets,
+            stream_sets(packets, codec),
+            "{name}: the config box holds the stream's sets"
+        );
     }
     if codec == VideoCodec::H265 {
         assert_eq!(complete, vec![1, 1, 1], "{name}: hvc1 arrays are complete");
     }
     assert!(!samples_carry_sets(mp4, codec), "{name}: no set in band");
-    assert_eq!(decoded_frames(mp4, name), 2 * CHUNK, "{name}: every frame decodes");
+    assert_eq!(
+        decoded_frames(mp4, name),
+        2 * CHUNK,
+        "{name}: every frame decodes"
+    );
 }
 
 #[test]
@@ -230,7 +298,11 @@ fn a_serial_software_encode_writes_avc1_and_hvc1() {
             tx.try_send(frame(pts, false)).unwrap();
         }
         drop(tx);
-        let cfg = EncoderConfig { codec, threads: 1, ..EncoderConfig::default() };
+        let cfg = EncoderConfig {
+            codec,
+            threads: 1,
+            ..EncoderConfig::default()
+        };
         let out = encode_rung_single_file(
             0,
             &Rung::new(W, H),
@@ -264,8 +336,14 @@ fn stitched_chunks_of_one_encoder_write_avc1_and_hvc1() {
             label: "96p".into(),
             packets: packets.clone(),
         };
-        let out = mux_rung_packets_to_mp4(rp, 30.0, Default::default(), None, &[], (0, 1)).expect("the stitch");
-        assert_out_of_band(&file_bytes(out.artifact), Some(&packets), codec, &format!("stitched {codec:?}"));
+        let out = mux_rung_packets_to_mp4(rp, 30.0, Default::default(), None, &[], (0, 1))
+            .expect("the stitch");
+        assert_out_of_band(
+            &file_bytes(out.artifact),
+            Some(&packets),
+            codec,
+            &format!("stitched {codec:?}"),
+        );
     }
 }
 
@@ -276,22 +354,53 @@ fn stitched_chunks_whose_sets_differ_keep_them_in_band() {
         // SPS under the same id.
         let mut packets = software_chunk(codec, 0..CHUNK, false);
         packets.extend(software_chunk(codec, CHUNK..2 * CHUNK, true));
-        let rp = RungPackets { rung_index: 0, codec, width: W, height: H, label: "96p".into(), packets };
-        let mp4 = file_bytes(mux_rung_packets_to_mp4(rp, 30.0, Default::default(), None, &[], (0, 1)).unwrap().artifact);
-        let expect: &[u8; 4] = if codec == VideoCodec::H264 { b"avc3" } else { b"hev1" };
+        let rp = RungPackets {
+            rung_index: 0,
+            codec,
+            width: W,
+            height: H,
+            label: "96p".into(),
+            packets,
+        };
+        let mp4 = file_bytes(
+            mux_rung_packets_to_mp4(rp, 30.0, Default::default(), None, &[], (0, 1))
+                .unwrap()
+                .artifact,
+        );
+        let expect: &[u8; 4] = if codec == VideoCodec::H264 {
+            b"avc3"
+        } else {
+            b"hev1"
+        };
         let name = format!("mixed {codec:?}");
         assert_eq!(&sample_entry(&mp4).0, expect, "{name}");
-        assert!(samples_carry_sets(&mp4, codec), "{name}: each chunk carries its own sets");
+        assert!(
+            samples_carry_sets(&mp4, codec),
+            "{name}: each chunk carries its own sets"
+        );
         if codec == VideoCodec::H265 {
-            assert_eq!(config_sets(&mp4, codec).1, vec![0, 0, 0], "{name}: hev1 arrays are not complete");
+            assert_eq!(
+                config_sets(&mp4, codec).1,
+                vec![0, 0, 0],
+                "{name}: hev1 arrays are not complete"
+            );
         }
-        assert_eq!(decoded_frames(&mp4, &name), 2 * CHUNK, "{name}: every frame decodes, each chunk with its own sets");
+        assert_eq!(
+            decoded_frames(&mp4, &name),
+            2 * CHUNK,
+            "{name}: every frame decodes, each chunk with its own sets"
+        );
     }
 }
 
 /// An HLS rendition written by a primary muxer and, from `helper`'s packets,
 /// a helper muxer — the multi-GPU split — then settled and described.
-fn hls_codecs(codec: VideoCodec, primary: &[EncodedPacket], helper: &[EncodedPacket], dir: &Path) -> String {
+fn hls_codecs(
+    codec: VideoCodec,
+    primary: &[EncodedPacket],
+    helper: &[EncodedPacket],
+    dir: &Path,
+) -> String {
     let open = |first: u32, init: bool| {
         CmafVideoMuxer::new_with_codec_options(
             dir,
@@ -313,7 +422,8 @@ fn hls_codecs(codec: VideoCodec, primary: &[EncodedPacket], helper: &[EncodedPac
     for (first, packets) in [(1, primary), (2, helper)] {
         let mut m = open(first, first == 1);
         for p in packets {
-            m.add_packet(p.data.to_vec(), 1000, p.is_keyframe, p.pts).unwrap();
+            m.add_packet(p.data.to_vec(), 1000, p.is_keyframe, p.pts)
+                .unwrap();
         }
         m.flush_segment().unwrap();
         let done = m.finalize().unwrap();
@@ -322,7 +432,14 @@ fn hls_codecs(codec: VideoCodec, primary: &[EncodedPacket], helper: &[EncodedPac
     }
     let mut manifest = manifest.unwrap();
     manifest.segments = segments;
-    let rm = RungManifest { rung_index: 0, width: W, height: H, label: "96p".into(), relative_dir: "96p".into(), manifest };
+    let rm = RungManifest {
+        rung_index: 0,
+        width: W,
+        height: H,
+        label: "96p".into(),
+        relative_dir: "96p".into(),
+        manifest,
+    };
     settle_sample_entry(&rm);
     build_video_variant_spec(&rm, 30.0, 0, None).codec_string
 }
@@ -350,11 +467,22 @@ fn hls_codecs_name_avc1_and_hvc1_unless_a_helper_wrote_other_sets() {
             }
         }
         let (sets, _) = config_sets(&init, codec);
-        assert_eq!(sets, stream_sets(&a, codec), "{codec:?}: init holds the stream's sets");
+        assert_eq!(
+            sets,
+            stream_sets(&a, codec),
+            "{codec:?}: init holds the stream's sets"
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let codecs = hls_codecs(codec, &a, &ten, dir.path());
-        let prefix = if codec == VideoCodec::H264 { "avc3." } else { "hev1." };
-        assert!(codecs.starts_with(prefix), "{codec:?} with a 10-bit helper: {codecs}");
+        let prefix = if codec == VideoCodec::H264 {
+            "avc3."
+        } else {
+            "hev1."
+        };
+        assert!(
+            codecs.starts_with(prefix),
+            "{codec:?} with a 10-bit helper: {codecs}"
+        );
     }
 }

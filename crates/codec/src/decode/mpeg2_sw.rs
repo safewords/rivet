@@ -17,7 +17,10 @@ use crate::frame::{ColorSpace, PixelFormat, StreamInfo, VideoFrame};
 
 /// The codec labels the MPEG-2 tier serves (MPEG-1 video included).
 pub fn supports(codec_lower: &str) -> bool {
-    matches!(codec_lower, "mpeg2" | "mpeg2video" | "m2v" | "mpeg1" | "mpeg1video" | "m1v")
+    matches!(
+        codec_lower,
+        "mpeg2" | "mpeg2video" | "m2v" | "mpeg1" | "mpeg1video" | "m1v"
+    )
 }
 
 /// An MPEG-2 decoder behind rivet's [`Decoder`] trait.
@@ -41,14 +44,27 @@ impl Mpeg2Decoder {
             bail!("the MPEG-2 decoder decodes MPEG-1/2 video, not '{codec}'");
         }
         let mut inner = mpeg2::Decoder::new();
-        inner.set_threads(super::sw_decode_threads("RIVET_MPEG2_DECODE_THREADS", share));
-        Ok(Self { inner, info, ready: VecDeque::new(), next_pts: 0 })
+        inner.set_threads(super::sw_decode_threads(
+            "RIVET_MPEG2_DECODE_THREADS",
+            share,
+        ));
+        Ok(Self {
+            inner,
+            info,
+            ready: VecDeque::new(),
+            next_pts: 0,
+        })
     }
 
     /// The colour matrix the sequence signals (ITU-T H.273 codes), or the
     /// stream's when it signals none.
     fn color_space(&self) -> ColorSpace {
-        match self.inner.sequence().and_then(|s| s.colour_description).map(|(_, _, matrix)| matrix) {
+        match self
+            .inner
+            .sequence()
+            .and_then(|s| s.colour_description)
+            .map(|(_, _, matrix)| matrix)
+        {
             Some(1) => ColorSpace::Bt709,
             Some(5 | 6) => ColorSpace::Bt601,
             Some(9 | 10) => ColorSpace::Bt2020,
@@ -63,7 +79,9 @@ impl Mpeg2Decoder {
                 mpeg2::ChromaFormat::Yuv420 => PixelFormat::Yuv420p,
                 mpeg2::ChromaFormat::Yuv422 => PixelFormat::Yuv422p,
                 #[allow(unreachable_patterns)]
-                other => bail!("MPEG-2 decoded a {other:?} picture, which has no pixel format in the pipeline"),
+                other => bail!(
+                    "MPEG-2 decoded a {other:?} picture, which has no pixel format in the pipeline"
+                ),
             };
             let pts = self.next_pts;
             self.next_pts += 1;
@@ -131,7 +149,10 @@ mod tests {
     #[test]
     fn decodes_on_the_software_decoder_threads() {
         let dec = Mpeg2Decoder::new(info("mpeg2")).expect("decoder");
-        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_MPEG2_DECODE_THREADS", 1));
+        assert_eq!(
+            dec.inner.threads(),
+            crate::decode::sw_decode_threads("RIVET_MPEG2_DECODE_THREADS", 1)
+        );
     }
 
     #[test]
@@ -165,7 +186,10 @@ mod tests {
         dec.finish().unwrap();
         for pts in 0..5 {
             let f = dec.decode_next().unwrap().expect("a frame");
-            assert_eq!((f.width, f.height, f.format, f.pts), (w, h, PixelFormat::Yuv420p, pts));
+            assert_eq!(
+                (f.width, f.height, f.format, f.pts),
+                (w, h, PixelFormat::Yuv420p, pts)
+            );
             assert_eq!(f.data.len(), (w * h * 3 / 2) as usize);
         }
         assert!(dec.decode_next().unwrap().is_none());

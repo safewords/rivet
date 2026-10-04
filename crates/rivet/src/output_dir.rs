@@ -35,7 +35,9 @@ impl CreatedDir {
             missing.push(p.to_path_buf());
             cur = p.parent();
         }
-        let mut made = Self { created: Vec::new() };
+        let mut made = Self {
+            created: Vec::new(),
+        };
         for p in missing.into_iter().rev() {
             match std::fs::create_dir(&p) {
                 Ok(()) => made.created.push(p),
@@ -89,10 +91,17 @@ mod tests {
         assert!(dir.is_dir());
         assert_eq!(
             made.created(),
-            &[root.path().join("a"), root.path().join("a").join("b"), dir.clone()]
+            &[
+                root.path().join("a"),
+                root.path().join("a").join("b"),
+                dir.clone()
+            ]
         );
         drop(made);
-        assert!(!root.path().join("a").exists(), "the chain this run made is gone");
+        assert!(
+            !root.path().join("a").exists(),
+            "the chain this run made is gone"
+        );
         assert!(root.path().is_dir(), "the directory that existed stays");
     }
 
@@ -135,7 +144,10 @@ mod tests {
         let made = CreatedDir::create(&dir).unwrap();
         std::fs::write(dir.join("master.m3u8"), b"#EXTM3U\n").unwrap();
         drop(made);
-        assert_eq!(std::fs::read(dir.join("master.m3u8")).unwrap(), b"#EXTM3U\n");
+        assert_eq!(
+            std::fs::read(dir.join("master.m3u8")).unwrap(),
+            b"#EXTM3U\n"
+        );
     }
 
     /// `keep` keeps even an empty directory.

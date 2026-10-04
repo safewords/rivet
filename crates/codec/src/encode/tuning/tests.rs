@@ -1,8 +1,8 @@
 // Private items from mod.rs that the tests call directly (not
 // brought in by the `*` glob, which only imports pub items).
 use super::{
-    nvenc_cq_for_target, tile_grid_hw, tile_grid_nvenc,
     NV_ENC_PRESET_P5_GUID_BYTES, NV_ENC_PRESET_P6_GUID_BYTES, NV_ENC_PRESET_P7_GUID_BYTES,
+    nvenc_cq_for_target, tile_grid_hw, tile_grid_nvenc,
 };
 // All pub items (QualityTarget, SpeedTier, NVENC_TUNING_HIGH_QUALITY,
 // libaom_cq_for_target, re-exported param structs/enums, adapter fns).
@@ -31,8 +31,16 @@ fn av1_sw_every_combination_returns_valid_params() {
     for target in TARGETS {
         for tier in TIERS {
             let p = av1_sw_params(*target, *tier);
-            assert!((1..=255).contains(&p.quantizer), "quantizer {} oob", p.quantizer);
-            assert!((8..=32).contains(&p.search_range), "search_range {} oob", p.search_range);
+            assert!(
+                (1..=255).contains(&p.quantizer),
+                "quantizer {} oob",
+                p.quantizer
+            );
+            assert!(
+                (8..=32).contains(&p.search_range),
+                "search_range {} oob",
+                p.search_range
+            );
             assert!(p.speed <= 10, "speed {} oob", p.speed);
         }
     }
@@ -461,7 +469,10 @@ fn a_positive_delta_lowers_quality_on_every_backend() {
     // The one cross-backend promise the delta makes: positive means smaller.
     // Each scale disagrees about units and two of them disagree about
     // direction, so this is the assertion that keeps them honest.
-    let softer = EncodeOverrides { quality_delta: 4, ..Default::default() };
+    let softer = EncodeOverrides {
+        quality_delta: 4,
+        ..Default::default()
+    };
     let rung = RungContext::standalone(1280, 720);
     let (target, tier) = (QualityTarget::High, SpeedTier::Archive);
 
@@ -493,13 +504,21 @@ fn a_delta_never_leaves_the_backend_range() {
     // encode, not a panic or a wrapped-around quantizer that encodes lossless.
     let rung = RungContext::standalone(1920, 1080);
     for delta in [-1000, -64, -1, 0, 1, 64, 1000] {
-        let o = EncodeOverrides { quality_delta: delta, ..Default::default() };
+        let o = EncodeOverrides {
+            quality_delta: delta,
+            ..Default::default()
+        };
         for target in TARGETS {
             for tier in TIERS {
-                assert!((1..=255).contains(&av1_sw_params_with(*target, *tier, &rung, &o).quantizer));
+                assert!(
+                    (1..=255).contains(&av1_sw_params_with(*target, *tier, &rung, &o).quantizer)
+                );
                 assert!(nvenc_av1_params_with(*target, *tier, &rung, &o).cq <= 63);
                 let icq = qsv_av1_params_with(*target, *tier, &rung, &o).icq_quality;
-                assert!((1..=51).contains(&icq), "icq {icq} out of range at delta {delta}");
+                assert!(
+                    (1..=51).contains(&icq),
+                    "icq {icq} out of range at delta {delta}"
+                );
             }
         }
     }
@@ -511,7 +530,10 @@ fn an_explicit_tile_grid_replaces_the_resolution_default() {
     // which is the ~2-3% this ladder was paying for parallelism it gets from
     // running rungs concurrently instead.
     let rung = RungContext::standalone(1920, 1080);
-    let single = EncodeOverrides { tiles: Some(TileGrid::SINGLE), ..Default::default() };
+    let single = EncodeOverrides {
+        tiles: Some(TileGrid::SINGLE),
+        ..Default::default()
+    };
 
     let derived = nvenc_av1_params(QualityTarget::High, SpeedTier::Archive, 1920, 1080);
     assert_eq!((derived.num_tile_columns, derived.num_tile_rows), (2, 2));
@@ -527,15 +549,24 @@ fn an_explicit_tile_grid_replaces_the_resolution_default() {
 fn a_policy_makes_the_ladder_cheaper_going_down() {
     // The whole point, end to end: the same policy the service ships, resolved
     // across a five-rung ladder, has to produce monotonically softer rungs.
-    let policy = RungPolicy::new()
-        .with_quality_step_per_rung(2)
-        .with_rule(RungSelector::Top, EncodeOverrides { quality_delta: -2, ..Default::default() });
+    let policy = RungPolicy::new().with_quality_step_per_rung(2).with_rule(
+        RungSelector::Top,
+        EncodeOverrides {
+            quality_delta: -2,
+            ..Default::default()
+        },
+    );
 
     let ladder = [(1920, 960), (1440, 720), (960, 480), (720, 360), (480, 240)];
     let mut previous: Option<u16> = None;
 
     for (index, (w, h)) in ladder.iter().enumerate() {
-        let rung = RungContext { width: *w, height: *h, index, rung_count: ladder.len() };
+        let rung = RungContext {
+            width: *w,
+            height: *h,
+            index,
+            rung_count: ladder.len(),
+        };
         let icq = qsv_av1_params_with(
             QualityTarget::High,
             SpeedTier::Archive,
@@ -545,7 +576,10 @@ fn a_policy_makes_the_ladder_cheaper_going_down() {
         .icq_quality;
 
         if let Some(previous) = previous {
-            assert!(icq > previous, "rung {index} ({w}x{h}) was not softer than the one above");
+            assert!(
+                icq > previous,
+                "rung {index} ({w}x{h}) was not softer than the one above"
+            );
         }
         previous = Some(icq);
     }
@@ -568,7 +602,10 @@ fn a_delta_shifts_an_explicit_crf_the_same_way_it_shifts_a_target() {
     let base = EncoderConfig {
         codec: VideoCodec::Av1,
         quality: 32,
-        overrides: EncodeOverrides { quality_delta: 6, ..Default::default() },
+        overrides: EncodeOverrides {
+            quality_delta: 6,
+            ..Default::default()
+        },
         ..EncoderConfig::default()
     };
 
@@ -586,7 +623,10 @@ fn a_shifted_crf_cannot_reach_the_sentinel() {
     let softest = EncoderConfig {
         codec: VideoCodec::Av1,
         quality: 60,
-        overrides: EncodeOverrides { quality_delta: 200, ..Default::default() },
+        overrides: EncodeOverrides {
+            quality_delta: 200,
+            ..Default::default()
+        },
         ..EncoderConfig::default()
     };
     let resolved = select_encoder_config_for_test(softest);
@@ -598,7 +638,10 @@ fn a_shifted_crf_cannot_reach_the_sentinel() {
     let sharpest = EncoderConfig {
         codec: VideoCodec::Av1,
         quality: 4,
-        overrides: EncodeOverrides { quality_delta: -50, ..Default::default() },
+        overrides: EncodeOverrides {
+            quality_delta: -50,
+            ..Default::default()
+        },
         ..EncoderConfig::default()
     };
     assert_eq!(select_encoder_config_for_test(sharpest).quality, 0);
@@ -613,11 +656,17 @@ fn a_caller_deriving_from_a_target_keeps_the_sentinel() {
     // sentinel here would apply it twice and destroy its meaning besides.
     let derived = EncoderConfig {
         quality: AUTO_FROM_TARGET,
-        overrides: EncodeOverrides { quality_delta: 6, ..Default::default() },
+        overrides: EncodeOverrides {
+            quality_delta: 6,
+            ..Default::default()
+        },
         ..EncoderConfig::default()
     };
 
-    assert_eq!(select_encoder_config_for_test(derived).quality, AUTO_FROM_TARGET);
+    assert_eq!(
+        select_encoder_config_for_test(derived).quality,
+        AUTO_FROM_TARGET
+    );
 }
 
 // ─── AMF H.264 / H.265 adapter ──────────────────────────────────
@@ -626,7 +675,9 @@ fn a_caller_deriving_from_a_target_keeps_the_sentinel() {
 /// encoders, and hands QVBR a level that runs the other way (`52 - QP`).
 #[test]
 fn amf_h26x_params_share_qp_anchors_and_invert_qvbr() {
-    use super::{AmfQualityPreset, AmfRateControl, amf_h26x_params, h26x_sw_params, qvbr_level_for_qp};
+    use super::{
+        AmfQualityPreset, AmfRateControl, amf_h26x_params, h26x_sw_params, qvbr_level_for_qp,
+    };
     use crate::frame::VideoCodec;
     for target in [
         QualityTarget::VisuallyLossless,
@@ -638,12 +689,19 @@ fn amf_h26x_params_share_qp_anchors_and_invert_qvbr() {
         for codec in [VideoCodec::H264, VideoCodec::H265] {
             let amf = amf_h26x_params(codec, target, SpeedTier::Standard);
             let sw = h26x_sw_params(codec, target, SpeedTier::Standard);
-            assert_eq!(amf.qp_i, sw.qp, "{target:?}: same QP as the software encoders");
+            assert_eq!(
+                amf.qp_i, sw.qp,
+                "{target:?}: same QP as the software encoders"
+            );
             assert_eq!(amf.qp_p, (sw.qp + 2).min(51));
             assert_eq!(amf.qvbr_quality, qvbr_level_for_qp(sw.qp));
             assert_eq!(
                 amf.rc_mode,
-                if target == QualityTarget::VisuallyLossless { AmfRateControl::Cqp } else { AmfRateControl::QualityVbr }
+                if target == QualityTarget::VisuallyLossless {
+                    AmfRateControl::Cqp
+                } else {
+                    AmfRateControl::QualityVbr
+                }
             );
         }
     }
@@ -662,15 +720,33 @@ fn amf_h26x_params_share_qp_anchors_and_invert_qvbr() {
 fn amf_h26x_params_with_applies_delta_to_both_scales() {
     use super::{EncodeOverrides, amf_h26x_params_with};
     use crate::frame::VideoCodec;
-    let mut o = EncodeOverrides { quality_delta: 3, ..Default::default() };
-    let p = amf_h26x_params_with(VideoCodec::H265, QualityTarget::Standard, SpeedTier::Standard, &o);
+    let mut o = EncodeOverrides {
+        quality_delta: 3,
+        ..Default::default()
+    };
+    let p = amf_h26x_params_with(
+        VideoCodec::H265,
+        QualityTarget::Standard,
+        SpeedTier::Standard,
+        &o,
+    );
     assert_eq!((p.qp_i, p.qp_p, p.qvbr_quality), (29, 31, 23));
     o.quality_delta = -30;
-    let p = amf_h26x_params_with(VideoCodec::H265, QualityTarget::Standard, SpeedTier::Standard, &o);
+    let p = amf_h26x_params_with(
+        VideoCodec::H265,
+        QualityTarget::Standard,
+        SpeedTier::Standard,
+        &o,
+    );
     assert_eq!((p.qp_i, p.qvbr_quality), (0, 51));
     o.quality_delta = 0;
     o.speed_tier = Some(SpeedTier::Draft);
-    let p = amf_h26x_params_with(VideoCodec::H264, QualityTarget::Standard, SpeedTier::Archive, &o);
+    let p = amf_h26x_params_with(
+        VideoCodec::H264,
+        QualityTarget::Standard,
+        SpeedTier::Archive,
+        &o,
+    );
     assert_eq!(p.quality_preset, super::AmfQualityPreset::Balanced);
 }
 
@@ -695,13 +771,21 @@ fn h26x_sw_cu_depth_is_per_tier_and_h265_only() {
                 SpeedTier::Draft => 1,
                 SpeedTier::Standard | SpeedTier::Archive => 2,
             };
-            assert_eq!(h26x_sw_params(VideoCodec::H265, *target, *tier).max_cu_depth, want, "H.265 {target:?} {tier:?}");
+            assert_eq!(
+                h26x_sw_params(VideoCodec::H265, *target, *tier).max_cu_depth,
+                want,
+                "H.265 {target:?} {tier:?}"
+            );
             assert_eq!(
                 h26x_sw_params_with(VideoCodec::H265, *target, *tier, &named).max_cu_depth,
                 want,
                 "H.265 {target:?} {tier:?} with overrides"
             );
-            assert_eq!(h26x_sw_params(VideoCodec::H264, *target, *tier).max_cu_depth, 0, "H.264 {target:?} {tier:?}");
+            assert_eq!(
+                h26x_sw_params(VideoCodec::H264, *target, *tier).max_cu_depth,
+                0,
+                "H.264 {target:?} {tier:?}"
+            );
         }
     }
 }
@@ -714,7 +798,10 @@ fn h26x_sw_cu_depth_override_replaces_the_tier_row() {
     use super::{EncodeOverrides, h26x_sw_params_with};
     use crate::frame::VideoCodec;
     for depth in 0..=2u8 {
-        let o = EncodeOverrides { cu_depth: Some(depth), ..Default::default() };
+        let o = EncodeOverrides {
+            cu_depth: Some(depth),
+            ..Default::default()
+        };
         for tier in TIERS {
             for codec in [VideoCodec::H264, VideoCodec::H265] {
                 assert_eq!(
@@ -741,19 +828,43 @@ fn h26x_sw_aq_is_off_and_wp_is_on_unless_named() {
         for target in TARGETS {
             for tier in TIERS {
                 let base = h26x_sw_params(codec, *target, *tier);
-                assert_eq!((base.aq_strength_tenths, base.weighted_pred), (0, true), "{codec:?} {target:?} {tier:?}");
-                assert_eq!(h26x_sw_params_with(codec, *target, *tier, &nothing), base, "{codec:?}: empty override drifted");
+                assert_eq!(
+                    (base.aq_strength_tenths, base.weighted_pred),
+                    (0, true),
+                    "{codec:?} {target:?} {tier:?}"
+                );
+                assert_eq!(
+                    h26x_sw_params_with(codec, *target, *tier, &nothing),
+                    base,
+                    "{codec:?}: empty override drifted"
+                );
             }
         }
     }
-    let named = EncodeOverrides { aq_strength_tenths: Some(10), weighted_pred: Some(true), ..Default::default() };
+    let named = EncodeOverrides {
+        aq_strength_tenths: Some(10),
+        weighted_pred: Some(true),
+        ..Default::default()
+    };
     let (t, s) = (QualityTarget::Standard, SpeedTier::Standard);
-    let off = named.merge(EncodeOverrides { aq_strength_tenths: Some(0), weighted_pred: Some(false), ..Default::default() });
+    let off = named.merge(EncodeOverrides {
+        aq_strength_tenths: Some(0),
+        weighted_pred: Some(false),
+        ..Default::default()
+    });
     for codec in [VideoCodec::H264, VideoCodec::H265] {
         let p = h26x_sw_params_with(codec, t, s, &named);
-        assert_eq!((p.aq_strength_tenths, p.weighted_pred), (10, true), "{codec:?}");
+        assert_eq!(
+            (p.aq_strength_tenths, p.weighted_pred),
+            (10, true),
+            "{codec:?}"
+        );
         let p = h26x_sw_params_with(codec, t, s, &off);
-        assert_eq!((p.aq_strength_tenths, p.weighted_pred), (0, false), "{codec:?}");
+        assert_eq!(
+            (p.aq_strength_tenths, p.weighted_pred),
+            (0, false),
+            "{codec:?}"
+        );
     }
 }
 
@@ -769,7 +880,11 @@ fn h26x_sw_bitrate_rungs_default_to_a_one_second_buffer_and_no_lookahead() {
         for target in TARGETS {
             for tier in TIERS {
                 let p = h26x_sw_params(codec, *target, *tier);
-                assert_eq!((p.bitrate, p.buffer_ms, p.lookahead), (None, 1000, 0), "{codec:?} {target:?} {tier:?}");
+                assert_eq!(
+                    (p.bitrate, p.buffer_ms, p.lookahead),
+                    (None, 1000, 0),
+                    "{codec:?} {target:?} {tier:?}"
+                );
             }
         }
         let named = EncodeOverrides {
@@ -779,6 +894,10 @@ fn h26x_sw_bitrate_rungs_default_to_a_one_second_buffer_and_no_lookahead() {
             ..Default::default()
         };
         let p = h26x_sw_params_with(codec, QualityTarget::Standard, SpeedTier::Standard, &named);
-        assert_eq!((p.bitrate, p.buffer_ms, p.lookahead), (Some(2_000_000), 0, 8), "{codec:?}");
+        assert_eq!(
+            (p.bitrate, p.buffer_ms, p.lookahead),
+            (Some(2_000_000), 0, 8),
+            "{codec:?}"
+        );
     }
 }

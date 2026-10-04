@@ -23,8 +23,8 @@ use std::fmt;
 mod audio;
 pub mod exif;
 mod image;
-mod isobmff;
 pub mod iso6709;
+mod isobmff;
 mod matroska;
 pub mod scrub;
 pub mod write;
@@ -47,7 +47,12 @@ pub enum Category {
 }
 
 impl Category {
-    pub const ALL: [Category; 4] = [Category::Location, Category::Device, Category::CaptureTime, Category::Descriptive];
+    pub const ALL: [Category; 4] = [
+        Category::Location,
+        Category::Device,
+        Category::CaptureTime,
+        Category::Descriptive,
+    ];
 
     /// The name the settings and the reports use.
     pub fn name(self) -> &'static str {
@@ -60,7 +65,9 @@ impl Category {
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        Category::ALL.into_iter().find(|c| c.name() == s || c.name().replace('_', "-") == s)
+        Category::ALL
+            .into_iter()
+            .find(|c| c.name() == s || c.name().replace('_', "-") == s)
     }
 
     fn bit(self) -> u8 {
@@ -232,9 +239,15 @@ impl Keep {
             match (name, Category::parse(name), level) {
                 ("none", _, None) => {}
                 ("all", _, None) => k = Keep::ALL,
-                (_, Some(Category::Location), None | Some("keep")) => k.location = LocationKeep::Keep,
-                (_, Some(Category::Location), Some("approximate")) => k.location = LocationKeep::Approximate,
-                (_, Some(Category::CaptureTime), None | Some("keep")) => k.capture_time = TimeKeep::Keep,
+                (_, Some(Category::Location), None | Some("keep")) => {
+                    k.location = LocationKeep::Keep
+                }
+                (_, Some(Category::Location), Some("approximate")) => {
+                    k.location = LocationKeep::Approximate
+                }
+                (_, Some(Category::CaptureTime), None | Some("keep")) => {
+                    k.capture_time = TimeKeep::Keep
+                }
                 (_, Some(Category::CaptureTime), Some("date")) => k.capture_time = TimeKeep::Date,
                 (_, Some(Category::Device), None | Some("keep")) => k.device = DeviceKeep::Keep,
                 (_, Some(Category::Device), Some("all")) => k.device = DeviceKeep::All,
@@ -292,11 +305,19 @@ pub struct Location {
 
 impl Location {
     pub fn coordinates(latitude: f64, longitude: f64, altitude: Option<f64>) -> Self {
-        Location { latitude: Some(latitude), longitude: Some(longitude), altitude, name: None }
+        Location {
+            latitude: Some(latitude),
+            longitude: Some(longitude),
+            altitude,
+            name: None,
+        }
     }
 
     fn named(name: &str) -> Self {
-        Location { name: Some(name.to_string()), ..Default::default() }
+        Location {
+            name: Some(name.to_string()),
+            ..Default::default()
+        }
     }
 
     pub fn has_coordinates(&self) -> bool {
@@ -426,12 +447,16 @@ impl Metadata {
         let location = match keep.location {
             LocationKeep::Strip => None,
             LocationKeep::Keep => self.location.clone(),
-            LocationKeep::Approximate => self.location.as_ref().filter(|l| l.has_coordinates()).map(|l| Location {
-                latitude: l.latitude.map(round2),
-                longitude: l.longitude.map(round2),
-                altitude: None,
-                name: None,
-            }),
+            LocationKeep::Approximate => self
+                .location
+                .as_ref()
+                .filter(|l| l.has_coordinates())
+                .map(|l| Location {
+                    latitude: l.latitude.map(round2),
+                    longitude: l.longitude.map(round2),
+                    altitude: None,
+                    name: None,
+                }),
         };
         let capture_time = match keep.capture_time {
             TimeKeep::Strip => None,
@@ -440,7 +465,11 @@ impl Metadata {
         };
         let device = match keep.device {
             DeviceKeep::Strip => Device::default(),
-            DeviceKeep::Keep => Device { serial: None, owner: None, ..self.device.clone() },
+            DeviceKeep::Keep => Device {
+                serial: None,
+                owner: None,
+                ..self.device.clone()
+            },
             DeviceKeep::All => self.device.clone(),
         };
         Metadata {
@@ -448,7 +477,11 @@ impl Metadata {
             device,
             capture_time,
             descriptive: if keep.descriptive {
-                self.descriptive.iter().filter(|(k, _)| k.as_str() != "picture").map(|(k, v)| (k.clone(), v.clone())).collect()
+                self.descriptive
+                    .iter()
+                    .filter(|(k, _)| k.as_str() != "picture")
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
             } else {
                 BTreeMap::new()
             },
@@ -465,44 +498,67 @@ impl Metadata {
         let mut out = Vec::new();
         // Encoder names in the audio are judged on their own below: the ones
         // a job's own encoder writes are not the source's.
-        let values = Metadata { embedded_software: Vec::new(), ..self.clone() };
+        let values = Metadata {
+            embedded_software: Vec::new(),
+            ..self.clone()
+        };
         let stray = values.categories().minus(keep.categories());
-        let software: Vec<&String> = self.embedded_software.iter().filter(|s| !allowed_software.contains(s)).collect();
+        let software: Vec<&String> = self
+            .embedded_software
+            .iter()
+            .filter(|s| !allowed_software.contains(s))
+            .collect();
         if !stray.is_empty() {
             out.push(format!("carries {stray} metadata, which the job strips"));
         }
-        if keep.location == LocationKeep::Approximate {
-            if let Some(l) = &self.location {
-                let fine = |v: Option<f64>| v.is_some_and(|v| (v - round2(v)).abs() > 1e-6);
-                if fine(l.latitude) || fine(l.longitude) || l.altitude.is_some() || l.name.is_some() {
-                    out.push("carries a location finer than approximate".into());
-                }
+        if keep.location == LocationKeep::Approximate
+            && let Some(l) = &self.location
+        {
+            let fine = |v: Option<f64>| v.is_some_and(|v| (v - round2(v)).abs() > 1e-6);
+            if fine(l.latitude) || fine(l.longitude) || l.altitude.is_some() || l.name.is_some() {
+                out.push("carries a location finer than approximate".into());
             }
         }
-        if keep.capture_time == TimeKeep::Date {
-            if let Some(t) = &self.capture_time {
-                if t.len() > 10 && !t[10..].starts_with("T00:00:00") && !t[10..].starts_with(" 00:00:00") {
-                    out.push(format!("carries a time of day ({t}) where only the date is kept"));
-                }
-            }
+        if keep.capture_time == TimeKeep::Date
+            && let Some(t) = &self.capture_time
+            && t.len() > 10
+            && !t[10..].starts_with("T00:00:00")
+            && !t[10..].starts_with(" 00:00:00")
+        {
+            out.push(format!(
+                "carries a time of day ({t}) where only the date is kept"
+            ));
         }
-        if keep.device != DeviceKeep::All && (self.device.serial.is_some() || self.device.owner.is_some()) {
+        if keep.device != DeviceKeep::All
+            && (self.device.serial.is_some() || self.device.owner.is_some())
+        {
             out.push("carries a serial number or owner name".into());
         }
         if keep.device == DeviceKeep::Strip && !software.is_empty() {
             out.push(format!(
                 "carries an encoder name in its audio ({})",
-                software.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                software
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         if !self.timed_tracks.is_empty() {
             out.push(format!(
                 "carries a timed metadata track ({})",
-                self.timed_tracks.iter().map(|t| t.label.as_str()).collect::<Vec<_>>().join(", ")
+                self.timed_tracks
+                    .iter()
+                    .map(|t| t.label.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         if !self.unclassified.is_empty() {
-            out.push(format!("carries metadata the check cannot classify: {}", self.unclassified.join(", ")));
+            out.push(format!(
+                "carries metadata the check cannot classify: {}",
+                self.unclassified.join(", ")
+            ));
         }
         out
     }
@@ -543,7 +599,9 @@ impl Metadata {
         if value.is_empty() {
             return;
         }
-        self.descriptive.entry(key.to_ascii_lowercase()).or_insert_with(|| value.to_string());
+        self.descriptive
+            .entry(key.to_ascii_lowercase())
+            .or_insert_with(|| value.to_string());
     }
 
     fn set_device(&mut self, field: DeviceField, value: &str) {
@@ -582,23 +640,35 @@ impl Metadata {
             }
             "make" | "manufacturer" => self.set_device(DeviceField::Make, value),
             "model" | "camera_model" => self.set_device(DeviceField::Model, value),
-            "software" | "encoder" | "encoding_tool" | "encoded_with" | "creator_tool" | "writing_app"
-            | "muxing_app" | "firmware" | "android_version" | "version" | "source" | "host_computer" => {
-                self.set_device(DeviceField::Software, value)
-            }
+            "software" | "encoder" | "encoding_tool" | "encoded_with" | "creator_tool"
+            | "writing_app" | "muxing_app" | "firmware" | "android_version" | "version"
+            | "source" | "host_computer" => self.set_device(DeviceField::Software, value),
             "lens" | "lens_model" | "lens_make" => self.set_device(DeviceField::Lens, value),
-            "serial" | "serial_number" | "body_serial_number" | "camera_serial_number" | "lens_serial_number"
-            | "identifier" | "device_identifier" | "unique_id" => self.set_device(DeviceField::Serial, value),
-            "owner" | "owner_name" | "camera_owner_name" => self.set_device(DeviceField::Owner, value),
-            "date" | "creation_time" | "creationdate" | "creation_date" | "date_recorded" | "date_released"
-            | "date_encoded" | "date_tagged" | "date_time_original" | "datetime" | "year" | "recorded_date"
-            | "date_time" | "time" => self.set_capture_time(value),
-            "title" | "name" | "displayname" | "display_name" | "artist" | "author" | "album" | "album_artist"
-            | "albumartist" | "performer" | "composer" | "copyright" | "comment" | "comments" | "description"
-            | "keywords" | "genre" | "information" | "director" | "producer" | "publisher" | "license"
-            | "organization" | "contact" | "subject" | "summary" | "synopsis" | "disclaimer" | "warning"
-            | "collection_name" | "encoded_by" | "lyrics" | "grouping" | "tracknumber" | "track" | "discnumber"
-            | "rating" | "credits" | "artist_url" | "url" | "isrc" | "label" => self.set_descriptive(&key, value),
+            "serial"
+            | "serial_number"
+            | "body_serial_number"
+            | "camera_serial_number"
+            | "lens_serial_number"
+            | "identifier"
+            | "device_identifier"
+            | "unique_id" => self.set_device(DeviceField::Serial, value),
+            "owner" | "owner_name" | "camera_owner_name" => {
+                self.set_device(DeviceField::Owner, value)
+            }
+            "date" | "creation_time" | "creationdate" | "creation_date" | "date_recorded"
+            | "date_released" | "date_encoded" | "date_tagged" | "date_time_original"
+            | "datetime" | "year" | "recorded_date" | "date_time" | "time" => {
+                self.set_capture_time(value)
+            }
+            "title" | "name" | "displayname" | "display_name" | "artist" | "author" | "album"
+            | "album_artist" | "albumartist" | "performer" | "composer" | "copyright"
+            | "comment" | "comments" | "description" | "keywords" | "genre" | "information"
+            | "director" | "producer" | "publisher" | "license" | "organization" | "contact"
+            | "subject" | "summary" | "synopsis" | "disclaimer" | "warning" | "collection_name"
+            | "encoded_by" | "lyrics" | "grouping" | "tracknumber" | "track" | "discnumber"
+            | "rating" | "credits" | "artist_url" | "url" | "isrc" | "label" => {
+                self.set_descriptive(&key, value)
+            }
             _ => return false,
         }
         true
@@ -641,7 +711,9 @@ pub fn read(data: &[u8]) -> Metadata {
             audio::read_flac(&data[at..], &mut m);
         }
         audio::read_id3v1(data, &mut m);
-        if !data.starts_with(b"fLaC") && crate::demux::audio::lossless::native_flac_offset(data).is_none() {
+        if !data.starts_with(b"fLaC")
+            && crate::demux::audio::lossless::native_flac_offset(data).is_none()
+        {
             audio::read_mp3_idents(data, &mut m);
         }
     }
@@ -659,7 +731,15 @@ fn round2(v: f64) -> f64 {
 /// offset: `2024-05-01T00:00:00`. A bare year stays a year.
 fn date_only(t: &str) -> Option<String> {
     let b = t.as_bytes();
-    if b.len() >= 10 && b[4] == b'-' && b[7] == b'-' && b[..4].iter().chain(&b[5..7]).chain(&b[8..10]).all(u8::is_ascii_digit) {
+    if b.len() >= 10
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[..4]
+            .iter()
+            .chain(&b[5..7])
+            .chain(&b[8..10])
+            .all(u8::is_ascii_digit)
+    {
         return Some(format!("{}T00:00:00", &t[..10]));
     }
     (b.len() == 4 && b.iter().all(u8::is_ascii_digit)).then(|| t.to_string())
@@ -670,9 +750,27 @@ fn date_only(t: &str) -> Option<String> {
 pub(crate) fn normalize_date(raw: &str) -> String {
     let s = raw.trim();
     let b = s.as_bytes();
-    let digits = |r: std::ops::Range<usize>| b.get(r.clone()).is_some_and(|d| d.iter().all(u8::is_ascii_digit));
-    if b.len() >= 19 && digits(0..4) && digits(5..7) && digits(8..10) && digits(11..13) && digits(14..16) && digits(17..19) {
-        let mut out = format!("{}-{}-{}T{}:{}:{}", &s[0..4], &s[5..7], &s[8..10], &s[11..13], &s[14..16], &s[17..19]);
+    let digits = |r: std::ops::Range<usize>| {
+        b.get(r.clone())
+            .is_some_and(|d| d.iter().all(u8::is_ascii_digit))
+    };
+    if b.len() >= 19
+        && digits(0..4)
+        && digits(5..7)
+        && digits(8..10)
+        && digits(11..13)
+        && digits(14..16)
+        && digits(17..19)
+    {
+        let mut out = format!(
+            "{}-{}-{}T{}:{}:{}",
+            &s[0..4],
+            &s[5..7],
+            &s[8..10],
+            &s[11..13],
+            &s[14..16],
+            &s[17..19]
+        );
         let mut rest = &s[19..];
         if let Some(frac) = rest.strip_prefix('.') {
             let n = frac.bytes().take_while(u8::is_ascii_digit).count();
@@ -689,10 +787,15 @@ pub(crate) fn normalize_date(raw: &str) -> String {
                 if matches!(r.first(), Some(b'+' | b'-')) {
                     let hh = rest.get(1..3);
                     let mm = rest.get(3..).map(|m| m.trim_start_matches(':'));
-                    if let (Some(hh), Some(mm)) = (hh, mm) {
-                        if hh.len() == 2 && mm.len() >= 2 && hh.bytes().chain(mm[..2].bytes()).all(|c| c.is_ascii_digit()) {
-                            out.push_str(&format!("{}{hh}:{}", &rest[..1], &mm[..2]));
-                        }
+                    if let (Some(hh), Some(mm)) = (hh, mm)
+                        && hh.len() == 2
+                        && mm.len() >= 2
+                        && hh
+                            .bytes()
+                            .chain(mm[..2].bytes())
+                            .all(|c| c.is_ascii_digit())
+                    {
+                        out.push_str(&format!("{}{hh}:{}", &rest[..1], &mm[..2]));
                     }
                 }
             }
@@ -712,7 +815,12 @@ pub(crate) fn unix_time(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem / 60 % 60, rem % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        rem / 60 % 60,
+        rem % 60
+    )
 }
 
 /// RFC 3339 (or the `YYYY-MM-DDTHH:MM:SS` prefix of one) as seconds since
@@ -727,7 +835,8 @@ pub(crate) fn parse_unix_time(s: &str) -> Option<i64> {
     let mut secs = days * 86_400 + n(11..13)? * 3600 + n(14..16)? * 60 + n(17..19)?;
     let tail = s[19..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
     if tail.len() >= 6 && matches!(tail.as_bytes()[0], b'+' | b'-') {
-        let off = tail.get(1..3)?.parse::<i64>().ok()? * 3600 + tail.get(4..6)?.parse::<i64>().ok()? * 60;
+        let off =
+            tail.get(1..3)?.parse::<i64>().ok()? * 3600 + tail.get(4..6)?.parse::<i64>().ok()? * 60;
         secs -= if tail.starts_with('+') { off } else { -off };
     }
     Some(secs)
@@ -771,8 +880,16 @@ pub(crate) fn text(bytes: &[u8]) -> String {
 
 pub(crate) fn utf16(bytes: &[u8], big_endian: bool) -> String {
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| if big_endian { u16::from_be_bytes([c[0], c[1]]) } else { u16::from_le_bytes([c[0], c[1]]) })
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| {
+            if big_endian {
+                u16::from_be_bytes([c[0], c[1]])
+            } else {
+                u16::from_le_bytes([c[0], c[1]])
+            }
+        })
         .take_while(|&u| u != 0)
         .collect();
     String::from_utf16_lossy(&units)

@@ -67,13 +67,13 @@ impl BdLpcmHeader {
     /// WAVE order the stored channel it is. `Err` names a layout refused.
     pub(crate) fn channel_map(self) -> Result<(usize, &'static [usize])> {
         Ok(match self.channel_assignment {
-            1 => (2, &[0]),                            // mono (+1 empty)
-            3 => (2, &[0, 1]),                         // L R
-            4 => (4, &[0, 1, 2]),                      // L R C (+1 empty)
-            7 => (4, &[0, 1, 2, 3]),                   // L R Ls Rs
-            8 => (6, &[0, 1, 2, 3, 4]),                // L R C Ls Rs (+1 empty)
-            9 => (6, &[0, 1, 2, 5, 3, 4]),             // L R C Ls Rs LFE
-            11 => (8, &[0, 1, 2, 7, 4, 5, 3, 6]),      // L R C Ls Lrs Rrs Rs LFE
+            1 => (2, &[0]),                       // mono (+1 empty)
+            3 => (2, &[0, 1]),                    // L R
+            4 => (4, &[0, 1, 2]),                 // L R C (+1 empty)
+            7 => (4, &[0, 1, 2, 3]),              // L R Ls Rs
+            8 => (6, &[0, 1, 2, 3, 4]),           // L R C Ls Rs (+1 empty)
+            9 => (6, &[0, 1, 2, 5, 3, 4]),        // L R C Ls Rs LFE
+            11 => (8, &[0, 1, 2, 7, 4, 5, 3, 6]), // L R C Ls Lrs Rrs Rs LFE
             5 => bail!("Blu-ray LPCM 2/1 (L R S) has no WAVE-order layout in rivet"),
             6 => bail!("Blu-ray LPCM 3/1 (L R C S) has no WAVE-order layout in rivet"),
             10 => bail!("Blu-ray LPCM 3/4 without LFE has no WAVE-order layout in rivet"),
@@ -89,19 +89,34 @@ impl BdLpcmHeader {
 /// packet holds a frame. The first frame sets the format; a frame that
 /// changes it ends the track (a stream that changes format part-way is two
 /// streams).
-pub(crate) fn bd_lpcm_from_pes(es: &[u8], pes_starts: &[usize]) -> Result<Option<(AudioTrack, Vec<usize>)>> {
+pub(crate) fn bd_lpcm_from_pes(
+    es: &[u8],
+    pes_starts: &[usize],
+) -> Result<Option<(AudioTrack, Vec<usize>)>> {
     let mut first: Option<(BdLpcmHeader, usize, &'static [usize])> = None;
     let mut samples = Vec::new();
     let mut durations = Vec::new();
     let mut starts = Vec::new();
     for (i, &start) in pes_starts.iter().enumerate() {
-        let end = pes_starts.get(i + 1).copied().unwrap_or(es.len()).min(es.len());
-        let Some(frame) = es.get(start..end) else { continue };
-        let Some(header) = BdLpcmHeader::parse(frame) else { continue };
+        let end = pes_starts
+            .get(i + 1)
+            .copied()
+            .unwrap_or(es.len())
+            .min(es.len());
+        let Some(frame) = es.get(start..end) else {
+            continue;
+        };
+        let Some(header) = BdLpcmHeader::parse(frame) else {
+            continue;
+        };
         let (stored, map) = match first {
             Some((f, stored, map)) => {
                 if (f.channel_assignment, f.sample_rate, f.sample_bytes)
-                    != (header.channel_assignment, header.sample_rate, header.sample_bytes)
+                    != (
+                        header.channel_assignment,
+                        header.sample_rate,
+                        header.sample_bytes,
+                    )
                 {
                     break;
                 }
@@ -138,7 +153,12 @@ pub(crate) fn bd_lpcm_from_pes(es: &[u8], pes_starts: &[usize]) -> Result<Option
     }
     Ok(Some((
         AudioTrack {
-            codec: if header.sample_bytes == 2 { "pcm_s16le" } else { "pcm_s24le" }.into(),
+            codec: if header.sample_bytes == 2 {
+                "pcm_s16le"
+            } else {
+                "pcm_s24le"
+            }
+            .into(),
             samples,
             sample_rate: header.sample_rate,
             channels: map.len() as u16,
@@ -159,7 +179,12 @@ mod tests {
     /// `frames` frames of `stored` channels, channel `c` holding `c + 1`.
     fn frame16(assignment: u8, stored: usize, frames: usize) -> Vec<u8> {
         let payload = frames * stored * 2;
-        let mut f = vec![(payload >> 8) as u8, payload as u8, (assignment << 4) | 1, 1 << 6];
+        let mut f = vec![
+            (payload >> 8) as u8,
+            payload as u8,
+            (assignment << 4) | 1,
+            1 << 6,
+        ];
         for _ in 0..frames {
             for c in 0..stored {
                 f.extend_from_slice(&(c as i16 + 1).to_be_bytes());
@@ -172,9 +197,23 @@ mod tests {
     fn the_header_reads_as_the_format_lays_it_out() {
         // 960 bytes, 3/2+LFE, 96 kHz, 24-bit, start_flag.
         let h = BdLpcmHeader::parse(&[0x03, 0xC0, 0x94, 0xE0]).unwrap();
-        assert_eq!(h, BdLpcmHeader { payload: 960, channel_assignment: 9, sample_rate: 96_000, sample_bytes: 3 });
-        assert!(BdLpcmHeader::parse(&[0, 0, 0x32, 0x40]).is_none(), "sampling_frequency 2 is reserved");
-        assert!(BdLpcmHeader::parse(&[0, 0, 0x31, 0x00]).is_none(), "bits_per_sample 0 is reserved");
+        assert_eq!(
+            h,
+            BdLpcmHeader {
+                payload: 960,
+                channel_assignment: 9,
+                sample_rate: 96_000,
+                sample_bytes: 3
+            }
+        );
+        assert!(
+            BdLpcmHeader::parse(&[0, 0, 0x32, 0x40]).is_none(),
+            "sampling_frequency 2 is reserved"
+        );
+        assert!(
+            BdLpcmHeader::parse(&[0, 0, 0x31, 0x00]).is_none(),
+            "bits_per_sample 0 is reserved"
+        );
     }
 
     #[test]
@@ -182,15 +221,31 @@ mod tests {
         // 3/2+LFE stored L R C Ls Rs LFE (1..6) → L R C LFE Ls Rs.
         let f = frame16(9, 6, 2);
         let (track, starts) = bd_lpcm_from_pes(&f, &[0]).unwrap().unwrap();
-        assert_eq!((track.codec.as_str(), track.channels, track.sample_rate), ("pcm_s16le", 6, 48_000));
-        let values: Vec<i16> = track.samples[0].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        assert_eq!(
+            (track.codec.as_str(), track.channels, track.sample_rate),
+            ("pcm_s16le", 6, 48_000)
+        );
+        let values: Vec<i16> = track.samples[0]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
         assert_eq!(values, [1, 2, 3, 6, 4, 5, 1, 2, 3, 6, 4, 5]);
-        assert_eq!((track.durations.as_slice(), starts.as_slice()), (&[2u32][..], &[0usize][..]));
+        assert_eq!(
+            (track.durations.as_slice(), starts.as_slice()),
+            (&[2u32][..], &[0usize][..])
+        );
 
         // 3/4+LFE stored L R C Ls Lrs Rrs Rs LFE → L R C LFE Lrs Rrs Ls Rs.
         let f = frame16(11, 8, 1);
         let (track, _) = bd_lpcm_from_pes(&f, &[0]).unwrap().unwrap();
-        let values: Vec<i16> = track.samples[0].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        let values: Vec<i16> = track.samples[0]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
         assert_eq!(values, [1, 2, 3, 8, 5, 6, 4, 7]);
     }
 

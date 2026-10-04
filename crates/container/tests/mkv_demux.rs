@@ -13,8 +13,8 @@
 //!   * Floats: 8 bytes IEEE-754 big-endian.
 //!   * Strings: raw UTF-8 bytes, no terminator.
 
-use frame::{ColorSpace, TransferFn};
 use container::demux::{self, demux_mkv, probe_mkv_color_info};
+use frame::{ColorSpace, TransferFn};
 
 /// Big-endian encode an unsigned using the minimum bytes (1..=8), or
 /// 1 byte of `0x00` when the value is zero (matches Matroska practice).
@@ -404,13 +404,14 @@ fn mkv_bitrate_from_tag_or_computed() {
 
 /// Build a minimal avcC with exactly one SPS and one PPS, length_size=4.
 fn make_minimal_avcc(sps: &[u8], pps: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.push(0x01); // configurationVersion
-    out.push(0x42); // profile
-    out.push(0x00); // compat
-    out.push(0x1e); // level
-    out.push(0xff); // reserved(6)=1|lengthSizeMinusOne=3
-    out.push(0xe1); // reserved(3)=7|num_sps=1
+    let mut out = vec![
+        0x01, // configurationVersion
+        0x42, // profile
+        0x00, // compat
+        0x1e, // level
+        0xff, // reserved(6)=1|lengthSizeMinusOne=3
+        0xe1, // reserved(3)=7|num_sps=1
+    ];
     out.extend_from_slice(&(sps.len() as u16).to_be_bytes());
     out.extend_from_slice(sps);
     out.push(0x01); // num_pps=1

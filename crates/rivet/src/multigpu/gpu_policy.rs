@@ -124,7 +124,11 @@ pub fn software_pool_plan(parallelism: usize, slots_override: Option<usize>) -> 
         None => (parallelism / SOFTWARE_THREADS_PER_SLOT).clamp(1, MAX_SOFTWARE_SLOTS),
     };
     let threads = (parallelism / slots).max(1);
-    SoftwarePoolPlan { slots, threads, parallelism }
+    SoftwarePoolPlan {
+        slots,
+        threads,
+        parallelism,
+    }
 }
 
 /// [`software_pool_plan`] for this host: this job's share of the runtime's
@@ -133,7 +137,9 @@ pub fn software_pool_plan(parallelism: usize, slots_override: Option<usize>) -> 
 /// number.
 pub fn host_software_pool_plan() -> SoftwarePoolPlan {
     let parallelism = crate::thread_budget::per_job();
-    let over = std::env::var(SOFTWARE_SLOTS_ENV).ok().and_then(|v| v.trim().parse::<usize>().ok());
+    let over = std::env::var(SOFTWARE_SLOTS_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok());
     software_pool_plan(parallelism, over)
 }
 
@@ -141,7 +147,10 @@ pub fn host_software_pool_plan() -> SoftwarePoolPlan {
 /// gets nothing rather than software slots when nothing it named can encode
 /// the codec.
 pub(crate) fn pins_silicon(policy: EncodePolicy) -> bool {
-    matches!(policy, EncodePolicy::SingleGpu(Some(_)) | EncodePolicy::Family(_))
+    matches!(
+        policy,
+        EncodePolicy::SingleGpu(Some(_)) | EncodePolicy::Family(_)
+    )
 }
 
 /// The `--encode` spelling of a policy, for a refusal that quotes the flag
@@ -203,7 +212,10 @@ pub(crate) fn host_verdicts(codec: VideoCodec, ten_bit: bool) -> Vec<CardVerdict
     type Answer = Arc<OnceLock<Vec<CardVerdict>>>;
     static ANSWERS: OnceLock<Mutex<HashMap<(VideoCodec, bool), Answer>>> = OnceLock::new();
     let answer = {
-        let mut answers = ANSWERS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+        let mut answers = ANSWERS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         Arc::clone(answers.entry((codec, ten_bit)).or_default())
     };
     answer
@@ -265,7 +277,11 @@ pub(crate) fn empty_pool_reason(
     software_depth: Option<u8>,
 ) -> String {
     let name = codec_name(codec);
-    let codec_s = if ten_bit { format!("10-bit {name}") } else { name.to_string() };
+    let codec_s = if ten_bit {
+        format!("10-bit {name}")
+    } else {
+        name.to_string()
+    };
     let software = software_depth.is_some_and(|bits| !ten_bit || bits >= 10);
     let flag = policy_flag(policy);
 
@@ -281,7 +297,10 @@ pub(crate) fn empty_pool_reason(
             }
         }
         EncodePolicy::SingleGpu(Some(idx)) => match cards.iter().find(|c| c.device.index == idx) {
-            Some(c) => format!("gpu {idx} ({}) cannot encode {codec_s} in this build", c.device.name),
+            Some(c) => format!(
+                "gpu {idx} ({}) cannot encode {codec_s} in this build",
+                c.device.name
+            ),
             None => format!("there is no gpu {idx}"),
         },
         EncodePolicy::AllGpus | EncodePolicy::PerRung | EncodePolicy::SingleGpu(None) => {
@@ -315,7 +334,11 @@ pub(crate) fn empty_pool_reason(
                     c.device.name,
                     c.device.index,
                     codec::gpu::manufacturer_label(c.device.vendor),
-                    if c.capable { format!("encodes {codec_s}") } else { format!("cannot encode {codec_s} in this build") }
+                    if c.capable {
+                        format!("encodes {codec_s}")
+                    } else {
+                        format!("cannot encode {codec_s} in this build")
+                    }
                 )
             })
             .collect();
@@ -326,7 +349,10 @@ pub(crate) fn empty_pool_reason(
     let capable: Vec<&CardVerdict> = cards.iter().filter(|c| c.capable).collect();
     let mut fixes: Vec<String> = Vec::new();
     if let Some(first) = capable.first() {
-        let mut families: Vec<&'static str> = capable.iter().map(|c| vendor_flag(c.device.vendor)).collect();
+        let mut families: Vec<&'static str> = capable
+            .iter()
+            .map(|c| vendor_flag(c.device.vendor))
+            .collect();
         families.dedup();
         fixes.push(format!(
             "pin a card that can (`--encode {}` or `--encode gpu:{}`) or drop the pin (`--encode all`, the default) to use them",
@@ -361,7 +387,10 @@ pub(crate) fn empty_pool_reason(
         ));
     }
 
-    format!("no encoder matches `--encode {flag}` for {codec_s} on this host: {why}. {present} Fix: {}.", fixes.join("; "))
+    format!(
+        "no encoder matches `--encode {flag}` for {codec_s} on this host: {why}. {present} Fix: {}.",
+        fixes.join("; ")
+    )
 }
 
 /// The refusal for a policy that has nothing to encode `codec` on, naming
@@ -378,7 +407,12 @@ pub(crate) fn empty_pool_error(
 }
 
 /// [`empty_pool_error`] for an output known only by whether it is 10-bit.
-fn empty_pool_error_at(host: &HostCards, policy: EncodePolicy, codec: VideoCodec, ten_bit: bool) -> anyhow::Error {
+fn empty_pool_error_at(
+    host: &HostCards,
+    policy: EncodePolicy,
+    codec: VideoCodec,
+    ten_bit: bool,
+) -> anyhow::Error {
     let cards = host.verdicts(codec, ten_bit);
     let reason = empty_pool_reason(policy, codec, ten_bit, &cards, software_depth(codec));
     tracing::warn!(?codec, ten_bit, encode = ?policy, reason = %reason, "the encode pool is empty; refusing");
@@ -418,8 +452,11 @@ pub(crate) fn check_rate_pool(
     {
         return Ok(());
     }
-    let cards: Vec<String> =
-        pool.snapshot_leases().iter().map(|c| format!("{} (gpu {})", c.name, c.index)).collect();
+    let cards: Vec<String> = pool
+        .snapshot_leases()
+        .iter()
+        .map(|c| format!("{} (gpu {})", c.name, c.index))
+        .collect();
     let codec = spec.video_codec.codec();
     let reason = rate_pool_reason(
         &label,
@@ -452,7 +489,10 @@ fn check_constant_rate_pool(
     } else if pool.is_software() {
         let backend = software_backend_for(codec);
         vec![(
-            backend.map_or_else(|| format!("no software {} encoder", codec_name(codec)), |b| backend_label(b, codec)),
+            backend.map_or_else(
+                || format!("no software {} encoder", codec_name(codec)),
+                |b| backend_label(b, codec),
+            ),
             backend,
         )]
     } else {
@@ -464,7 +504,15 @@ fn check_constant_rate_pool(
                     GpuVendor::Nvidia => EncoderBackend::Nvenc,
                     GpuVendor::Amd => EncoderBackend::Amf,
                 };
-                (format!("{} (gpu {}, {})", c.name, c.index, backend_label(backend, codec)), Some(backend))
+                (
+                    format!(
+                        "{} (gpu {}, {})",
+                        c.name,
+                        c.index,
+                        backend_label(backend, codec)
+                    ),
+                    Some(backend),
+                )
             })
             .collect()
     };
@@ -488,18 +536,32 @@ fn backend_label(backend: codec::encode::EncoderBackend, codec: VideoCodec) -> S
         EncoderBackend::Qsv => "QSV".into(),
         EncoderBackend::Nvenc => "NVENC".into(),
         EncoderBackend::Amf => "AMF".into(),
-        EncoderBackend::H26x => format!("the native software {} encoder (`h26x`)", codec_name(codec)),
+        EncoderBackend::H26x => {
+            format!("the native software {} encoder (`h26x`)", codec_name(codec))
+        }
         EncoderBackend::Av1 => "rivet's own software AV1 encoder (`av1`)".into(),
-        other => format!("rivet's own {} encoder (`{}`)", codec_name(codec), crate::spec::encode_backend_name(other)),
+        other => format!(
+            "rivet's own {} encoder (`{}`)",
+            codec_name(codec),
+            crate::spec::encode_backend_name(other)
+        ),
     }
 }
 
 /// Why a constant-rate rung (`label` at `bps`, `None` when it takes the
 /// default rate) cannot run on `refusing`, and what would run it. Pure.
-pub(crate) fn constant_rate_pool_reason(label: &str, bps: Option<u32>, codec: VideoCodec, refusing: &[String]) -> String {
+pub(crate) fn constant_rate_pool_reason(
+    label: &str,
+    bps: Option<u32>,
+    codec: VideoCodec,
+    refusing: &[String],
+) -> String {
     let rate = bps.map_or_else(|| "the default rate".to_string(), |b| format!("{b} bit/s"));
     let (why, others) = match codec {
-        VideoCodec::Av1 => ("the software AV1 encoder targets an average bitrate, but not a constant one", "QSV, NVENC and AMF"),
+        VideoCodec::Av1 => (
+            "the software AV1 encoder targets an average bitrate, but not a constant one",
+            "QSV, NVENC and AMF",
+        ),
         VideoCodec::H264 | VideoCodec::H265 => (
             "this build has no encoder here that codes one",
             "QSV, NVENC, AMF and the native software encoder (`--features h26x-fallback`)",
@@ -508,7 +570,10 @@ pub(crate) fn constant_rate_pool_reason(label: &str, bps: Option<u32>, codec: Vi
             "rivet's own VP9 encoder targets an average bitrate, but not a constant one",
             "QSV on an Intel card with VP9 encode (Arc A-series, Meteor Lake)",
         ),
-        _ => ("rivet's own encoder for it codes none", "no encoder rivet has"),
+        _ => (
+            "rivet's own encoder for it codes none",
+            "no encoder rivet has",
+        ),
     };
     format!(
         "rung '{label}' is coded at a constant rate (rate=cbr, {rate}), and this job's encoders do not code one: \
@@ -547,7 +612,9 @@ pub(crate) fn rate_pool_reason(
              without the vendor features — the software pool takes the job only when no card can encode {name}"
         );
         if single_file {
-            fix.push_str(&format!(", or pin the software encoder by name (`TRANSCODE_ENCODER_BACKEND={backend}`)"));
+            fix.push_str(&format!(
+                ", or pin the software encoder by name (`TRANSCODE_ENCODER_BACKEND={backend}`)"
+            ));
         }
         fixes.push(fix);
     } else {
@@ -658,31 +725,55 @@ pub fn gpu_pool_for_policy(
 /// on the software pool rather than being refused for the cards it would
 /// otherwise lease — what it did before QSV encoded VP9.
 pub fn software_only(spec: &crate::spec::OutputSpec) -> bool {
-    spec.video_codec.codec() == VideoCodec::Vp9 && spec.average_rate_rung().is_some() && !pins_silicon(spec.encode_policy)
+    spec.video_codec.codec() == VideoCodec::Vp9
+        && spec.average_rate_rung().is_some()
+        && !pins_silicon(spec.encode_policy)
 }
 
 /// [`gpu_pool_for_policy`] for a job: the software pool for a job that is
 /// [`software_only`].
-pub fn gpu_pool_for_job(spec: &crate::spec::OutputSpec, output_pixel_format: PixelFormat) -> Result<Arc<GpuPool>> {
+pub fn gpu_pool_for_job(
+    spec: &crate::spec::OutputSpec,
+    output_pixel_format: PixelFormat,
+) -> Result<Arc<GpuPool>> {
     if software_only(spec) {
         return software_pool(spec);
     }
-    gpu_pool_for_policy(spec.encode_policy, spec.video_codec.codec(), output_pixel_format)
+    gpu_pool_for_policy(
+        spec.encode_policy,
+        spec.video_codec.codec(),
+        output_pixel_format,
+    )
 }
 
 /// [`gpu_pool_for_serial`] for a job: the software pool for a job that is
 /// [`software_only`].
-pub fn gpu_pool_for_serial_job(spec: &crate::spec::OutputSpec, output_pixel_format: PixelFormat) -> Result<Arc<GpuPool>> {
+pub fn gpu_pool_for_serial_job(
+    spec: &crate::spec::OutputSpec,
+    output_pixel_format: PixelFormat,
+) -> Result<Arc<GpuPool>> {
     if software_only(spec) {
         return software_pool(spec);
     }
-    gpu_pool_for_serial(spec.encode_policy, spec.video_codec.codec(), output_pixel_format)
+    gpu_pool_for_serial(
+        spec.encode_policy,
+        spec.video_codec.codec(),
+        output_pixel_format,
+    )
 }
 
 fn software_pool(spec: &crate::spec::OutputSpec) -> Result<Arc<GpuPool>> {
     let codec = spec.video_codec.codec();
-    tracing::info!(?codec, "an average-rate VP9 job: rivet's own VP9 encoder, whatever cards the host has");
-    let pool = pool_for(spec.encode_policy, codec, Vec::new(), Some(host_software_pool_plan()));
+    tracing::info!(
+        ?codec,
+        "an average-rate VP9 job: rivet's own VP9 encoder, whatever cards the host has"
+    );
+    let pool = pool_for(
+        spec.encode_policy,
+        codec,
+        Vec::new(),
+        Some(host_software_pool_plan()),
+    );
     Ok(Arc::new(pool))
 }
 
@@ -700,7 +791,11 @@ pub fn gpu_pool_for_serial(
     codec: VideoCodec,
     output_pixel_format: PixelFormat,
 ) -> Result<Arc<GpuPool>> {
-    pool_at(policy, codec, serial_probe_is_ten_bit(policy, output_pixel_format))
+    pool_at(
+        policy,
+        codec,
+        serial_probe_is_ten_bit(policy, output_pixel_format),
+    )
 }
 
 /// Whether the serial pool judges the cards at 10 bits: only for a 10-bit
@@ -737,7 +832,12 @@ fn pool_at(policy: EncodePolicy, codec: VideoCodec, ten_bit: bool) -> Result<Arc
     let software = software_reaches(codec, ten_bit).then(host_software_pool_plan);
     let pool = pool_for(policy, codec, capable, software);
     if pool.capacity() == 0 {
-        return Err(empty_pool_error_at(&HostCards::Detected, policy, codec, ten_bit));
+        return Err(empty_pool_error_at(
+            &HostCards::Detected,
+            policy,
+            codec,
+            ten_bit,
+        ));
     }
     Ok(Arc::new(pool))
 }
@@ -773,8 +873,10 @@ pub fn serial_target(policy: EncodePolicy, pool: &GpuPool) -> (Option<u32>, Opti
     }
     let slots = pool.snapshot_leases();
     let fastest = || {
-        let keys: Vec<super::speed::DeviceKey> =
-            slots.iter().map(|s| super::speed::DeviceKey::Gpu(s.index)).collect();
+        let keys: Vec<super::speed::DeviceKey> = slots
+            .iter()
+            .map(|s| super::speed::DeviceKey::Gpu(s.index))
+            .collect();
         super::speed::fastest_of(super::speed::ANY_ENCODE_ROLE, &keys).map(|i| &slots[i])
     };
     if pins_silicon(policy) {
@@ -793,7 +895,10 @@ pub fn serial_target(policy: EncodePolicy, pool: &GpuPool) -> (Option<u32>, Opti
 /// the decode pump to a device consistent with the policy (so decode honors a
 /// `Family` / `SingleGpu` constraint, not just encode).
 pub fn policy_gpu_indices(policy: EncodePolicy) -> Vec<u32> {
-    select_gpus_for_policy(policy).into_iter().map(|g| g.index).collect()
+    select_gpus_for_policy(policy)
+        .into_iter()
+        .map(|g| g.index)
+        .collect()
 }
 
 /// The GPU index to pin a *serial* (single-GPU) encode/decode to under a
@@ -836,33 +941,99 @@ mod tests {
     #[test]
     fn plan_divides_the_machine_once() {
         // 32 cores → 8 slots × 4 threads: covers the machine exactly once.
-        assert_eq!(plan32(), SoftwarePoolPlan { slots: 8, threads: 4, parallelism: 32 });
-        assert_eq!(software_pool_plan(16, None), SoftwarePoolPlan { slots: 4, threads: 4, parallelism: 16 });
+        assert_eq!(
+            plan32(),
+            SoftwarePoolPlan {
+                slots: 8,
+                threads: 4,
+                parallelism: 32
+            }
+        );
+        assert_eq!(
+            software_pool_plan(16, None),
+            SoftwarePoolPlan {
+                slots: 4,
+                threads: 4,
+                parallelism: 16
+            }
+        );
         // A wider box gets wider encoders, not more of them.
-        assert_eq!(software_pool_plan(64, None), SoftwarePoolPlan { slots: 8, threads: 8, parallelism: 64 });
+        assert_eq!(
+            software_pool_plan(64, None),
+            SoftwarePoolPlan {
+                slots: 8,
+                threads: 8,
+                parallelism: 64
+            }
+        );
         for p in [1usize, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128] {
             let plan = software_pool_plan(p, None);
             assert!(plan.slots >= 1 && plan.threads >= 1, "{p}: {plan:?}");
-            assert!(plan.slots * plan.threads <= p, "{p}: oversubscribed: {plan:?}");
+            assert!(
+                plan.slots * plan.threads <= p,
+                "{p}: oversubscribed: {plan:?}"
+            );
             assert!(plan.slots <= MAX_SOFTWARE_SLOTS, "{p}: {plan:?}");
         }
     }
 
     #[test]
     fn small_machines_get_one_slot_with_every_core() {
-        assert_eq!(software_pool_plan(1, None), SoftwarePoolPlan { slots: 1, threads: 1, parallelism: 1 });
-        assert_eq!(software_pool_plan(4, None), SoftwarePoolPlan { slots: 1, threads: 4, parallelism: 4 });
-        assert_eq!(software_pool_plan(6, None), SoftwarePoolPlan { slots: 1, threads: 6, parallelism: 6 });
+        assert_eq!(
+            software_pool_plan(1, None),
+            SoftwarePoolPlan {
+                slots: 1,
+                threads: 1,
+                parallelism: 1
+            }
+        );
+        assert_eq!(
+            software_pool_plan(4, None),
+            SoftwarePoolPlan {
+                slots: 1,
+                threads: 4,
+                parallelism: 4
+            }
+        );
+        assert_eq!(
+            software_pool_plan(6, None),
+            SoftwarePoolPlan {
+                slots: 1,
+                threads: 6,
+                parallelism: 6
+            }
+        );
         // Zero parallelism is nonsense; treated as one core.
         assert_eq!(software_pool_plan(0, None).slots, 1);
     }
 
     #[test]
     fn the_override_replaces_the_slot_count_and_is_clamped() {
-        assert_eq!(software_pool_plan(32, Some(1)), SoftwarePoolPlan { slots: 1, threads: 32, parallelism: 32 });
-        assert_eq!(software_pool_plan(32, Some(16)), SoftwarePoolPlan { slots: 16, threads: 2, parallelism: 32 });
+        assert_eq!(
+            software_pool_plan(32, Some(1)),
+            SoftwarePoolPlan {
+                slots: 1,
+                threads: 32,
+                parallelism: 32
+            }
+        );
+        assert_eq!(
+            software_pool_plan(32, Some(16)),
+            SoftwarePoolPlan {
+                slots: 16,
+                threads: 2,
+                parallelism: 32
+            }
+        );
         // More slots than cores: clamped so every slot keeps a thread.
-        assert_eq!(software_pool_plan(32, Some(500)), SoftwarePoolPlan { slots: 32, threads: 1, parallelism: 32 });
+        assert_eq!(
+            software_pool_plan(32, Some(500)),
+            SoftwarePoolPlan {
+                slots: 32,
+                threads: 1,
+                parallelism: 32
+            }
+        );
         // Zero: clamped up to one.
         assert_eq!(software_pool_plan(32, Some(0)).slots, 1);
     }
@@ -871,12 +1042,25 @@ mod tests {
 
     #[test]
     fn zero_gpus_with_software_available_gets_a_software_pool() {
-        let pool = pool_for(EncodePolicy::AllGpus, VideoCodec::H264, Vec::new(), Some(plan32()));
-        assert!(pool.is_software(), "the ladder must get software slots on a CPU-only host");
+        let pool = pool_for(
+            EncodePolicy::AllGpus,
+            VideoCodec::H264,
+            Vec::new(),
+            Some(plan32()),
+        );
+        assert!(
+            pool.is_software(),
+            "the ladder must get software slots on a CPU-only host"
+        );
         assert_eq!(pool.capacity(), 8);
         assert_eq!(pool.software_threads(), Some(4));
         // `PerRung` spreads too.
-        let pool = pool_for(EncodePolicy::PerRung, VideoCodec::Av1, Vec::new(), Some(plan32()));
+        let pool = pool_for(
+            EncodePolicy::PerRung,
+            VideoCodec::Av1,
+            Vec::new(),
+            Some(plan32()),
+        );
         assert!(pool.is_software());
         assert_eq!(pool.capacity(), 8);
     }
@@ -885,14 +1069,23 @@ mod tests {
     fn zero_gpus_without_software_gets_an_empty_pool() {
         let pool = pool_for(EncodePolicy::AllGpus, VideoCodec::H264, Vec::new(), None);
         assert!(!pool.is_software());
-        assert_eq!(pool.capacity(), 0, "nothing to hand out: the run must fail, by name");
+        assert_eq!(
+            pool.capacity(),
+            0,
+            "nothing to hand out: the run must fail, by name"
+        );
     }
 
     #[test]
     fn single_unpinned_keeps_its_meaning_on_the_cpu() {
         // `--encode single`: one encoder at a time, so one slot — with the
         // whole machine, since nothing else is running.
-        let pool = pool_for(EncodePolicy::SingleGpu(None), VideoCodec::H265, Vec::new(), Some(plan32()));
+        let pool = pool_for(
+            EncodePolicy::SingleGpu(None),
+            VideoCodec::H265,
+            Vec::new(),
+            Some(plan32()),
+        );
         assert!(pool.is_software());
         assert_eq!(pool.capacity(), 1);
         assert_eq!(pool.software_threads(), Some(32));
@@ -900,7 +1093,10 @@ mod tests {
 
     #[test]
     fn a_policy_that_pins_silicon_never_falls_to_software() {
-        for policy in [EncodePolicy::SingleGpu(Some(0)), EncodePolicy::Family(GpuFamily::Nvidia)] {
+        for policy in [
+            EncodePolicy::SingleGpu(Some(0)),
+            EncodePolicy::Family(GpuFamily::Nvidia),
+        ] {
             let pool = pool_for(policy, VideoCodec::H264, Vec::new(), Some(plan32()));
             assert!(!pool.is_software(), "{policy:?} asked for silicon by name");
             assert_eq!(pool.capacity(), 0, "{policy:?}");
@@ -926,13 +1122,19 @@ mod tests {
     // ---- the refusal ----
 
     fn verdict(index: u32, vendor: GpuVendor, capable: bool) -> CardVerdict {
-        CardVerdict { device: synth(index, vendor), capable }
+        CardVerdict {
+            device: synth(index, vendor),
+            capable,
+        }
     }
 
     /// This host, as the bug was found on it: an NVIDIA card that encodes
     /// H.264, an AMD iGPU the build cannot drive, no Intel anywhere.
     fn nvidia_plus_amd() -> Vec<CardVerdict> {
-        vec![verdict(0, GpuVendor::Nvidia, true), verdict(1, GpuVendor::Amd, false)]
+        vec![
+            verdict(0, GpuVendor::Nvidia, true),
+            verdict(1, GpuVendor::Amd, false),
+        ]
     }
 
     /// The bug's own shape: a family pin that names silicon the host does
@@ -941,12 +1143,24 @@ mod tests {
     /// card that could serve, and the software pool.
     #[test]
     fn a_family_that_is_absent_is_refused_by_name() {
-        let s = empty_pool_reason(EncodePolicy::Family(GpuFamily::Intel), VideoCodec::H264, false, &nvidia_plus_amd(), Some(10));
+        let s = empty_pool_reason(
+            EncodePolicy::Family(GpuFamily::Intel),
+            VideoCodec::H264,
+            false,
+            &nvidia_plus_amd(),
+            Some(10),
+        );
         assert!(s.starts_with("no encoder matches `--encode family:intel` for H.264 on this host: no Intel GPU is present."), "{s}");
         assert!(s.contains("Present: synth-0 (gpu 0, NVIDIA, encodes H.264); synth-1 (gpu 1, AMD, cannot encode H.264 in this build)."), "{s}");
-        assert!(s.contains("`--encode family:nvidia` or `--encode gpu:0`"), "{s}");
+        assert!(
+            s.contains("`--encode family:nvidia` or `--encode gpu:0`"),
+            "{s}"
+        );
         assert!(s.contains("`--encode all`, the default"), "{s}");
-        assert!(s.contains("software H.264 encoder (`h26x-fallback`)"), "{s}");
+        assert!(
+            s.contains("software H.264 encoder (`h26x-fallback`)"),
+            "{s}"
+        );
         assert!(s.contains("CUDA_VISIBLE_DEVICES=-1"), "{s}");
     }
 
@@ -954,21 +1168,54 @@ mod tests {
     /// (an AMD iGPU without the `amd` feature; an Ampere card asked for AV1).
     #[test]
     fn a_family_that_is_present_but_incapable_says_so() {
-        let s = empty_pool_reason(EncodePolicy::Family(GpuFamily::Amd), VideoCodec::Av1, false, &nvidia_plus_amd(), None);
+        let s = empty_pool_reason(
+            EncodePolicy::Family(GpuFamily::Amd),
+            VideoCodec::Av1,
+            false,
+            &nvidia_plus_amd(),
+            None,
+        );
         assert!(s.contains("`--encode family:amd` for AV1"), "{s}");
-        assert!(s.contains("the AMD GPU(s) present cannot encode AV1 in this build"), "{s}");
-        assert!(s.contains("rebuild with `--features av1-sw-fallback`"), "{s}");
+        assert!(
+            s.contains("the AMD GPU(s) present cannot encode AV1 in this build"),
+            "{s}"
+        );
+        assert!(
+            s.contains("rebuild with `--features av1-sw-fallback`"),
+            "{s}"
+        );
         // Only the NVIDIA card is offered, and it is offered once.
-        assert!(s.contains("`--encode family:nvidia` or `--encode gpu:0`"), "{s}");
+        assert!(
+            s.contains("`--encode family:nvidia` or `--encode gpu:0`"),
+            "{s}"
+        );
         assert_eq!(s.matches("family:nvidia").count(), 1, "{s}");
     }
 
     #[test]
     fn a_pinned_index_that_is_absent_or_incapable_is_named() {
-        let s = empty_pool_reason(EncodePolicy::SingleGpu(Some(7)), VideoCodec::H265, false, &nvidia_plus_amd(), Some(10));
-        assert!(s.contains("`--encode gpu:7` for H.265 on this host: there is no gpu 7."), "{s}");
-        let s = empty_pool_reason(EncodePolicy::SingleGpu(Some(1)), VideoCodec::H265, false, &nvidia_plus_amd(), Some(10));
-        assert!(s.contains("gpu 1 (synth-1) cannot encode H.265 in this build."), "{s}");
+        let s = empty_pool_reason(
+            EncodePolicy::SingleGpu(Some(7)),
+            VideoCodec::H265,
+            false,
+            &nvidia_plus_amd(),
+            Some(10),
+        );
+        assert!(
+            s.contains("`--encode gpu:7` for H.265 on this host: there is no gpu 7."),
+            "{s}"
+        );
+        let s = empty_pool_reason(
+            EncodePolicy::SingleGpu(Some(1)),
+            VideoCodec::H265,
+            false,
+            &nvidia_plus_amd(),
+            Some(10),
+        );
+        assert!(
+            s.contains("gpu 1 (synth-1) cannot encode H.265 in this build."),
+            "{s}"
+        );
     }
 
     /// No cards at all and no software tier: the only fix is a build.
@@ -989,9 +1236,23 @@ mod tests {
     #[test]
     fn a_pin_with_nothing_capable_and_software_available_says_drop_the_pin() {
         let cards = vec![verdict(0, GpuVendor::Nvidia, false)];
-        let s = empty_pool_reason(EncodePolicy::Family(GpuFamily::Nvidia), VideoCodec::Av1, false, &cards, Some(8));
-        assert!(s.contains("the NVIDIA GPU(s) present cannot encode AV1 in this build"), "{s}");
-        assert!(s.contains("takes the job when no card is pinned: drop the pin (`--encode all`, the default)"), "{s}");
+        let s = empty_pool_reason(
+            EncodePolicy::Family(GpuFamily::Nvidia),
+            VideoCodec::Av1,
+            false,
+            &cards,
+            Some(8),
+        );
+        assert!(
+            s.contains("the NVIDIA GPU(s) present cannot encode AV1 in this build"),
+            "{s}"
+        );
+        assert!(
+            s.contains(
+                "takes the job when no card is pinned: drop the pin (`--encode all`, the default)"
+            ),
+            "{s}"
+        );
         assert!(!s.contains("CUDA_VISIBLE_DEVICES"), "{s}");
         assert!(!s.contains("pin a card that can"), "{s}");
     }
@@ -1026,12 +1287,31 @@ mod tests {
             eprintln!("every vendor is present on this host; nothing to refuse");
             return;
         };
-        let err = match gpu_pool_for_policy(EncodePolicy::Family(fam), VideoCodec::H264, PixelFormat::Yuv420p) {
-            Ok(pool) => panic!("family {fam:?} is absent yet the builder handed out a pool of {}", pool.capacity()),
+        let err = match gpu_pool_for_policy(
+            EncodePolicy::Family(fam),
+            VideoCodec::H264,
+            PixelFormat::Yuv420p,
+        ) {
+            Ok(pool) => panic!(
+                "family {fam:?} is absent yet the builder handed out a pool of {}",
+                pool.capacity()
+            ),
             Err(e) => format!("{e:#}"),
         };
-        assert!(err.contains(&format!("no encoder matches `--encode family:{}` for H.264", family_flag(fam))), "{err}");
-        assert!(err.contains(&format!("no {} GPU is present", codec::gpu::manufacturer_label(policy_vendor(fam)))), "{err}");
+        assert!(
+            err.contains(&format!(
+                "no encoder matches `--encode family:{}` for H.264",
+                family_flag(fam)
+            )),
+            "{err}"
+        );
+        assert!(
+            err.contains(&format!(
+                "no {} GPU is present",
+                codec::gpu::manufacturer_label(policy_vendor(fam))
+            )),
+            "{err}"
+        );
     }
 
     // ---- the output's depth ----
@@ -1044,9 +1324,20 @@ mod tests {
     #[test]
     fn a_ten_bit_output_is_named_and_the_compiled_in_software_tier_offered() {
         let cards = vec![verdict(0, GpuVendor::Nvidia, false)];
-        let s = empty_pool_reason(EncodePolicy::Family(GpuFamily::Nvidia), VideoCodec::H264, true, &cards, Some(10));
+        let s = empty_pool_reason(
+            EncodePolicy::Family(GpuFamily::Nvidia),
+            VideoCodec::H264,
+            true,
+            &cards,
+            Some(10),
+        );
         assert!(s.starts_with("no encoder matches `--encode family:nvidia` for 10-bit H.264 on this host: the NVIDIA GPU(s) present cannot encode 10-bit H.264 in this build."), "{s}");
-        assert!(s.contains("Present: synth-0 (gpu 0, NVIDIA, cannot encode 10-bit H.264 in this build)."), "{s}");
+        assert!(
+            s.contains(
+                "Present: synth-0 (gpu 0, NVIDIA, cannot encode 10-bit H.264 in this build)."
+            ),
+            "{s}"
+        );
         assert!(s.contains("the software 10-bit H.264 encoder (`h26x-fallback`) is compiled in and takes the job when no card is pinned"), "{s}");
         assert!(!s.contains("rebuild with"), "{s}");
     }
@@ -1058,12 +1349,23 @@ mod tests {
     #[test]
     fn a_software_tier_short_of_the_depth_is_named_not_rebuilt() {
         let cards = vec![verdict(0, GpuVendor::Nvidia, false)];
-        let s = empty_pool_reason(EncodePolicy::AllGpus, VideoCodec::Av1, true, &cards, Some(8));
+        let s = empty_pool_reason(
+            EncodePolicy::AllGpus,
+            VideoCodec::Av1,
+            true,
+            &cards,
+            Some(8),
+        );
         assert!(s.contains("no GPU on this host can encode 10-bit AV1 in this build, and the build's software AV1 encoder is 8-bit."), "{s}");
         assert!(s.contains("this build's software AV1 encoder (`av1-sw-fallback`) is 8-bit: `--pixel-format 8bit` encodes the job at 8 bits"), "{s}");
         assert!(!s.contains("rebuild with"), "{s}");
         let s = empty_pool_reason(EncodePolicy::AllGpus, VideoCodec::Av1, true, &cards, None);
-        assert!(s.contains("rebuild with `--features av1-sw-fallback` for a software 10-bit AV1 encoder"), "{s}");
+        assert!(
+            s.contains(
+                "rebuild with `--features av1-sw-fallback` for a software 10-bit AV1 encoder"
+            ),
+            "{s}"
+        );
     }
 
     /// The serial pool is judged at 10 bits only for a policy that pins
@@ -1074,12 +1376,28 @@ mod tests {
     fn only_a_pinned_serial_job_is_judged_at_ten_bits() {
         assert!(is_ten_bit(PixelFormat::Yuv420p10le));
         assert!(!is_ten_bit(PixelFormat::Yuv420p));
-        for policy in [EncodePolicy::AllGpus, EncodePolicy::PerRung, EncodePolicy::SingleGpu(None)] {
-            assert!(!serial_probe_is_ten_bit(policy, PixelFormat::Yuv420p10le), "{policy:?}");
+        for policy in [
+            EncodePolicy::AllGpus,
+            EncodePolicy::PerRung,
+            EncodePolicy::SingleGpu(None),
+        ] {
+            assert!(
+                !serial_probe_is_ten_bit(policy, PixelFormat::Yuv420p10le),
+                "{policy:?}"
+            );
         }
-        for policy in [EncodePolicy::SingleGpu(Some(0)), EncodePolicy::Family(GpuFamily::Nvidia)] {
-            assert!(serial_probe_is_ten_bit(policy, PixelFormat::Yuv420p10le), "{policy:?}");
-            assert!(!serial_probe_is_ten_bit(policy, PixelFormat::Yuv420p), "{policy:?}");
+        for policy in [
+            EncodePolicy::SingleGpu(Some(0)),
+            EncodePolicy::Family(GpuFamily::Nvidia),
+        ] {
+            assert!(
+                serial_probe_is_ten_bit(policy, PixelFormat::Yuv420p10le),
+                "{policy:?}"
+            );
+            assert!(
+                !serial_probe_is_ten_bit(policy, PixelFormat::Yuv420p),
+                "{policy:?}"
+            );
         }
     }
 
@@ -1089,11 +1407,25 @@ mod tests {
     #[test]
     fn the_software_tier_reaches_ten_bits_only_where_it_is_ten_bit() {
         for c in [VideoCodec::H264, VideoCodec::H265] {
-            assert_eq!(software_reaches(c, false), codec::encode::software_encode_available(c), "{c:?}");
-            assert_eq!(software_reaches(c, true), codec::encode::software_encode_available(c), "{c:?}");
+            assert_eq!(
+                software_reaches(c, false),
+                codec::encode::software_encode_available(c),
+                "{c:?}"
+            );
+            assert_eq!(
+                software_reaches(c, true),
+                codec::encode::software_encode_available(c),
+                "{c:?}"
+            );
         }
-        assert_eq!(software_reaches(VideoCodec::Av1, false), codec::encode::software_encode_available(VideoCodec::Av1));
-        assert_eq!(software_reaches(VideoCodec::Av1, true), codec::encode::software_encode_available(VideoCodec::Av1));
+        assert_eq!(
+            software_reaches(VideoCodec::Av1, false),
+            codec::encode::software_encode_available(VideoCodec::Av1)
+        );
+        assert_eq!(
+            software_reaches(VideoCodec::Av1, true),
+            codec::encode::software_encode_available(VideoCodec::Av1)
+        );
     }
 
     /// This host, on a build with NVENC and the software H.26x tier: the
@@ -1106,25 +1438,58 @@ mod tests {
     #[cfg(all(feature = "nvidia", feature = "h26x-fallback"))]
     #[test]
     fn on_this_host_nvenc_is_no_lease_for_ten_bit_h264() {
-        let Some(card) = codec::gpu::detect_gpus()
-            .into_iter()
-            .find(|g| g.vendor == GpuVendor::Nvidia && codec::encode::encode_capable_at(g, VideoCodec::H264, false))
-        else {
+        let Some(card) = codec::gpu::detect_gpus().into_iter().find(|g| {
+            g.vendor == GpuVendor::Nvidia
+                && codec::encode::encode_capable_at(g, VideoCodec::H264, false)
+        }) else {
             eprintln!("SKIP: no NVIDIA card here encodes 8-bit H.264");
             return;
         };
-        assert!(!codec::encode::encode_capable_at(&card, VideoCodec::H264, true), "{} took 10-bit H.264", card.name);
-        let ten = gpu_pool_for_policy(EncodePolicy::AllGpus, VideoCodec::H264, PixelFormat::Yuv420p10le).expect("software slots");
-        assert!(ten.is_software(), "a 10-bit H.264 lease pool must be software here, got {} card slot(s)", ten.capacity());
-        let eight = gpu_pool_for_policy(EncodePolicy::AllGpus, VideoCodec::H264, PixelFormat::Yuv420p).expect("the card");
+        assert!(
+            !codec::encode::encode_capable_at(&card, VideoCodec::H264, true),
+            "{} took 10-bit H.264",
+            card.name
+        );
+        let ten = gpu_pool_for_policy(
+            EncodePolicy::AllGpus,
+            VideoCodec::H264,
+            PixelFormat::Yuv420p10le,
+        )
+        .expect("software slots");
+        assert!(
+            ten.is_software(),
+            "a 10-bit H.264 lease pool must be software here, got {} card slot(s)",
+            ten.capacity()
+        );
+        let eight = gpu_pool_for_policy(
+            EncodePolicy::AllGpus,
+            VideoCodec::H264,
+            PixelFormat::Yuv420p,
+        )
+        .expect("the card");
         assert!(!eight.is_software());
-        let serial = gpu_pool_for_serial(EncodePolicy::AllGpus, VideoCodec::H264, PixelFormat::Yuv420p10le).expect("the card");
-        assert!(!serial.is_software(), "the unpinned serial pool is judged at the codec");
-        let err = match gpu_pool_for_serial(EncodePolicy::Family(GpuFamily::Nvidia), VideoCodec::H264, PixelFormat::Yuv420p10le) {
+        let serial = gpu_pool_for_serial(
+            EncodePolicy::AllGpus,
+            VideoCodec::H264,
+            PixelFormat::Yuv420p10le,
+        )
+        .expect("the card");
+        assert!(
+            !serial.is_software(),
+            "the unpinned serial pool is judged at the codec"
+        );
+        let err = match gpu_pool_for_serial(
+            EncodePolicy::Family(GpuFamily::Nvidia),
+            VideoCodec::H264,
+            PixelFormat::Yuv420p10le,
+        ) {
             Ok(pool) => panic!("a family pin at 10 bits got a pool of {}", pool.capacity()),
             Err(e) => format!("{e:#}"),
         };
-        assert!(err.contains("`--encode family:nvidia` for 10-bit H.264"), "{err}");
+        assert!(
+            err.contains("`--encode family:nvidia` for 10-bit H.264"),
+            "{err}"
+        );
         assert!(err.contains("drop the pin"), "{err}");
     }
 
@@ -1136,9 +1501,15 @@ mod tests {
     #[test]
     fn a_pinned_policy_pins_the_pools_first_card_and_vendor() {
         let pool = GpuPool::new(&[synth(2, GpuVendor::Amd), synth(3, GpuVendor::Amd)]);
-        assert_eq!(serial_target(EncodePolicy::Family(GpuFamily::Amd), &pool), (Some(2), Some(GpuVendor::Amd)));
+        assert_eq!(
+            serial_target(EncodePolicy::Family(GpuFamily::Amd), &pool),
+            (Some(2), Some(GpuVendor::Amd))
+        );
         let pool = GpuPool::new(&[synth(1, GpuVendor::Intel)]);
-        assert_eq!(serial_target(EncodePolicy::SingleGpu(Some(1)), &pool), (Some(1), Some(GpuVendor::Intel)));
+        assert_eq!(
+            serial_target(EncodePolicy::SingleGpu(Some(1)), &pool),
+            (Some(1), Some(GpuVendor::Intel))
+        );
     }
 
     /// An unpinned policy is unchanged: no vendor pin, and no card index
@@ -1146,7 +1517,11 @@ mod tests {
     #[test]
     fn an_unpinned_policy_pins_nothing() {
         let pool = GpuPool::new(&[synth(0, GpuVendor::Nvidia)]);
-        for policy in [EncodePolicy::AllGpus, EncodePolicy::PerRung, EncodePolicy::SingleGpu(None)] {
+        for policy in [
+            EncodePolicy::AllGpus,
+            EncodePolicy::PerRung,
+            EncodePolicy::SingleGpu(None),
+        ] {
             assert_eq!(serial_target(policy, &pool), (None, None), "{policy:?}");
         }
     }
@@ -1157,12 +1532,32 @@ mod tests {
     #[test]
     fn several_cards_serve_a_serial_job_from_the_fastest() {
         let pool = GpuPool::new(&[synth(40, GpuVendor::Intel), synth(41, GpuVendor::Intel)]);
-        assert_eq!(serial_target(EncodePolicy::Family(GpuFamily::Intel), &pool), (Some(40), Some(GpuVendor::Intel)));
-        assert_eq!(serial_target(EncodePolicy::SingleGpu(None), &pool), (Some(40), None));
-        super::super::speed::record_rate("encode:any", super::super::speed::DeviceKey::Gpu(40), 100.0);
-        super::super::speed::record_rate("encode:any", super::super::speed::DeviceKey::Gpu(41), 300.0);
-        assert_eq!(serial_target(EncodePolicy::Family(GpuFamily::Intel), &pool), (Some(41), Some(GpuVendor::Intel)));
-        assert_eq!(serial_target(EncodePolicy::AllGpus, &pool), (Some(41), None));
+        assert_eq!(
+            serial_target(EncodePolicy::Family(GpuFamily::Intel), &pool),
+            (Some(40), Some(GpuVendor::Intel))
+        );
+        assert_eq!(
+            serial_target(EncodePolicy::SingleGpu(None), &pool),
+            (Some(40), None)
+        );
+        super::super::speed::record_rate(
+            "encode:any",
+            super::super::speed::DeviceKey::Gpu(40),
+            100.0,
+        );
+        super::super::speed::record_rate(
+            "encode:any",
+            super::super::speed::DeviceKey::Gpu(41),
+            300.0,
+        );
+        assert_eq!(
+            serial_target(EncodePolicy::Family(GpuFamily::Intel), &pool),
+            (Some(41), Some(GpuVendor::Intel))
+        );
+        assert_eq!(
+            serial_target(EncodePolicy::AllGpus, &pool),
+            (Some(41), None)
+        );
     }
 
     /// A software pool has no card to name; the chain reaches software on
@@ -1170,16 +1565,26 @@ mod tests {
     #[test]
     fn a_software_pool_pins_nothing() {
         let pool = GpuPool::software(1, 32);
-        assert_eq!(serial_target(EncodePolicy::SingleGpu(None), &pool), (None, None));
+        assert_eq!(
+            serial_target(EncodePolicy::SingleGpu(None), &pool),
+            (None, None)
+        );
         assert_eq!(serial_target(EncodePolicy::AllGpus, &pool), (None, None));
     }
 
     fn bitrate_spec(mode_hls: bool) -> crate::spec::OutputSpec {
         use crate::spec::{OutputSpec, Quality, Rung, VideoCodecPolicy};
         let rung = Rung::new(1280, 720).with_quality(Quality::default().with_overrides(
-            codec::encode::tuning::EncodeOverrides { bitrate: Some(3_000_000), ..Default::default() },
+            codec::encode::tuning::EncodeOverrides {
+                bitrate: Some(3_000_000),
+                ..Default::default()
+            },
         ));
-        let spec = if mode_hls { OutputSpec::hls(vec![rung], 4.0) } else { OutputSpec::single_file(vec![rung]) };
+        let spec = if mode_hls {
+            OutputSpec::hls(vec![rung], 4.0)
+        } else {
+            OutputSpec::single_file(vec![rung])
+        };
         spec.with_video_codec(VideoCodecPolicy::H264)
     }
 
@@ -1191,22 +1596,56 @@ mod tests {
     #[test]
     fn a_bitrate_job_on_a_card_pool_is_refused_by_name() {
         let cards = GpuPool::new(&[synth(0, GpuVendor::Nvidia)]);
-        let err = check_rate_pool(&bitrate_spec(true), &cards, PixelFormat::Yuv420p, None).expect_err("cards");
+        let err = check_rate_pool(&bitrate_spec(true), &cards, PixelFormat::Yuv420p, None)
+            .expect_err("cards");
         let msg = err.to_string();
         let way_out = if software_reaches(VideoCodec::H264, false) {
             "CUDA_VISIBLE_DEVICES=-1"
         } else {
             "--features h26x-fallback"
         };
-        for w in ["rung '720p'", "3000000 bit/s", "synth-0 (gpu 0)", way_out, "--video-bitrate"] {
+        for w in [
+            "rung '720p'",
+            "3000000 bit/s",
+            "synth-0 (gpu 0)",
+            way_out,
+            "--video-bitrate",
+        ] {
             assert!(msg.contains(w), "{w} not in: {msg}");
         }
-        assert!(!msg.contains("TRANSCODE_ENCODER_BACKEND"), "HLS never reads the pin: {msg}");
+        assert!(
+            !msg.contains("TRANSCODE_ENCODER_BACKEND"),
+            "HLS never reads the pin: {msg}"
+        );
         let serial = bitrate_spec(false);
         assert!(check_rate_pool(&serial, &cards, PixelFormat::Yuv420p, None).is_err());
-        assert!(check_rate_pool(&serial, &cards, PixelFormat::Yuv420p, Some(codec::encode::EncoderBackend::H26x)).is_ok());
-        assert!(check_rate_pool(&serial, &cards, PixelFormat::Yuv420p, Some(codec::encode::EncoderBackend::Nvenc)).is_err());
-        assert!(check_rate_pool(&bitrate_spec(true), &GpuPool::software(2, 4), PixelFormat::Yuv420p, None).is_ok());
+        assert!(
+            check_rate_pool(
+                &serial,
+                &cards,
+                PixelFormat::Yuv420p,
+                Some(codec::encode::EncoderBackend::H26x)
+            )
+            .is_ok()
+        );
+        assert!(
+            check_rate_pool(
+                &serial,
+                &cards,
+                PixelFormat::Yuv420p,
+                Some(codec::encode::EncoderBackend::Nvenc)
+            )
+            .is_err()
+        );
+        assert!(
+            check_rate_pool(
+                &bitrate_spec(true),
+                &GpuPool::software(2, 4),
+                PixelFormat::Yuv420p,
+                None
+            )
+            .is_ok()
+        );
         let quality = crate::spec::OutputSpec::hls(vec![crate::spec::Rung::new(1280, 720)], 4.0);
         assert!(check_rate_pool(&quality, &cards, PixelFormat::Yuv420p, None).is_ok());
     }
@@ -1217,12 +1656,22 @@ mod tests {
     fn the_rate_pool_reason_names_what_would_run_the_job() {
         let cards = vec!["RTX (gpu 0)".to_string()];
         let single = rate_pool_reason("720p", 3_000_000, VideoCodec::H265, &cards, true, true);
-        assert!(single.contains("H.265") && single.contains("TRANSCODE_ENCODER_BACKEND=h26x"), "{single}");
+        assert!(
+            single.contains("H.265") && single.contains("TRANSCODE_ENCODER_BACKEND=h26x"),
+            "{single}"
+        );
         let bare = rate_pool_reason("720p", 3_000_000, VideoCodec::H264, &cards, false, true);
-        assert!(bare.contains("--features h26x-fallback") && !bare.contains("CUDA_VISIBLE_DEVICES"), "{bare}");
+        assert!(
+            bare.contains("--features h26x-fallback") && !bare.contains("CUDA_VISIBLE_DEVICES"),
+            "{bare}"
+        );
     }
 
-    fn cbr_spec(codec: crate::spec::VideoCodecPolicy, mode_hls: bool, bps: Option<u32>) -> crate::spec::OutputSpec {
+    fn cbr_spec(
+        codec: crate::spec::VideoCodecPolicy,
+        mode_hls: bool,
+        bps: Option<u32>,
+    ) -> crate::spec::OutputSpec {
         use crate::spec::{OutputSpec, Quality, Rung};
         let rung = Rung::new(1280, 720).with_quality(Quality::default().with_overrides(
             codec::encode::tuning::EncodeOverrides {
@@ -1231,7 +1680,11 @@ mod tests {
                 ..Default::default()
             },
         ));
-        let spec = if mode_hls { OutputSpec::hls(vec![rung], 4.0) } else { OutputSpec::single_file(vec![rung]) };
+        let spec = if mode_hls {
+            OutputSpec::hls(vec![rung], 4.0)
+        } else {
+            OutputSpec::single_file(vec![rung])
+        };
         spec.with_video_codec(codec)
     }
 
@@ -1251,18 +1704,29 @@ mod tests {
         ] {
             for vendor in [GpuVendor::Intel, GpuVendor::Nvidia, GpuVendor::Amd] {
                 let cards = GpuPool::new(&[synth(0, vendor)]);
-                check_rate_pool(&cbr_spec(policy, true, Some(3_000_000)), &cards, PixelFormat::Yuv420p, None)
-                    .unwrap_or_else(|e| panic!("{codec:?} on {vendor:?}: {e}"));
+                check_rate_pool(
+                    &cbr_spec(policy, true, Some(3_000_000)),
+                    &cards,
+                    PixelFormat::Yuv420p,
+                    None,
+                )
+                .unwrap_or_else(|e| panic!("{codec:?} on {vendor:?}: {e}"));
             }
-            let software =
-                check_rate_pool(&cbr_spec(policy, true, Some(3_000_000)), &GpuPool::software(2, 4), PixelFormat::Yuv420p, None);
+            let software = check_rate_pool(
+                &cbr_spec(policy, true, Some(3_000_000)),
+                &GpuPool::software(2, 4),
+                PixelFormat::Yuv420p,
+                None,
+            );
             // The software H.264 / H.265 encoder codes it when the build has
             // it; the software AV1 encoder never does.
             if codec != VideoCodec::Av1 && codec::encode::software_backend_for(codec).is_some() {
                 software.unwrap_or_else(|e| panic!("{codec:?} in software: {e}"));
                 continue;
             }
-            let msg = software.expect_err("no software encoder here codes a constant rate").to_string();
+            let msg = software
+                .expect_err("no software encoder here codes a constant rate")
+                .to_string();
             for w in ["rung '720p'", "rate=cbr", "3000000 bit/s", "QSV, NVENC"] {
                 assert!(msg.contains(w), "{codec:?}: {w} not in: {msg}");
             }
@@ -1270,13 +1734,37 @@ mod tests {
         // A serial single-file job pinned by name: the pinned backend decides.
         let cards = GpuPool::new(&[synth(0, GpuVendor::Intel)]);
         let serial = cbr_spec(VideoCodecPolicy::H264, false, Some(2_000_000));
-        assert!(check_rate_pool(&serial, &cards, PixelFormat::Yuv420p, Some(codec::encode::EncoderBackend::Qsv)).is_ok());
-        assert!(check_rate_pool(&serial, &cards, PixelFormat::Yuv420p, Some(codec::encode::EncoderBackend::H26x)).is_ok());
+        assert!(
+            check_rate_pool(
+                &serial,
+                &cards,
+                PixelFormat::Yuv420p,
+                Some(codec::encode::EncoderBackend::Qsv)
+            )
+            .is_ok()
+        );
+        assert!(
+            check_rate_pool(
+                &serial,
+                &cards,
+                PixelFormat::Yuv420p,
+                Some(codec::encode::EncoderBackend::H26x)
+            )
+            .is_ok()
+        );
         let av1 = cbr_spec(VideoCodecPolicy::Av1, false, None);
-        let pinned = check_rate_pool(&av1, &cards, PixelFormat::Yuv420p, Some(codec::encode::EncoderBackend::Av1))
-            .expect_err("the software AV1 encoder codes no constant rate");
+        let pinned = check_rate_pool(
+            &av1,
+            &cards,
+            PixelFormat::Yuv420p,
+            Some(codec::encode::EncoderBackend::Av1),
+        )
+        .expect_err("the software AV1 encoder codes no constant rate");
         let msg = pinned.to_string();
-        for w in ["the software AV1 encoder targets an average bitrate, but not a constant one", "the default rate"] {
+        for w in [
+            "the software AV1 encoder targets an average bitrate, but not a constant one",
+            "the default rate",
+        ] {
             assert!(msg.contains(w), "{w} not in: {msg}");
         }
     }
@@ -1294,13 +1782,27 @@ mod tests {
                 ..Default::default()
             }))
         };
-        let spec = OutputSpec::hls(vec![rung(1280, 720, Some(RateMode::Constant)), rung(640, 360, None)], 4.0)
-            .with_video_codec(VideoCodecPolicy::H264);
+        let spec = OutputSpec::hls(
+            vec![
+                rung(1280, 720, Some(RateMode::Constant)),
+                rung(640, 360, None),
+            ],
+            4.0,
+        )
+        .with_video_codec(VideoCodecPolicy::H264);
         assert_eq!(spec.average_rate_rung(), Some(("360p".into(), 1_000_000)));
-        assert_eq!(spec.constant_rate_rung(), Some(("720p".into(), Some(1_000_000))));
+        assert_eq!(
+            spec.constant_rate_rung(),
+            Some(("720p".into(), Some(1_000_000)))
+        );
         let cards = GpuPool::new(&[synth(0, GpuVendor::Nvidia)]);
-        let msg = check_rate_pool(&spec, &cards, PixelFormat::Yuv420p, None).expect_err("average on cards").to_string();
-        assert!(msg.contains("rung '360p'") && msg.contains("(`h26x`) codes to a bitrate"), "{msg}");
+        let msg = check_rate_pool(&spec, &cards, PixelFormat::Yuv420p, None)
+            .expect_err("average on cards")
+            .to_string();
+        assert!(
+            msg.contains("rung '360p'") && msg.contains("(`h26x`) codes to a bitrate"),
+            "{msg}"
+        );
     }
 
     /// A VP9 job with an average-rate rung runs on the software pool under a
@@ -1313,34 +1815,104 @@ mod tests {
         use codec::encode::tuning::{EncodeOverrides, RateMode};
         let spec = |codec, policy, o: EncodeOverrides| OutputSpec {
             encode_policy: policy,
-            ..OutputSpec::single_file(vec![Rung::new(640, 360).with_quality(Quality { overrides: o, ..Default::default() })])
-                .with_video_codec(codec)
+            ..OutputSpec::single_file(vec![Rung::new(640, 360).with_quality(Quality {
+                overrides: o,
+                ..Default::default()
+            })])
+            .with_video_codec(codec)
         };
-        let avg = EncodeOverrides { bitrate: Some(1_000_000), ..Default::default() };
-        let cbr = EncodeOverrides { rate_mode: Some(RateMode::Constant), ..avg.clone() };
-        assert!(software_only(&spec(VideoCodecPolicy::Vp9, EncodePolicy::AllGpus, avg.clone())));
-        assert!(software_only(&spec(VideoCodecPolicy::Vp9, EncodePolicy::PerRung, avg.clone())));
-        assert!(!software_only(&spec(VideoCodecPolicy::Vp9, EncodePolicy::Family(GpuFamily::Intel), avg.clone())));
-        assert!(!software_only(&spec(VideoCodecPolicy::Vp9, EncodePolicy::AllGpus, cbr)));
-        assert!(!software_only(&spec(VideoCodecPolicy::Vp9, EncodePolicy::AllGpus, EncodeOverrides::default())));
-        assert!(!software_only(&spec(VideoCodecPolicy::H264, EncodePolicy::AllGpus, avg)));
+        let avg = EncodeOverrides {
+            bitrate: Some(1_000_000),
+            ..Default::default()
+        };
+        let cbr = EncodeOverrides {
+            rate_mode: Some(RateMode::Constant),
+            ..avg
+        };
+        assert!(software_only(&spec(
+            VideoCodecPolicy::Vp9,
+            EncodePolicy::AllGpus,
+            avg
+        )));
+        assert!(software_only(&spec(
+            VideoCodecPolicy::Vp9,
+            EncodePolicy::PerRung,
+            avg
+        )));
+        assert!(!software_only(&spec(
+            VideoCodecPolicy::Vp9,
+            EncodePolicy::Family(GpuFamily::Intel),
+            avg
+        )));
+        assert!(!software_only(&spec(
+            VideoCodecPolicy::Vp9,
+            EncodePolicy::AllGpus,
+            cbr
+        )));
+        assert!(!software_only(&spec(
+            VideoCodecPolicy::Vp9,
+            EncodePolicy::AllGpus,
+            EncodeOverrides::default()
+        )));
+        assert!(!software_only(&spec(
+            VideoCodecPolicy::H264,
+            EncodePolicy::AllGpus,
+            avg
+        )));
         // The refusal for a pinned VP9 bitrate job names VP9's own encoder.
-        let msg = rate_pool_reason("360p", 1_000_000, VideoCodec::Vp9, &["arc (gpu 0)".into()], true, true);
-        assert!(msg.contains("(`vp9`)") && msg.contains("TRANSCODE_ENCODER_BACKEND=vp9"), "{msg}");
-        let msg = constant_rate_pool_reason("360p", Some(1_000_000), VideoCodec::Vp9, &["rivet's own VP9 encoder".into()]);
-        assert!(msg.contains("QSV on an Intel card with VP9 encode"), "{msg}");
+        let msg = rate_pool_reason(
+            "360p",
+            1_000_000,
+            VideoCodec::Vp9,
+            &["arc (gpu 0)".into()],
+            true,
+            true,
+        );
+        assert!(
+            msg.contains("(`vp9`)") && msg.contains("TRANSCODE_ENCODER_BACKEND=vp9"),
+            "{msg}"
+        );
+        let msg = constant_rate_pool_reason(
+            "360p",
+            Some(1_000_000),
+            VideoCodec::Vp9,
+            &["rivet's own VP9 encoder".into()],
+        );
+        assert!(
+            msg.contains("QSV on an Intel card with VP9 encode"),
+            "{msg}"
+        );
     }
 
     /// Which hardware backend encodes VP9: QSV only.
     #[test]
     fn vp9_is_served_by_qsv_alone_among_the_hardware_backends() {
         use codec::encode::EncoderBackend;
-        assert!(crate::spec::encode_backend_serves(EncoderBackend::Qsv, VideoCodec::Vp9));
-        assert!(!crate::spec::encode_backend_serves(EncoderBackend::Nvenc, VideoCodec::Vp9));
-        assert!(!crate::spec::encode_backend_serves(EncoderBackend::Amf, VideoCodec::Vp9));
-        for hw in [EncoderBackend::Qsv, EncoderBackend::Nvenc, EncoderBackend::Amf] {
-            assert!(!crate::spec::encode_backend_serves(hw, VideoCodec::Vp8), "{hw:?} VP8");
+        assert!(crate::spec::encode_backend_serves(
+            EncoderBackend::Qsv,
+            VideoCodec::Vp9
+        ));
+        assert!(!crate::spec::encode_backend_serves(
+            EncoderBackend::Nvenc,
+            VideoCodec::Vp9
+        ));
+        assert!(!crate::spec::encode_backend_serves(
+            EncoderBackend::Amf,
+            VideoCodec::Vp9
+        ));
+        for hw in [
+            EncoderBackend::Qsv,
+            EncoderBackend::Nvenc,
+            EncoderBackend::Amf,
+        ] {
+            assert!(
+                !crate::spec::encode_backend_serves(hw, VideoCodec::Vp8),
+                "{hw:?} VP8"
+            );
         }
-        assert!(crate::spec::encode_backend_serves(EncoderBackend::Vp9, VideoCodec::Vp9));
+        assert!(crate::spec::encode_backend_serves(
+            EncoderBackend::Vp9,
+            VideoCodec::Vp9
+        ));
     }
 }

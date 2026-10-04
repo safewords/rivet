@@ -12,8 +12,9 @@ use candle_core::{Device, Tensor};
 
 use super::net::{ALIGN, DrUnet};
 use super::{
-    DEFAULT_TILE, DEFAULT_TILE_GPU, DpirModel, ENV_DEVICE, ENV_TILE, Levels, TILE_OVERLAP, align_up, f32_to_plane, model_path,
-    plane_to_f32, pth, rgb_to_yuv420, sigma_channel, tiles, validate_sigma, yuv420_to_rgb,
+    DEFAULT_TILE, DEFAULT_TILE_GPU, DpirModel, ENV_DEVICE, ENV_TILE, Levels, TILE_OVERLAP,
+    align_up, f32_to_plane, model_path, plane_to_f32, pth, rgb_to_yuv420, sigma_channel, tiles,
+    validate_sigma, yuv420_to_rgb,
 };
 use crate::filter::{assemble, bps, planes};
 use crate::frame::VideoFrame;
@@ -47,6 +48,8 @@ struct Job {
 /// never runs that destructor (threads still alive at `ExitProcess` are
 /// terminated without it), so the tokio / pump threads that call
 /// [`PreparedDpir::apply`] never touch the device themselves.
+// One per prepared filter: boxing the network would buy nothing.
+#[allow(clippy::large_enum_variant)]
 enum Net {
     Local(DrUnet),
     Worker(mpsc::Sender<Job>),
@@ -81,7 +84,12 @@ impl Net {
         Ok(Self::Worker(tx))
     }
 
-    fn forward(&self, buf: Vec<f32>, shape: (usize, usize, usize, usize), device: &Device) -> Result<Vec<f32>> {
+    fn forward(
+        &self,
+        buf: Vec<f32>,
+        shape: (usize, usize, usize, usize),
+        device: &Device,
+    ) -> Result<Vec<f32>> {
         match self {
             Self::Local(net) => {
                 let input = Tensor::from_vec(buf, shape, device)?;
@@ -89,8 +97,10 @@ impl Net {
             }
             Self::Worker(tx) => {
                 let (reply, rx) = mpsc::channel();
-                tx.send(Job { buf, shape, reply }).map_err(|_| anyhow::anyhow!("the dpir CUDA worker thread is gone"))?;
-                rx.recv().map_err(|_| anyhow::anyhow!("the dpir CUDA worker thread dropped a request"))?
+                tx.send(Job { buf, shape, reply })
+                    .map_err(|_| anyhow::anyhow!("the dpir CUDA worker thread is gone"))?;
+                rx.recv()
+                    .map_err(|_| anyhow::anyhow!("the dpir CUDA worker thread dropped a request"))?
             }
         }
     }
@@ -105,7 +115,11 @@ fn net_device(net: &DrUnet) -> &Device {
 /// where it bounds memory, [`DEFAULT_TILE_GPU`] on a GPU, where the overlap
 /// paid per tile is the larger cost.
 pub(super) fn default_tile(device: &Device) -> usize {
-    if device.is_cpu() { DEFAULT_TILE } else { DEFAULT_TILE_GPU }
+    if device.is_cpu() {
+        DEFAULT_TILE
+    } else {
+        DEFAULT_TILE_GPU
+    }
 }
 
 impl PreparedDpir {
@@ -118,7 +132,9 @@ impl PreparedDpir {
         let device_pref = std::env::var(ENV_DEVICE).ok();
         let (device, device_name) = select_device(device_pref.as_deref())?;
         let tile = match std::env::var(ENV_TILE) {
-            Ok(t) => t.trim().parse::<usize>().with_context(|| format!("{ENV_TILE}='{t}' is not a tile size in pixels (0 = whole frame)"))?,
+            Ok(t) => t.trim().parse::<usize>().with_context(|| {
+                format!("{ENV_TILE}='{t}' is not a tile size in pixels (0 = whole frame)")
+            })?,
             Err(_) => default_tile(&device),
         };
         let t0 = Instant::now();
@@ -165,7 +181,14 @@ impl PreparedDpir {
             );
         }
         let net = Net::new(net, &device)?;
-        Ok(Self { sigma, model, net, device, tile, overlap })
+        Ok(Self {
+            sigma,
+            model,
+            net,
+            device,
+            tile,
+            overlap,
+        })
     }
 
     /// The device the network runs on, as a label (`cpu`, `cuda:0`).
@@ -196,13 +219,27 @@ impl PreparedDpir {
         let lv = Levels::for_bps(bps);
         match self.model {
             DpirModel::Gray => {
-                let y: Vec<f32> = plane_to_f32(yp, bps).into_iter().map(|v| v / lv.max).collect();
+                let y: Vec<f32> = plane_to_f32(yp, bps)
+                    .into_iter()
+                    .map(|v| v / lv.max)
+                    .collect();
                 let out = self.run(&[y], w, h)?;
                 let y: Vec<f32> = out[0].iter().map(|v| v * lv.max).collect();
-                Ok(assemble(frame, frame.width, frame.height, f32_to_plane(&y, bps, lv.max), up.to_vec(), vp.to_vec()))
+                Ok(assemble(
+                    frame,
+                    frame.width,
+                    frame.height,
+                    f32_to_plane(&y, bps, lv.max),
+                    up.to_vec(),
+                    vp.to_vec(),
+                ))
             }
             DpirModel::Color => {
-                let (y, u, v) = (plane_to_f32(yp, bps), plane_to_f32(up, bps), plane_to_f32(vp, bps));
+                let (y, u, v) = (
+                    plane_to_f32(yp, bps),
+                    plane_to_f32(up, bps),
+                    plane_to_f32(vp, bps),
+                );
                 let rgb = yuv420_to_rgb(&y, &u, &v, w, h, frame.color_space, lv);
                 let out = self.run(&rgb, w, h)?;
                 let rgb: [Vec<f32>; 3] = [out[0].clone(), out[1].clone(), out[2].clone()];
@@ -255,9 +292,12 @@ impl PreparedDpir {
 
 /// Load `{name: tensor}` from a legacy `.pth` (see [`pth`]) or a `.safetensors`.
 pub(super) fn load_state_dict(path: &Path, device: &Device) -> Result<HashMap<String, Tensor>> {
-    let is_safetensors = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("safetensors"));
+    let is_safetensors = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("safetensors"));
     if is_safetensors {
-        return candle_core::safetensors::load(path, device).with_context(|| format!("loading {}", path.display()));
+        return candle_core::safetensors::load(path, device)
+            .with_context(|| format!("loading {}", path.display()));
     }
     let tensors = pth::read_legacy_pth_file(path)?;
     tensors
@@ -277,20 +317,29 @@ fn select_device(pref: Option<&str>) -> Result<(Device, String)> {
             #[cfg(feature = "dpir-cuda")]
             match Device::new_cuda(0) {
                 Ok(d) => return Ok((d, "cuda:0".into())),
-                Err(e) => tracing::warn!("dpir: CUDA device 0 unavailable ({e}); running DRUNet on the CPU"),
+                Err(e) => tracing::warn!(
+                    "dpir: CUDA device 0 unavailable ({e}); running DRUNet on the CPU"
+                ),
             }
             Ok((Device::Cpu, "cpu".into()))
         }
         Some("cpu") => Ok((Device::Cpu, "cpu".into())),
         Some(c) if c == "cuda" || c.starts_with("cuda:") => {
-            let idx: usize = c.strip_prefix("cuda:").unwrap_or("0").parse().with_context(|| format!("{ENV_DEVICE}='{c}': bad device index"))?;
+            let idx: usize = c
+                .strip_prefix("cuda:")
+                .unwrap_or("0")
+                .parse()
+                .with_context(|| format!("{ENV_DEVICE}='{c}': bad device index"))?;
             #[cfg(feature = "dpir-cuda")]
             {
-                let d = Device::new_cuda(idx).with_context(|| format!("opening CUDA device {idx} for dpir"))?;
+                let d = Device::new_cuda(idx)
+                    .with_context(|| format!("opening CUDA device {idx} for dpir"))?;
                 Ok((d, format!("cuda:{idx}")))
             }
             #[cfg(not(feature = "dpir-cuda"))]
-            bail!("{ENV_DEVICE}=cuda:{idx} but this binary was built without the `dpir-cuda` feature")
+            bail!(
+                "{ENV_DEVICE}=cuda:{idx} but this binary was built without the `dpir-cuda` feature"
+            )
         }
         Some(o) => bail!("{ENV_DEVICE}='{o}': want cpu, cuda, or cuda:N"),
     }

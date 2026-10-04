@@ -23,7 +23,11 @@ pub struct FlacAudioEncoder {
 }
 
 impl FlacAudioEncoder {
-    pub fn new(config: &AudioEncoderConfig, bits_per_sample: u8, level: FlacLevel) -> Result<Self, AudioError> {
+    pub fn new(
+        config: &AudioEncoderConfig,
+        bits_per_sample: u8,
+        level: FlacLevel,
+    ) -> Result<Self, AudioError> {
         let mut inner = FlacEncoder::new(FlacEncoderConfig {
             sample_rate: config.sample_rate,
             channels: config.channels,
@@ -31,7 +35,11 @@ impl FlacAudioEncoder {
             level,
         })?;
         inner.set_threads(config.threads);
-        Ok(Self { inner, samples_out: 0, threads: config.threads })
+        Ok(Self {
+            inner,
+            samples_out: 0,
+            threads: config.threads,
+        })
     }
 
     /// The thread count handed to the encoder (`config.threads`).
@@ -46,7 +54,11 @@ impl FlacAudioEncoder {
             .map(|(data, n)| {
                 let pts = self.samples_out as i64 * 1_000_000 / rate;
                 self.samples_out += u64::from(n);
-                EncodedAudioPacket { data, pts, duration: i64::from(n) }
+                EncodedAudioPacket {
+                    data,
+                    pts,
+                    duration: i64::from(n),
+                }
             })
             .collect()
     }
@@ -68,7 +80,11 @@ impl AudioEncoder for FlacAudioEncoder {
             )));
         }
         let bits = u32::from(config.bits_per_sample);
-        let ints: Vec<i32> = frame.samples.iter().map(|&x| lossless::pcm::f32_to_int(x, bits)).collect();
+        let ints: Vec<i32> = frame
+            .samples
+            .iter()
+            .map(|&x| lossless::pcm::f32_to_int(x, bits))
+            .collect();
         let frames = self.inner.encode_int(&ints);
         Ok(self.packets(frames))
     }

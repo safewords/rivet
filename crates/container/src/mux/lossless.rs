@@ -60,7 +60,7 @@ fn audio_sample_entry_head(b: &mut BoxBuilder, info: &AudioInfo, sample_size: u1
 /// right in both.
 pub(super) fn entry_sample_rate(rate: u32) -> u32 {
     let mut r = rate;
-    while r > 0xFFFF && r % 2 == 0 {
+    while r > 0xFFFF && r.is_multiple_of(2) {
         r /= 2;
     }
     r.min(0xFFFF)
@@ -120,7 +120,11 @@ pub(super) fn build_alac_sample_entry(info: &AudioInfo) -> Vec<u8> {
 /// ALAC track.
 pub(super) fn check_lossless(info: &AudioInfo, flac: bool) -> Result<()> {
     if !(1..=8).contains(&info.channels) {
-        bail!("audio mux: {} supports 1..=8 channels; got {}", if flac { "FLAC" } else { "ALAC" }, info.channels);
+        bail!(
+            "audio mux: {} supports 1..=8 channels; got {}",
+            if flac { "FLAC" } else { "ALAC" },
+            info.channels
+        );
     }
     if flac {
         let p = &info.codec_private;
@@ -128,7 +132,10 @@ pub(super) fn check_lossless(info: &AudioInfo, flac: bool) -> Result<()> {
             bail!("audio mux: FLAC codec_private must be the metadata blocks, STREAMINFO first");
         }
     } else if info.codec_private.len() != 24 {
-        bail!("audio mux: ALAC codec_private (the magic cookie) must be 24 bytes; got {}", info.codec_private.len());
+        bail!(
+            "audio mux: ALAC codec_private (the magic cookie) must be 24 bytes; got {}",
+            info.codec_private.len()
+        );
     }
     if info.timescale != info.sample_rate {
         bail!(
@@ -145,7 +152,11 @@ pub(super) fn check_lossless(info: &AudioInfo, flac: bool) -> Result<()> {
 /// (packet, duration in `info.timescale` ticks); `edit` places them as
 /// [`Av1Mp4Muxer::set_audio_edit`](crate::mux::Av1Mp4Muxer::set_audio_edit)
 /// does.
-pub fn write_audio_mp4(info: &AudioInfo, samples: &[(Vec<u8>, u32)], edit: TrackEdit) -> Result<Vec<u8>> {
+pub fn write_audio_mp4(
+    info: &AudioInfo,
+    samples: &[(Vec<u8>, u32)],
+    edit: TrackEdit,
+) -> Result<Vec<u8>> {
     crate::mux::Av1Mp4Muxer::check_audio(info)?;
     if samples.is_empty() {
         bail!("audio mux: no audio samples to write");
@@ -166,8 +177,13 @@ pub fn write_audio_mp4(info: &AudioInfo, samples: &[(Vec<u8>, u32)], edit: Track
         samples_per_chunk: per_chunk as u32,
     };
     let edts = (!edit.is_identity()).then(|| {
-        let presented = edit.duration.unwrap_or(total.saturating_sub(edit.media_time));
-        (build_edts(edit.delay, edit.media_time, presented), edit.delay + presented)
+        let presented = edit
+            .duration
+            .unwrap_or(total.saturating_sub(edit.media_time));
+        (
+            build_edts(edit.delay, edit.media_time, presented),
+            edit.delay + presented,
+        )
     });
     let duration = edts.as_ref().map_or(total, |(_, d)| *d);
     let payload: u64 = samples.iter().map(|(p, _)| p.len() as u64).sum();
@@ -181,7 +197,11 @@ pub fn write_audio_mp4(info: &AudioInfo, samples: &[(Vec<u8>, u32)], edit: Track
         b.finish()
     };
     let use_co64 = ftyp.len() as u64 + payload + (1 << 20) > u64::from(u32::MAX);
-    let mdat_header: u64 = if payload + 8 > u64::from(u32::MAX) { 16 } else { 8 };
+    let mdat_header: u64 = if payload + 8 > u64::from(u32::MAX) {
+        16
+    } else {
+        8
+    };
     let chunk_starts: Vec<usize> = (0..samples.len()).step_by(per_chunk).collect();
     let build_moov = |mdat_start: u64| -> Vec<u8> {
         let mut offsets = Vec::with_capacity(chunk_starts.len());
@@ -194,7 +214,13 @@ pub fn write_audio_mp4(info: &AudioInfo, samples: &[(Vec<u8>, u32)], edit: Track
             }
             at += p.len() as u64;
         }
-        let trak = build_audio_trak(&plan, duration, &offsets, use_co64, edts.as_ref().map(|(e, _)| e.as_slice()));
+        let trak = build_audio_trak(
+            &plan,
+            duration,
+            &offsets,
+            use_co64,
+            edts.as_ref().map(|(e, _)| e.as_slice()),
+        );
         let mut mvhd = BoxBuilder::new(b"mvhd");
         mvhd.u8(0);
         mvhd.extend(&[0, 0, 0]);
@@ -251,12 +277,18 @@ pub fn write_native_flac(blocks: &[u8], frames: &[(Vec<u8>, u32)]) -> Result<Vec
 
 /// [`write_native_flac`] with `vendor` as the VORBIS_COMMENT vendor string,
 /// for a caller that wants its files to name what wrote them.
-pub fn write_native_flac_with_vendor(blocks: &[u8], frames: &[(Vec<u8>, u32)], vendor: &[u8]) -> Result<Vec<u8>> {
+pub fn write_native_flac_with_vendor(
+    blocks: &[u8],
+    frames: &[(Vec<u8>, u32)],
+    vendor: &[u8],
+) -> Result<Vec<u8>> {
     if blocks.len() < 4 + 34 || blocks[0] & 0x7F != 0 {
         bail!("FLAC: the metadata blocks must open with STREAMINFO");
     }
     let streaminfo = &blocks[4..4 + 34];
-    let rate = (u64::from(streaminfo[10]) << 12) | (u64::from(streaminfo[11]) << 4) | (u64::from(streaminfo[12]) >> 4);
+    let rate = (u64::from(streaminfo[10]) << 12)
+        | (u64::from(streaminfo[11]) << 4)
+        | (u64::from(streaminfo[12]) >> 4);
     if rate == 0 {
         bail!("FLAC: STREAMINFO sample rate is 0");
     }
@@ -266,7 +298,11 @@ pub fn write_native_flac_with_vendor(blocks: &[u8], frames: &[(Vec<u8>, u32)], v
     for (f, n) in frames {
         let due = points.len() as u64 * SEEK_POINT_SECONDS * rate;
         if sample >= due {
-            points.push((sample, offset, u16::try_from(*n).context("FLAC frame over 65535 samples")?));
+            points.push((
+                sample,
+                offset,
+                u16::try_from(*n).context("FLAC frame over 65535 samples")?,
+            ));
         }
         sample += u64::from(*n);
         offset += f.len() as u64;
@@ -315,7 +351,11 @@ mod tests {
         assert_eq!(&e[4..8], b"fLaC");
         assert_eq!(u16::from_be_bytes([e[24], e[25]]), 2, "channels");
         assert_eq!(u16::from_be_bytes([e[26], e[27]]), 24, "samplesize");
-        assert_eq!(u32::from_be_bytes([e[32], e[33], e[34], e[35]]), 48_000 << 16, "96 kHz: its half");
+        assert_eq!(
+            u32::from_be_bytes([e[32], e[33], e[34], e[35]]),
+            48_000 << 16,
+            "96 kHz: its half"
+        );
         assert_eq!(&e[36 + 4..36 + 8], b"dfLa");
         assert_eq!(e.len(), 36 + 12 + 38);
     }
@@ -344,7 +384,12 @@ mod tests {
 
     #[test]
     fn an_alac_entry_above_65535_hz_names_a_rate() {
-        for (rate, field) in [(96_000u32, 48_000u32), (192_000, 48_000), (176_400, 44_100), (44_100, 44_100)] {
+        for (rate, field) in [
+            (96_000u32, 48_000u32),
+            (192_000, 48_000),
+            (176_400, 44_100),
+            (44_100, 44_100),
+        ] {
             let mut cookie = vec![0u8; 24];
             cookie[0..4].copy_from_slice(&4096u32.to_be_bytes());
             cookie[5] = 24;
@@ -355,16 +400,25 @@ mod tests {
             assert_eq!(&e[16..18], &[0, 0], "{rate}: a version 0 AudioSampleEntry");
             assert_eq!(u16::from_be_bytes([e[24], e[25]]), 2, "{rate}: channels");
             assert_eq!(u16::from_be_bytes([e[26], e[27]]), 24, "{rate}: samplesize");
-            assert_eq!(u32::from_be_bytes([e[32], e[33], e[34], e[35]]), field << 16, "{rate}: samplerate");
+            assert_eq!(
+                u32::from_be_bytes([e[32], e[33], e[34], e[35]]),
+                field << 16,
+                "{rate}: samplerate"
+            );
             assert_eq!(&e[36 + 4..36 + 8], b"alac");
-            assert_eq!(&e[36 + 12..36 + 36], &cookie[..], "{rate}: the cookie, with the true rate");
+            assert_eq!(
+                &e[36 + 12..36 + 36],
+                &cookie[..],
+                "{rate}: the cookie, with the true rate"
+            );
         }
     }
 
     #[test]
     fn an_audio_only_mp4_reads_back() {
         let info = flac_info();
-        let samples: Vec<(Vec<u8>, u32)> = (0..50).map(|i| (vec![i as u8; 100 + i], 4096)).collect();
+        let samples: Vec<(Vec<u8>, u32)> =
+            (0..50).map(|i| (vec![i as u8; 100 + i], 4096)).collect();
         let file = write_audio_mp4(&info, &samples, TrackEdit::default()).unwrap();
         let track = crate::demux::audio::lossless::extract_mp4_lossless(&file).expect("reads back");
         assert_eq!(track.codec, "flac");

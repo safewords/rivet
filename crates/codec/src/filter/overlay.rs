@@ -69,7 +69,17 @@ impl PreparedOverlay {
                 a_c[r * cw + c] = (sa / 4) as u8;
             }
         }
-        Ok(Self { w, h, x: (x & !1) as usize, y: (y & !1) as usize, y_o, u_o, v_o, a_y, a_c })
+        Ok(Self {
+            w,
+            h,
+            x: (x & !1) as usize,
+            y: (y & !1) as usize,
+            y_o,
+            u_o,
+            v_o,
+            a_y,
+            a_c,
+        })
     }
 
     /// Alpha-composite onto an 8-bit Yuv420p frame: `out = src·(1−α) + ovl·α`.
@@ -91,7 +101,8 @@ impl PreparedOverlay {
                     continue;
                 }
                 let i = fy * fw + fx;
-                y[i] = ((y[i] as u32 * (255 - a) + self.y_o[r * self.w + c] as u32 * a + 127) / 255) as u8;
+                y[i] = ((y[i] as u32 * (255 - a) + self.y_o[r * self.w + c] as u32 * a + 127) / 255)
+                    as u8;
             }
         }
         let (cw, ch) = (self.w / 2, self.h / 2);
@@ -112,8 +123,10 @@ impl PreparedOverlay {
                     continue;
                 }
                 let i = fy * fcw + fx;
-                u[i] = ((u[i] as u32 * (255 - a) + self.u_o[r * cw + c] as u32 * a + 127) / 255) as u8;
-                v[i] = ((v[i] as u32 * (255 - a) + self.v_o[r * cw + c] as u32 * a + 127) / 255) as u8;
+                u[i] =
+                    ((u[i] as u32 * (255 - a) + self.u_o[r * cw + c] as u32 * a + 127) / 255) as u8;
+                v[i] =
+                    ((v[i] as u32 * (255 - a) + self.v_o[r * cw + c] as u32 * a + 127) / 255) as u8;
             }
         }
         Ok(assemble(frame, frame.width, frame.height, y, u, v))

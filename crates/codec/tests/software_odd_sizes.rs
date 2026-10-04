@@ -8,7 +8,9 @@
 
 use codec::decode::create_decoder;
 use codec::encode::{Encoder, EncoderConfig, QualityTarget, SpeedTier};
-use codec::frame::{ColorMetadata, ColorSpace, PixelFormat, ProresProfile, StreamInfo, VideoCodec, VideoFrame};
+use codec::frame::{
+    ColorMetadata, ColorSpace, PixelFormat, ProresProfile, StreamInfo, VideoCodec, VideoFrame,
+};
 
 const W: u32 = 351;
 const H: u32 = 241;
@@ -32,7 +34,14 @@ fn picture(pts: u64) -> VideoFrame {
             }
         }
     }
-    VideoFrame::new(data.into(), W, H, PixelFormat::Yuv420p, ColorSpace::Bt709, pts)
+    VideoFrame::new(
+        data.into(),
+        W,
+        H,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        pts,
+    )
 }
 
 fn config(codec: VideoCodec) -> EncoderConfig {
@@ -55,12 +64,16 @@ fn encoder(codec: VideoCodec) -> Box<dyn Encoder> {
     let cfg = config(codec);
     match codec {
         VideoCodec::Av1 => Box::new(codec::encode::av1_sw::Av1Encoder::new(cfg).unwrap()),
-        VideoCodec::H264 | VideoCodec::H265 => Box::new(codec::encode::h26x_sw::H26xEncoder::new(cfg).unwrap()),
+        VideoCodec::H264 | VideoCodec::H265 => {
+            Box::new(codec::encode::h26x_sw::H26xEncoder::new(cfg).unwrap())
+        }
         VideoCodec::Vp8 => Box::new(codec::encode::vp8_sw::Vp8Encoder::new(cfg).unwrap()),
         VideoCodec::Vp9 => Box::new(codec::encode::vp9_sw::Vp9Encoder::new(cfg).unwrap()),
         VideoCodec::Mpeg2 => Box::new(codec::encode::mpeg2_sw::Mpeg2Encoder::new(cfg).unwrap()),
         VideoCodec::Mpeg4 => Box::new(codec::encode::mpeg4_sw::Mpeg4Encoder::new(cfg).unwrap()),
-        VideoCodec::ProRes(_) => Box::new(codec::encode::prores_sw::ProresEncoder::new(cfg).unwrap()),
+        VideoCodec::ProRes(_) => {
+            Box::new(codec::encode::prores_sw::ProresEncoder::new(cfg).unwrap())
+        }
     }
 }
 
@@ -74,8 +87,11 @@ fn psnr(a: &VideoFrame, b: &VideoFrame, p: usize) -> f64 {
         1 => (w * h, cw * ch),
         _ => (w * h + cw * ch, cw * ch),
     };
-    let se: f64 =
-        a.data[off..off + len].iter().zip(&b.data[off..off + len]).map(|(&x, &y)| (f64::from(x) - f64::from(y)).powi(2)).sum();
+    let se: f64 = a.data[off..off + len]
+        .iter()
+        .zip(&b.data[off..off + len])
+        .map(|(&x, &y)| (f64::from(x) - f64::from(y)).powi(2))
+        .sum();
     10.0 * (255.0f64.powi(2) / (se / len as f64).max(1e-9)).log10()
 }
 
@@ -136,7 +152,11 @@ fn every_software_encoder_codes_an_odd_size_as_it_is() {
         eprintln!("{codec:?}: decoded {}x{} {:?}", f.width, f.height, f.format);
         assert_eq!((f.width, f.height), (W, H), "{codec:?}");
         if f.format == PixelFormat::Yuv420p {
-            let q = [psnr(&source[0], f, 0), psnr(&source[0], f, 1), psnr(&source[0], f, 2)];
+            let q = [
+                psnr(&source[0], f, 0),
+                psnr(&source[0], f, 1),
+                psnr(&source[0], f, 2),
+            ];
             eprintln!("{codec:?}: PSNR {:.1} / {:.1} / {:.1} dB", q[0], q[1], q[2]);
             assert!(q.iter().all(|&v| v > 30.0), "{codec:?}: {q:?}");
         }

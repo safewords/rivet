@@ -45,12 +45,19 @@ fn alac_m4a(pcm: &[i32], channels: u8, bits: u8) -> Vec<u8> {
     let mut enc = AlacEncoder::new(48_000, channels, bits).unwrap();
     let mut frames = enc.encode_int(pcm);
     frames.extend(enc.finish());
-    let info = container::AudioInfo::alac(48_000, u16::from(channels), enc.cookie().to_bytes().to_vec());
+    let info = container::AudioInfo::alac(
+        48_000,
+        u16::from(channels),
+        enc.cookie().to_bytes().to_vec(),
+    );
     container::mux::write_audio_mp4(&info, &frames, Default::default()).unwrap()
 }
 
 fn audio_track(file: &[u8]) -> container::demux::AudioTrack {
-    container::streaming::demux_audio(bytes::Bytes::copy_from_slice(file)).unwrap().expect("an audio track").track
+    container::streaming::demux_audio(bytes::Bytes::copy_from_slice(file))
+        .unwrap()
+        .expect("an audio track")
+        .track
 }
 
 /// Decode a file's audio track to integers: (codec, samples, bit depth).
@@ -59,14 +66,19 @@ pub(super) fn decode(file: &[u8]) -> (String, Vec<i32>, u32) {
     let mut out = Vec::new();
     let bits = match t.codec.as_str() {
         "flac" => {
-            let mut d = FlacDecoder::new(Some(&t.codec_private), t.sample_rate, t.channels as u8).unwrap();
+            let mut d =
+                FlacDecoder::new(Some(&t.codec_private), t.sample_rate, t.channels as u8).unwrap();
             let mut bits = 0;
             for p in &t.samples {
                 let (s, _, b) = d.decode_int(p).unwrap();
                 out.extend(s);
                 bits = b;
             }
-            assert_ne!(d.md5_matches(), Some(false), "the output's STREAMINFO MD5 matches its audio");
+            assert_ne!(
+                d.md5_matches(),
+                Some(false),
+                "the output's STREAMINFO MD5 matches its audio"
+            );
             bits
         }
         "alac" => {
@@ -109,8 +121,13 @@ fn a_flac_source_to_native_flac_is_copied() {
 /// (vendor, title, date), a cover picture and an application block, the way
 /// a tagging tool leaves one.
 fn tagged_flac_m4a(pcm: &[i32]) -> Vec<u8> {
-    let mut enc = FlacEncoder::new(FlacEncoderConfig { sample_rate: 48_000, channels: 2, bits_per_sample: 16, level: FlacLevel::Default })
-        .unwrap();
+    let mut enc = FlacEncoder::new(FlacEncoderConfig {
+        sample_rate: 48_000,
+        channels: 2,
+        bits_per_sample: 16,
+        level: FlacLevel::Default,
+    })
+    .unwrap();
     let mut frames = enc.encode_int(pcm);
     frames.extend(enc.finish());
     let block = |kind: u8, last: bool, body: &[u8]| {
@@ -153,13 +170,31 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 fn a_flac_copy_out_of_an_mp4_drops_the_sources_tags_and_pictures() {
     let pcm = signal(30_000, 2, 16);
     let src = tagged_flac_m4a(&pcm);
-    assert!(contains(&src, b"Secret title") && contains(&src, b"Lavf61") && contains(&src, b"image/png"));
-    for line in ["mode=audio audio=flac audio-container=mp4", "mode=audio audio=flac"] {
+    assert!(
+        contains(&src, b"Secret title")
+            && contains(&src, b"Lavf61")
+            && contains(&src, b"image/png")
+    );
+    for line in [
+        "mode=audio audio=flac audio-container=mp4",
+        "mode=audio audio=flac",
+    ] {
         let out = run(&src, line);
         assert_eq!(out.audio_handling, "flac passthrough", "{line}");
         let bytes = file(&out);
-        for needle in [&b"Secret title"[..], b"Lavf61", b"image/png", b"Cover art", b"applxyz", b"rivet"] {
-            assert!(!contains(bytes, needle), "{line}: the output still holds {:?}", String::from_utf8_lossy(needle));
+        for needle in [
+            &b"Secret title"[..],
+            b"Lavf61",
+            b"image/png",
+            b"Cover art",
+            b"applxyz",
+            b"rivet",
+        ] {
+            assert!(
+                !contains(bytes, needle),
+                "{line}: the output still holds {:?}",
+                String::from_utf8_lossy(needle)
+            );
         }
         assert_eq!(decode(bytes), ("flac".into(), pcm.clone(), 16), "{line}");
     }
@@ -174,7 +209,10 @@ fn a_flac_copy_out_of_an_mp4_drops_the_sources_tags_and_pictures() {
 
 #[test]
 fn a_native_flac_names_no_encoder() {
-    let out = run(&native_flac(&signal(10_000, 2, 16), 2, 16), "mode=audio audio=flac");
+    let out = run(
+        &native_flac(&signal(10_000, 2, 16), 2, 16),
+        "mode=audio audio=flac",
+    );
     let bytes = file(&out);
     assert!(!contains(bytes, b"rivet"));
     // VORBIS_COMMENT: a zero-length vendor string and no comments.
@@ -204,7 +242,10 @@ fn flac_to_alac_in_m4a_is_bit_exact() {
 #[test]
 fn alac_to_flac_in_mp4_is_bit_exact() {
     let pcm = signal(20_000, 2, 16);
-    let out = run(&alac_m4a(&pcm, 2, 16), "mode=audio audio=flac audio-container=mp4 flac-compression=best");
+    let out = run(
+        &alac_m4a(&pcm, 2, 16),
+        "mode=audio audio=flac audio-container=mp4 flac-compression=best",
+    );
     assert_eq!(out.audio_handling, "alac → flac (2ch, 16-bit)");
     assert_eq!(decode(file(&out)), ("flac".into(), pcm, 16));
 }
@@ -212,12 +253,21 @@ fn alac_to_flac_in_mp4_is_bit_exact() {
 #[test]
 fn a_requested_depth_re_encodes_with_rounding() {
     let pcm = signal(10_000, 2, 24);
-    let out = run(&native_flac(&pcm, 2, 24), "mode=audio audio=flac audio-bit-depth=16");
+    let out = run(
+        &native_flac(&pcm, 2, 24),
+        "mode=audio audio=flac audio-bit-depth=16",
+    );
     assert_eq!(out.audio_handling, "flac → flac (2ch, 16-bit)");
-    let want: Vec<i32> = pcm.iter().map(|&s| (f64::from(s) / 256.0).round().clamp(-32_768.0, 32_767.0) as i32).collect();
+    let want: Vec<i32> = pcm
+        .iter()
+        .map(|&s| (f64::from(s) / 256.0).round().clamp(-32_768.0, 32_767.0) as i32)
+        .collect();
     assert_eq!(decode(file(&out)), ("flac".into(), want, 16));
     // The source's own depth, named, is still a copy.
-    let out = run(&native_flac(&pcm, 2, 24), "mode=audio audio=flac audio-bit-depth=24");
+    let out = run(
+        &native_flac(&pcm, 2, 24),
+        "mode=audio audio=flac audio-bit-depth=24",
+    );
     assert_eq!(out.audio_handling, "flac passthrough");
 }
 
@@ -234,10 +284,16 @@ fn a_flac_input_with_no_video_becomes_its_audio_only_form() {
 #[test]
 fn lossless_settings_are_checked() {
     let err = |line: &str| {
-        let e = TranscodeSettings::parse_kv_line(line).and_then(|s| s.into_spec(1280, 720)).unwrap_err();
+        let e = TranscodeSettings::parse_kv_line(line)
+            .and_then(|s| s.into_spec(1280, 720))
+            .unwrap_err();
         format!("{e:#}")
     };
-    assert!(err("audio=flac audio-bitrate=128k").contains("lossless"), "{}", err("audio=flac audio-bitrate=128k"));
+    assert!(
+        err("audio=flac audio-bitrate=128k").contains("lossless"),
+        "{}",
+        err("audio=flac audio-bitrate=128k")
+    );
     assert!(err("audio=opus audio-bit-depth=24").contains("audio-bit-depth applies"));
     assert!(err("audio=alac flac-compression=best").contains("flac-compression applies"));
     assert!(err("mode=audio audio=alac audio-container=flac").contains("holds FLAC only"));
@@ -245,10 +301,23 @@ fn lossless_settings_are_checked() {
     assert!(err("audio-container=flac").contains("mode=audio"));
     assert!(err("audio-bit-depth=20").contains("source|16|24"));
     // Accepted: lossless audio beside video, in either output.
-    for line in ["audio=flac", "audio=alac audio-bit-depth=24", "mode=hls audio=flac flac-compression=fast"] {
-        TranscodeSettings::parse_kv_line(line).unwrap().into_spec(1280, 720).unwrap();
+    for line in [
+        "audio=flac",
+        "audio=alac audio-bit-depth=24",
+        "mode=hls audio=flac flac-compression=fast",
+    ] {
+        TranscodeSettings::parse_kv_line(line)
+            .unwrap()
+            .into_spec(1280, 720)
+            .unwrap();
     }
-    let ext = |line: &str| TranscodeSettings::parse_kv_line(line).unwrap().into_spec(0, 0).unwrap().file_extension();
+    let ext = |line: &str| {
+        TranscodeSettings::parse_kv_line(line)
+            .unwrap()
+            .into_spec(0, 0)
+            .unwrap()
+            .file_extension()
+    };
     assert_eq!(ext("mode=audio audio=flac"), "flac");
     assert_eq!(ext("mode=audio audio=flac audio-container=mp4"), "m4a");
     assert_eq!(ext("mode=audio audio=alac"), "m4a");
@@ -260,15 +329,28 @@ fn an_hls_rendition_names_the_lossless_codecs() {
     let dir = tempfile::tempdir().unwrap();
     let pcm = signal(20_000, 2, 16);
     let track = audio_track(&native_flac(&pcm, 2, 16));
-    for (policy, want) in [(AudioCodecPolicy::Flac, "fLaC"), (AudioCodecPolicy::Alac, "alac")] {
-        let req = AudioRequest { output: AudioOutput::Cmaf, ..AudioRequest::plain(policy) };
-        let prepared = prepare_audio(Some(&track), None, &[], req).unwrap().unwrap();
+    for (policy, want) in [
+        (AudioCodecPolicy::Flac, "fLaC"),
+        (AudioCodecPolicy::Alac, "alac"),
+    ] {
+        let req = AudioRequest {
+            output: AudioOutput::Cmaf,
+            ..AudioRequest::plain(policy)
+        };
+        let prepared = prepare_audio(Some(&track), None, &[], req)
+            .unwrap()
+            .unwrap();
         let root = dir.path().join(want);
-        let variant = build_audio_rendition(&root, &prepared, 4.0, "audio", "Audio").unwrap().unwrap();
+        let variant = build_audio_rendition(&root, &prepared, 4.0, "audio", "Audio")
+            .unwrap()
+            .unwrap();
         assert_eq!(variant.codec_string, want);
         let init = std::fs::read(root.join("audio/init.mp4")).unwrap();
         let config: &[u8] = if want == "fLaC" { b"dfLa" } else { b"alac" };
-        assert!(init.windows(4).any(|w| w == config), "{want} init segment carries its config box");
+        assert!(
+            init.windows(4).any(|w| w == config),
+            "{want} init segment carries its config box"
+        );
     }
 }
 
@@ -276,7 +358,10 @@ fn an_hls_rendition_names_the_lossless_codecs() {
 fn an_m4a_takes_the_lossy_codecs_too() {
     // audio-container=mp4 gives any codec the MP4 muxer takes an .m4a.
     let pcm = signal(24_000, 2, 16);
-    for (line, codec) in [("mode=audio audio=opus audio-container=mp4", "opus"), ("mode=audio audio=aac audio-container=mp4", "aac")] {
+    for (line, codec) in [
+        ("mode=audio audio=opus audio-container=mp4", "opus"),
+        ("mode=audio audio=aac audio-container=mp4", "aac"),
+    ] {
         let out = run(&native_flac(&pcm, 2, 16), line);
         let bytes = file(&out);
         assert_eq!(&bytes[4..12], b"ftypM4A ", "{line}");

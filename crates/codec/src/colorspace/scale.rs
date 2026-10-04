@@ -123,16 +123,13 @@ fn scale_frame_10bit(
     let u_plane =
         super::read_u16le(&frame.data[src_y_size_bytes..src_y_size_bytes + src_c_size_bytes]);
     let v_plane = super::read_u16le(
-        &frame.data
-            [src_y_size_bytes + src_c_size_bytes..src_y_size_bytes + 2 * src_c_size_bytes],
+        &frame.data[src_y_size_bytes + src_c_size_bytes..src_y_size_bytes + 2 * src_c_size_bytes],
     );
 
     // Squad-29: runtime-dispatched (AVX2 when available, scalar fallback).
     let y_dst = bilinear_scale_plane_u16(&y_plane, src_w, src_h, dst_w, dst_h);
-    let u_dst =
-        bilinear_scale_plane_u16(&u_plane, src_w / 2, src_h / 2, dst_w / 2, dst_h / 2);
-    let v_dst =
-        bilinear_scale_plane_u16(&v_plane, src_w / 2, src_h / 2, dst_w / 2, dst_h / 2);
+    let u_dst = bilinear_scale_plane_u16(&u_plane, src_w / 2, src_h / 2, dst_w / 2, dst_h / 2);
+    let v_dst = bilinear_scale_plane_u16(&v_plane, src_w / 2, src_h / 2, dst_w / 2, dst_h / 2);
 
     let mut out = BytesMut::with_capacity(dst_total_bytes);
     super::write_u16le(&mut out, &y_dst);
@@ -226,9 +223,7 @@ pub fn bilinear_scale_plane_u16(
         // scalar (cheap — narrow strips aren't a hotspot).
         if std::is_x86_feature_detected!("avx2") && dst_w >= 16 {
             // SAFETY: avx2 runtime-detected.
-            return unsafe {
-                bilinear_scale_plane_u16_avx2(src, src_w, src_h, dst_w, dst_h)
-            };
+            return unsafe { bilinear_scale_plane_u16_avx2(src, src_w, src_h, dst_w, dst_h) };
         }
     }
     bilinear_scale_plane_u16_scalar(src, src_w, src_h, dst_w, dst_h)
@@ -304,7 +299,9 @@ unsafe fn bilinear_scale_plane_u16_avx2(
         // A group of eight outputs gathers its word pairs when every one of
         // them has its right neighbour at `x0 + 1` (not the edge repeat,
         // whose 32-bit read would run past the row).
-        let gatherable: Vec<bool> = (0..wide / 8).map(|g| (0..8).all(|k| x1s[8 * g + k] == x0s[8 * g + k] + 1)).collect();
+        let gatherable: Vec<bool> = (0..wide / 8)
+            .map(|g| (0..8).all(|k| x1s[8 * g + k] == x0s[8 * g + k] + 1))
+            .collect();
 
         let hrow = |y: usize, out: &mut [i16]| {
             let row = src.as_ptr().add(y * src_w);
@@ -330,11 +327,21 @@ unsafe fn bilinear_scale_plane_u16_avx2(
                 // each in output order (`packus` works per 128-bit lane, so
                 // the quarters are put back in place after it).
                 let lo16 = _mm256_set1_epi32(0xffff);
-                let p00 = _mm256_permute4x64_epi64::<0b11_01_10_00>(_mm256_packus_epi32(_mm256_and_si256(half[0], lo16), _mm256_and_si256(half[1], lo16)));
-                let p10 = _mm256_permute4x64_epi64::<0b11_01_10_00>(_mm256_packus_epi32(_mm256_srli_epi32::<16>(half[0]), _mm256_srli_epi32::<16>(half[1])));
+                let p00 = _mm256_permute4x64_epi64::<0b11_01_10_00>(_mm256_packus_epi32(
+                    _mm256_and_si256(half[0], lo16),
+                    _mm256_and_si256(half[1], lo16),
+                ));
+                let p10 = _mm256_permute4x64_epi64::<0b11_01_10_00>(_mm256_packus_epi32(
+                    _mm256_srli_epi32::<16>(half[0]),
+                    _mm256_srli_epi32::<16>(half[1]),
+                ));
                 let v_fx = _mm256_loadu_si256(fxs_q15.as_ptr().add(dx) as *const __m256i);
-                let v_omfx = _mm256_loadu_si256(one_minus_fxs_q15.as_ptr().add(dx) as *const __m256i);
-                let top = _mm256_add_epi16(_mm256_mulhrs_epi16(p00, v_omfx), _mm256_mulhrs_epi16(p10, v_fx));
+                let v_omfx =
+                    _mm256_loadu_si256(one_minus_fxs_q15.as_ptr().add(dx) as *const __m256i);
+                let top = _mm256_add_epi16(
+                    _mm256_mulhrs_epi16(p00, v_omfx),
+                    _mm256_mulhrs_epi16(p10, v_fx),
+                );
                 _mm256_storeu_si256(out.as_mut_ptr().add(dx) as *mut __m256i, top);
                 dx += 16;
             }
@@ -342,7 +349,8 @@ unsafe fn bilinear_scale_plane_u16_avx2(
 
         let v_max = _mm256_set1_epi16(1023);
         let v_zero = _mm256_setzero_si256();
-        let mut cache: [(usize, Vec<i16>); 2] = [(usize::MAX, vec![0; wide]), (usize::MAX, vec![0; wide])];
+        let mut cache: [(usize, Vec<i16>); 2] =
+            [(usize::MAX, vec![0; wide]), (usize::MAX, vec![0; wide])];
         for dy in 0..dst_h {
             let sy_32_32 = (dy as u64) * y_step;
             let y0 = ((sy_32_32 >> 32) as usize).min(src_h - 1);
@@ -352,13 +360,25 @@ unsafe fn bilinear_scale_plane_u16_avx2(
             let one_minus_fy_q15 = 32767i16 - fy_q15;
             for y in [y0, y1] {
                 if cache[0].0 != y && cache[1].0 != y {
-                    let slot = if cache[0].0 == y0 || cache[0].0 == y1 { 1 } else { 0 };
+                    let slot = if cache[0].0 == y0 || cache[0].0 == y1 {
+                        1
+                    } else {
+                        0
+                    };
                     hrow(y, &mut cache[slot].1);
                     cache[slot].0 = y;
                 }
             }
-            let top = if cache[0].0 == y0 { &cache[0].1 } else { &cache[1].1 };
-            let bottom = if cache[0].0 == y1 { &cache[0].1 } else { &cache[1].1 };
+            let top = if cache[0].0 == y0 {
+                &cache[0].1
+            } else {
+                &cache[1].1
+            };
+            let bottom = if cache[0].0 == y1 {
+                &cache[0].1
+            } else {
+                &cache[1].1
+            };
             let v_fy = _mm256_set1_epi16(fy_q15);
             let v_one_minus_fy = _mm256_set1_epi16(one_minus_fy_q15);
             let dst_row = dy * dst_w;
@@ -366,7 +386,10 @@ unsafe fn bilinear_scale_plane_u16_avx2(
             while dx < wide {
                 let t = _mm256_loadu_si256(top.as_ptr().add(dx) as *const __m256i);
                 let b = _mm256_loadu_si256(bottom.as_ptr().add(dx) as *const __m256i);
-                let out = _mm256_add_epi16(_mm256_mulhrs_epi16(t, v_one_minus_fy), _mm256_mulhrs_epi16(b, v_fy));
+                let out = _mm256_add_epi16(
+                    _mm256_mulhrs_epi16(t, v_one_minus_fy),
+                    _mm256_mulhrs_epi16(b, v_fy),
+                );
                 let clamped = _mm256_min_epi16(_mm256_max_epi16(out, v_zero), v_max);
                 _mm256_storeu_si256(dst.as_mut_ptr().add(dst_row + dx) as *mut __m256i, clamped);
                 dx += 16;
@@ -527,13 +550,9 @@ pub(super) unsafe fn bilinear_scale_plane_u16_avx2_gather(
                 // trick pushing exactly-1023 inputs to 1024 in extreme
                 // edge cases. Use signed min/max on i16 (values are
                 // non-negative for in-range 10-bit input).
-                let clamped =
-                    _mm256_min_epi16(_mm256_max_epi16(out_i16, v_zero), v_max);
+                let clamped = _mm256_min_epi16(_mm256_max_epi16(out_i16, v_zero), v_max);
 
-                _mm256_storeu_si256(
-                    dst.as_mut_ptr().add(dst_row + dx) as *mut _,
-                    clamped,
-                );
+                _mm256_storeu_si256(dst.as_mut_ptr().add(dst_row + dx) as *mut _, clamped);
 
                 dx += 16;
             }
@@ -698,7 +717,8 @@ unsafe fn bilinear_scale_plane_avx2(
                     idx[k] = (x0 - base) as u8;
                     idx[8 + k] = (x1 - base) as u8;
                 }
-                (base + 16 <= src_w).then(|| (base, _mm_loadu_si128(idx.as_ptr() as *const __m128i)))
+                (base + 16 <= src_w)
+                    .then(|| (base, _mm_loadu_si128(idx.as_ptr() as *const __m128i)))
             })
             .collect();
 
@@ -711,7 +731,10 @@ unsafe fn bilinear_scale_plane_avx2(
                 for (h, p) in p.iter_mut().enumerate() {
                     let g = dx / 8 + h;
                     *p = match groups[g] {
-                        Some((base, ctl)) => _mm_shuffle_epi8(_mm_loadu_si128(row.as_ptr().add(base) as *const __m128i), ctl),
+                        Some((base, ctl)) => _mm_shuffle_epi8(
+                            _mm_loadu_si128(row.as_ptr().add(base) as *const __m128i),
+                            ctl,
+                        ),
                         None => {
                             let mut b = [0u8; 16];
                             for k in 0..8 {
@@ -725,18 +748,25 @@ unsafe fn bilinear_scale_plane_avx2(
                 }
                 // Outputs dx..dx+8 from the first group, dx+8..dx+16 from
                 // the second: p00 and p10 as sixteen i16, times 128.
-                let p00 = _mm256_slli_epi16::<7>(_mm256_cvtepu8_epi16(_mm_unpacklo_epi64(p[0], p[1])));
-                let p10 = _mm256_slli_epi16::<7>(_mm256_cvtepu8_epi16(_mm_unpackhi_epi64(p[0], p[1])));
+                let p00 =
+                    _mm256_slli_epi16::<7>(_mm256_cvtepu8_epi16(_mm_unpacklo_epi64(p[0], p[1])));
+                let p10 =
+                    _mm256_slli_epi16::<7>(_mm256_cvtepu8_epi16(_mm_unpackhi_epi64(p[0], p[1])));
                 let v_fx = _mm256_loadu_si256(fx_q15.as_ptr().add(dx) as *const __m256i);
-                let v_omfx = _mm256_loadu_si256(one_minus_fx_q15.as_ptr().add(dx) as *const __m256i);
-                let top = _mm256_add_epi16(_mm256_mulhrs_epi16(p00, v_omfx), _mm256_mulhrs_epi16(p10, v_fx));
+                let v_omfx =
+                    _mm256_loadu_si256(one_minus_fx_q15.as_ptr().add(dx) as *const __m256i);
+                let top = _mm256_add_epi16(
+                    _mm256_mulhrs_epi16(p00, v_omfx),
+                    _mm256_mulhrs_epi16(p10, v_fx),
+                );
                 _mm256_storeu_si256(out.as_mut_ptr().add(dx) as *mut __m256i, top);
                 dx += 16;
             }
         };
 
         // The two source rows' `top` most recently computed, by row.
-        let mut cache: [(usize, Vec<i16>); 2] = [(usize::MAX, vec![0; wide]), (usize::MAX, vec![0; wide])];
+        let mut cache: [(usize, Vec<i16>); 2] =
+            [(usize::MAX, vec![0; wide]), (usize::MAX, vec![0; wide])];
         for dy in 0..dst_h {
             let sy_32_32 = (dy as u64) * y_step;
             let y0 = ((sy_32_32 >> 32) as usize).min(src_h - 1);
@@ -747,13 +777,25 @@ unsafe fn bilinear_scale_plane_avx2(
             for y in [y0, y1] {
                 if cache[0].0 != y && cache[1].0 != y {
                     // Replace the row neither y0 nor y1 is.
-                    let slot = if cache[0].0 == y0 || cache[0].0 == y1 { 1 } else { 0 };
+                    let slot = if cache[0].0 == y0 || cache[0].0 == y1 {
+                        1
+                    } else {
+                        0
+                    };
                     hrow(y, &mut cache[slot].1);
                     cache[slot].0 = y;
                 }
             }
-            let top = if cache[0].0 == y0 { &cache[0].1 } else { &cache[1].1 };
-            let bottom = if cache[0].0 == y1 { &cache[0].1 } else { &cache[1].1 };
+            let top = if cache[0].0 == y0 {
+                &cache[0].1
+            } else {
+                &cache[1].1
+            };
+            let bottom = if cache[0].0 == y1 {
+                &cache[0].1
+            } else {
+                &cache[1].1
+            };
             let v_fy = _mm256_set1_epi16(fy_q15);
             let v_one_minus_fy = _mm256_set1_epi16(one_minus_fy_q15);
             let dst_row = dy * dst_w;
@@ -761,10 +803,19 @@ unsafe fn bilinear_scale_plane_avx2(
             while dx < wide {
                 let t = _mm256_loadu_si256(top.as_ptr().add(dx) as *const __m256i);
                 let b = _mm256_loadu_si256(bottom.as_ptr().add(dx) as *const __m256i);
-                let out_q7 = _mm256_add_epi16(_mm256_mulhrs_epi16(t, v_one_minus_fy), _mm256_mulhrs_epi16(b, v_fy));
-                let shifted = _mm256_srai_epi16::<7>(_mm256_add_epi16(out_q7, _mm256_set1_epi16(64)));
-                let packed = _mm256_permute4x64_epi64::<0b00_00_10_00>(_mm256_packus_epi16(shifted, shifted));
-                _mm_storeu_si128(dst.as_mut_ptr().add(dst_row + dx) as *mut __m128i, _mm256_castsi256_si128(packed));
+                let out_q7 = _mm256_add_epi16(
+                    _mm256_mulhrs_epi16(t, v_one_minus_fy),
+                    _mm256_mulhrs_epi16(b, v_fy),
+                );
+                let shifted =
+                    _mm256_srai_epi16::<7>(_mm256_add_epi16(out_q7, _mm256_set1_epi16(64)));
+                let packed = _mm256_permute4x64_epi64::<0b00_00_10_00>(_mm256_packus_epi16(
+                    shifted, shifted,
+                ));
+                _mm_storeu_si128(
+                    dst.as_mut_ptr().add(dst_row + dx) as *mut __m128i,
+                    _mm256_castsi256_si128(packed),
+                );
                 dx += 16;
             }
             // Scalar tail, as before.
@@ -896,18 +947,10 @@ pub(super) unsafe fn bilinear_scale_plane_avx2_gather(
                 }
 
                 // Widen to i16.
-                let p00 = _mm256_cvtepu8_epi16(
-                    _mm_loadu_si128(p00_buf.as_ptr() as *const _),
-                );
-                let p10 = _mm256_cvtepu8_epi16(
-                    _mm_loadu_si128(p10_buf.as_ptr() as *const _),
-                );
-                let p01 = _mm256_cvtepu8_epi16(
-                    _mm_loadu_si128(p01_buf.as_ptr() as *const _),
-                );
-                let p11 = _mm256_cvtepu8_epi16(
-                    _mm_loadu_si128(p11_buf.as_ptr() as *const _),
-                );
+                let p00 = _mm256_cvtepu8_epi16(_mm_loadu_si128(p00_buf.as_ptr() as *const _));
+                let p10 = _mm256_cvtepu8_epi16(_mm_loadu_si128(p10_buf.as_ptr() as *const _));
+                let p01 = _mm256_cvtepu8_epi16(_mm_loadu_si128(p01_buf.as_ptr() as *const _));
+                let p11 = _mm256_cvtepu8_epi16(_mm_loadu_si128(p11_buf.as_ptr() as *const _));
 
                 // Shift u8 (0..255) up to the top of i16's signed range so
                 // mulhrs_epi16 retains precision. Each u8 value × 128 is in
@@ -1020,18 +1063,42 @@ pub fn scale_region(
     let (cx, cy) = (even(crop.0), even(crop.1));
     // An odd frame edge is kept: the last column/row is inside the crop when
     // it reaches the edge, and snapping it off would lose a sample of picture.
-    let snap = |at: u32, len: u32, edge: u32| if at + len >= edge { edge - at } else { even(len) };
+    let snap = |at: u32, len: u32, edge: u32| {
+        if at + len >= edge {
+            edge - at
+        } else {
+            even(len)
+        }
+    };
     if crop.2 == 0 || crop.3 == 0 || cx >= fw || cy >= fh {
-        bail!("crop {}x{}+{}+{} is empty or outside the {fw}x{fh} frame", crop.2, crop.3, crop.0, crop.1);
+        bail!(
+            "crop {}x{}+{}+{} is empty or outside the {fw}x{fh} frame",
+            crop.2,
+            crop.3,
+            crop.0,
+            crop.1
+        );
     }
-    let (cw, ch) = (snap(cx, crop.2.min(fw - cx), fw), snap(cy, crop.3.min(fh - cy), fh));
+    let (cw, ch) = (
+        snap(cx, crop.2.min(fw - cx), fw),
+        snap(cy, crop.3.min(fh - cy), fh),
+    );
     if !offset.0.is_multiple_of(2) || !offset.1.is_multiple_of(2) {
         bail!("offset {}x{} is not even", offset.0, offset.1);
     }
-    if scaled.0 == 0 || scaled.1 == 0 || offset.0 + scaled.0 > canvas.0 || offset.1 + scaled.1 > canvas.1 {
+    if scaled.0 == 0
+        || scaled.1 == 0
+        || offset.0 + scaled.0 > canvas.0
+        || offset.1 + scaled.1 > canvas.1
+    {
         bail!(
             "a {}x{} picture at +{}+{} does not fit a {}x{} canvas",
-            scaled.0, scaled.1, offset.0, offset.1, canvas.0, canvas.1
+            scaled.0,
+            scaled.1,
+            offset.0,
+            offset.1,
+            canvas.0,
+            canvas.1
         );
     }
     let whole = (cx, cy, cw, ch) == (0, 0, fw, fh);
@@ -1046,7 +1113,11 @@ pub fn scale_region(
     let (w, h) = (fw as usize, fh as usize);
     let luma = w * h * bps;
     let (ceil_c, floor_c) = ((w.div_ceil(2), h.div_ceil(2)), (w / 2, h / 2));
-    let (pcw, pch) = if frame.data.len() >= luma + 2 * ceil_c.0 * ceil_c.1 * bps { ceil_c } else { floor_c };
+    let (pcw, pch) = if frame.data.len() >= luma + 2 * ceil_c.0 * ceil_c.1 * bps {
+        ceil_c
+    } else {
+        floor_c
+    };
     let chroma = pcw * pch * bps;
     if frame.data.len() < luma + 2 * chroma {
         bail!("{fw}x{fh} frame data too short: {} bytes", frame.data.len());
@@ -1060,7 +1131,11 @@ pub fn scale_region(
     let planes = [
         (&frame.data[..luma], w, (cx, cy, cw, ch)),
         (&frame.data[luma..luma + chroma], pcw, chroma_window),
-        (&frame.data[luma + chroma..luma + 2 * chroma], pcw, chroma_window),
+        (
+            &frame.data[luma + chroma..luma + 2 * chroma],
+            pcw,
+            chroma_window,
+        ),
     ];
     let (luma_black, chroma_black): (u16, u16) = if bps == 1 { (16, 128) } else { (64, 512) };
 
@@ -1075,7 +1150,13 @@ pub fn scale_region(
         (canvas.0 * canvas.1) as usize * bps + 2 * half(canvas.0) * half(canvas.1) * bps,
     );
     for (i, (plane, stride, (x, y, pw, ph))) in planes.into_iter().enumerate() {
-        let size = |v: (u32, u32)| if i == 0 { (v.0 as usize, v.1 as usize) } else { (half(v.0), half(v.1)) };
+        let size = |v: (u32, u32)| {
+            if i == 0 {
+                (v.0 as usize, v.1 as usize)
+            } else {
+                (half(v.0), half(v.1))
+            }
+        };
         let (sw, sh) = size(scaled);
         let (dw, dh) = size(canvas);
         let div = if i == 0 { 1 } else { 2 };
@@ -1087,7 +1168,11 @@ pub fn scale_region(
             for row in y..y + ph {
                 window.extend_from_slice(&plane[row * stride + x..row * stride + x + pw]);
             }
-            let resized = if (pw, ph) == (sw, sh) { window } else { bilinear_scale_plane(&window, pw, ph, sw, sh) };
+            let resized = if (pw, ph) == (sw, sh) {
+                window
+            } else {
+                bilinear_scale_plane(&window, pw, ph, sw, sh)
+            };
             let mut canvas_plane = vec![fill as u8; dw * dh];
             for row in 0..sh {
                 let at = (oy + row) * dw + ox;
@@ -1100,8 +1185,11 @@ pub fn scale_region(
             for row in y..y + ph {
                 window.extend_from_slice(&samples[row * stride + x..row * stride + x + pw]);
             }
-            let resized =
-                if (pw, ph) == (sw, sh) { window } else { bilinear_scale_plane_u16(&window, pw, ph, sw, sh) };
+            let resized = if (pw, ph) == (sw, sh) {
+                window
+            } else {
+                bilinear_scale_plane_u16(&window, pw, ph, sw, sh)
+            };
             let mut canvas_plane = vec![fill; dw * dh];
             for row in 0..sh {
                 let at = (oy + row) * dw + ox;
@@ -1110,5 +1198,12 @@ pub fn scale_region(
             super::write_u16le(&mut out, &canvas_plane);
         }
     }
-    Ok(VideoFrame::new(out.freeze(), canvas.0, canvas.1, frame.format, frame.color_space, frame.pts))
+    Ok(VideoFrame::new(
+        out.freeze(),
+        canvas.0,
+        canvas.1,
+        frame.format,
+        frame.color_space,
+        frame.pts,
+    ))
 }

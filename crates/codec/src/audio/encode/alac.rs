@@ -24,7 +24,11 @@ impl AlacAudioEncoder {
     pub fn new(config: &AudioEncoderConfig, bits_per_sample: u8) -> Result<Self, AudioError> {
         let mut inner = AlacEncoder::new(config.sample_rate, config.channels, bits_per_sample)?;
         inner.set_threads(config.threads);
-        Ok(Self { inner, samples_out: 0, threads: config.threads })
+        Ok(Self {
+            inner,
+            samples_out: 0,
+            threads: config.threads,
+        })
     }
 
     /// The thread count handed to the encoder (`config.threads`).
@@ -39,7 +43,11 @@ impl AlacAudioEncoder {
             .map(|(data, n)| {
                 let pts = self.samples_out as i64 * 1_000_000 / rate;
                 self.samples_out += u64::from(n);
-                EncodedAudioPacket { data, pts, duration: i64::from(n) }
+                EncodedAudioPacket {
+                    data,
+                    pts,
+                    duration: i64::from(n),
+                }
             })
             .collect()
     }
@@ -55,7 +63,11 @@ impl AudioEncoder for AlacAudioEncoder {
             )));
         }
         let bits = u32::from(cfg.bit_depth);
-        let ints: Vec<i32> = frame.samples.iter().map(|&x| lossless::pcm::f32_to_int(x, bits)).collect();
+        let ints: Vec<i32> = frame
+            .samples
+            .iter()
+            .map(|&x| lossless::pcm::f32_to_int(x, bits))
+            .collect();
         let frames = self.inner.encode_int(&ints);
         Ok(self.packets(frames))
     }

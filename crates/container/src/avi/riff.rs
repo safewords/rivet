@@ -174,7 +174,11 @@ pub(super) fn parse_strl(strl: &[u8], stream_index: u32) -> Option<VideoStream> 
     // 40 + the avcC record); the chunk may carry a pad byte past that. A
     // muxer that left `biSize` at 40 gets everything after the header.
     let bi_size = u32::from_le_bytes([strf[0], strf[1], strf[2], strf[3]]) as usize;
-    let extradata_end = if bi_size > 40 { bi_size.min(strf.len()) } else { strf.len() };
+    let extradata_end = if bi_size > 40 {
+        bi_size.min(strf.len())
+    } else {
+        strf.len()
+    };
     let extradata = strf.get(40..extradata_end).unwrap_or_default().to_vec();
 
     Some(VideoStream {
@@ -202,11 +206,7 @@ pub(crate) fn fourcc_to_codec(fcc: &[u8; 4]) -> Option<String> {
     // Case-fold so "xvid"/"XVID"/"XviD" all match.
     let mut norm = [0u8; 4];
     for (i, b) in fcc.iter().enumerate() {
-        norm[i] = if b.is_ascii_lowercase() {
-            b - 32
-        } else {
-            *b
-        };
+        norm[i] = if b.is_ascii_lowercase() { b - 32 } else { *b };
     }
     match &norm {
         // MPEG-4 Part 2 family (DivX 4+ / XviD and friends)
@@ -266,8 +266,11 @@ pub(super) fn collect_movi_samples(
         if fcc == b"LIST" && payload_start + 4 <= payload_end {
             let list_type = &movi[payload_start..payload_start + 4];
             if list_type == b"rec " {
-                chunks +=
-                    collect_movi_samples(&movi[payload_start + 4..payload_end], stream_prefix, out)?;
+                chunks += collect_movi_samples(
+                    &movi[payload_start + 4..payload_end],
+                    stream_prefix,
+                    out,
+                )?;
             }
         } else if fcc.len() == 4 && fcc[0] == prefix[0] && fcc[1] == prefix[1] {
             // `##dc` = compressed DIB, `##db` = uncompressed DIB — both
@@ -291,7 +294,11 @@ pub(super) fn collect_movi_samples(
 /// frame's time in `dwScale / dwRate` ticks. Chunk headers only: the chunks
 /// [`collect_movi_samples`] walks, without copying a payload. The count and
 /// the frames differ when empty chunks sit between the frames.
-pub(super) fn video_frame_positions(data: &[u8], movi_lists: &[(usize, usize)], prefix: &[u8; 2]) -> (u64, Vec<u64>) {
+pub(super) fn video_frame_positions(
+    data: &[u8],
+    movi_lists: &[(usize, usize)],
+    prefix: &[u8; 2],
+) -> (u64, Vec<u64>) {
     fn walk(data: &[u8], start: usize, end: usize, prefix: &[u8; 2], counts: &mut (u64, Vec<u64>)) {
         let end = end.min(data.len());
         let mut pos = start;
@@ -347,11 +354,18 @@ pub(super) fn frame_pacing(frames: &[u64], chunks: u64) -> Option<(Vec<u32>, f64
     if frames.len() < 2 || chunks <= last {
         return None;
     }
-    let gaps: Vec<u64> = frames.windows(2).map(|w| w[1] - w[0]).chain(std::iter::once(chunks - last)).collect();
+    let gaps: Vec<u64> = frames
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .chain(std::iter::once(chunks - last))
+        .collect();
     let mut sorted = gaps.clone();
     sorted.sort_unstable();
     let median = sorted[(sorted.len() - 1) / 2].max(1) as f64;
-    let periods: Vec<u64> = gaps.iter().map(|&g| ((g as f64 / median).round() as u64).max(1)).collect();
+    let periods: Vec<u64> = gaps
+        .iter()
+        .map(|&g| ((g as f64 / median).round() as u64).max(1))
+        .collect();
     if periods.iter().all(|&p| p == 1) {
         return None;
     }

@@ -8,15 +8,15 @@ use codec::audio::{
     AudioCodec, AudioEncoderConfig, create_decoder as audio_decoder,
     create_encoder as audio_encoder,
 };
+use container::AudioInfo;
 use container::cmaf::CmafAudioMuxer;
 use container::demux::AudioTrack;
 use container::hls::AudioVariantSpec;
-use container::AudioInfo;
 
 use crate::cmaf_util::add_audio_sample_with_segment_flush;
 use crate::spec::{
-    AudioBitDepth, AudioChannels, AudioCodecPolicy, AudioDecodeDeny, Container, FlacLevel, HeAacPolicy, OutputMode,
-    OutputSpec,
+    AudioBitDepth, AudioChannels, AudioCodecPolicy, AudioDecodeDeny, Container, FlacLevel,
+    HeAacPolicy, OutputMode, OutputSpec,
 };
 
 // ---------------------------------------------------------------------------
@@ -82,7 +82,10 @@ impl PreparedAudio {
         }
         let total = |s: &[(Vec<u8>, u32)]| s.iter().map(|(_, d)| u64::from(*d)).sum::<u64>();
         // Where this track's presentation ends, in its own media ticks.
-        let presented = self.edit.duration.unwrap_or(total(&self.samples).saturating_sub(self.edit.media_time));
+        let presented = self
+            .edit
+            .duration
+            .unwrap_or(total(&self.samples).saturating_sub(self.edit.media_time));
         let end = self.edit.media_time + presented;
         // A fixed-frame codec's last packet decodes to a whole frame even when
         // its duration says less: the encoder's end padding, which the track's
@@ -104,8 +107,10 @@ impl PreparedAudio {
         let skip = (other.edit.media_time as i64 + overrun).max(0) as u64;
         let (drop, dropped_to) = nearest_packet_boundary(&other.samples, skip);
         self.samples.extend(other.samples[drop..].iter().cloned());
-        let other_presented =
-            other.edit.duration.unwrap_or(total(&other.samples).saturating_sub(other.edit.media_time));
+        let other_presented = other
+            .edit
+            .duration
+            .unwrap_or(total(&other.samples).saturating_sub(other.edit.media_time));
         self.edit.duration = Some(presented + other_presented);
         tracing::info!(
             join_error_ticks = overrun - (dropped_to as i64 - other.edit.media_time as i64),
@@ -122,14 +127,19 @@ impl PreparedAudio {
 /// half a frame ([`container::edit::AudioGap`]), and is not a frame. `None`
 /// for Opus, whose packets legitimately vary.
 fn fixed_frame_ticks(codec: &str, samples: &[(Vec<u8>, u32)]) -> Option<u32> {
-    let fixed = ["aac", "ac3", "eac3", "dts", "mp3"].iter().any(|c| codec.eq_ignore_ascii_case(c));
+    let fixed = ["aac", "ac3", "eac3", "dts", "mp3"]
+        .iter()
+        .any(|c| codec.eq_ignore_ascii_case(c));
     if !fixed {
         return None;
     }
     let mut durations: Vec<u32> = samples.iter().map(|(_, d)| *d).collect();
     durations.sort_unstable();
     let median = u64::from(*durations.get(durations.len() / 2)?);
-    durations.into_iter().rev().find(|&d| 2 * u64::from(d) <= 3 * median)
+    durations
+        .into_iter()
+        .rev()
+        .find(|&d| 2 * u64::from(d) <= 3 * median)
 }
 
 /// The number of leading packets whose end is nearest to `ticks`, and that
@@ -215,7 +225,8 @@ impl<'a> AudioRequest<'a> {
             flac_level: spec.flac_level,
             he_aac: spec.he_aac,
             decode_deny: spec.audio_decode_deny,
-            clear_encoder_names: spec.metadata_keep.device == container::metadata::DeviceKeep::Strip,
+            clear_encoder_names: spec.metadata_keep.device
+                == container::metadata::DeviceKeep::Strip,
         }
     }
 
@@ -242,14 +253,21 @@ impl<'a> AudioRequest<'a> {
     /// bits or fewer and for a lossy source, 24 for anything deeper).
     fn encode_codec(&self, track: &AudioTrack) -> AudioCodec {
         let bits_per_sample = || {
-            self.bit_depth.bits().unwrap_or(match source_bits(&track.codec.to_ascii_lowercase(), track) {
-                Some(b) if b > 16 => 24,
-                _ => 16,
-            })
+            self.bit_depth.bits().unwrap_or(
+                match source_bits(&track.codec.to_ascii_lowercase(), track) {
+                    Some(b) if b > 16 => 24,
+                    _ => 16,
+                },
+            )
         };
         match self.policy {
-            AudioCodecPolicy::Flac => AudioCodec::Flac { bits_per_sample: bits_per_sample(), level: self.flac_level },
-            AudioCodecPolicy::Alac => AudioCodec::Alac { bits_per_sample: bits_per_sample() },
+            AudioCodecPolicy::Flac => AudioCodec::Flac {
+                bits_per_sample: bits_per_sample(),
+                level: self.flac_level,
+            },
+            AudioCodecPolicy::Alac => AudioCodec::Alac {
+                bits_per_sample: bits_per_sample(),
+            },
             p if p.forced_lossy().is_some() => p.forced_lossy().expect("checked"),
             _ if self.output == AudioOutput::Mp3File => AudioCodec::Mp3,
             _ => AudioCodec::Opus,
@@ -266,8 +284,14 @@ impl<'a> AudioRequest<'a> {
         let mp3_in_mp4 = codec == "mp3" && track.sample_rate >= 16_000;
         // What the output holds, whatever the policy.
         let holds = match self.output {
-            AudioOutput::Mp4 => PASSTHROUGH.contains(&codec.as_str()) || mp3_in_mp4 || matches!(codec.as_str(), "flac" | "alac"),
-            AudioOutput::Cmaf => PASSTHROUGH.contains(&codec.as_str()) || matches!(codec.as_str(), "flac" | "alac"),
+            AudioOutput::Mp4 => {
+                PASSTHROUGH.contains(&codec.as_str())
+                    || mp3_in_mp4
+                    || matches!(codec.as_str(), "flac" | "alac")
+            }
+            AudioOutput::Cmaf => {
+                PASSTHROUGH.contains(&codec.as_str()) || matches!(codec.as_str(), "flac" | "alac")
+            }
             AudioOutput::WebM | AudioOutput::OggFile => matches!(codec.as_str(), "opus" | "vorbis"),
             AudioOutput::Mp3File => codec == "mp3",
             AudioOutput::FlacFile => codec == "flac",
@@ -278,16 +302,25 @@ impl<'a> AudioRequest<'a> {
             // asked for. Its packets are timed in samples, so its track's
             // clock has to be its rate.
             AudioCodecPolicy::Flac | AudioCodecPolicy::Alac => {
-                let wanted = if self.policy == AudioCodecPolicy::Flac { "flac" } else { "alac" };
+                let wanted = if self.policy == AudioCodecPolicy::Flac {
+                    "flac"
+                } else {
+                    "alac"
+                };
                 holds
                     && codec == wanted
-                    && self.bit_depth.bits().is_none_or(|b| Some(b) == source_bits(&codec, track))
+                    && self
+                        .bit_depth
+                        .bits()
+                        .is_none_or(|b| Some(b) == source_bits(&codec, track))
                     && track.timescale == track.sample_rate
             }
             // A forced codec keeps a source already in it: any AAC for
             // audio=aac (as it always has), an HE-AAC one (v1 or v2) for
             // audio=he-aac, an HE-AAC v2 one for audio=he-aacv2.
-            AudioCodecPolicy::ForceHeAac => holds && matches!(profile, AacProfile::He | AacProfile::HeV2),
+            AudioCodecPolicy::ForceHeAac => {
+                holds && matches!(profile, AacProfile::He | AacProfile::HeV2)
+            }
             AudioCodecPolicy::ForceHeAacV2 => holds && profile == AacProfile::HeV2,
             p if p.kept_codec().is_some() => holds && Some(codec.as_str()) == p.kept_codec(),
             // Auto: what plays or is kept verbatim. MP3 goes into a
@@ -296,8 +329,10 @@ impl<'a> AudioRequest<'a> {
             // lossless codecs are re-encoded to the lossy default: Auto does
             // not keep a stream ten times the size of what it would write
             // (except into a native FLAC file, which holds nothing else).
-            _ => (holds && !matches!(codec.as_str(), "flac" | "alac"))
-                || (self.output == AudioOutput::FlacFile && codec == "flac"),
+            _ => {
+                (holds && !matches!(codec.as_str(), "flac" | "alac"))
+                    || (self.output == AudioOutput::FlacFile && codec == "flac")
+            }
         }
     }
 }
@@ -364,7 +399,10 @@ pub(super) fn prepare_audio(
         return Ok(None);
     }
     let codec = track.codec.to_ascii_lowercase();
-    let audio_only = matches!(req.output, AudioOutput::Mp3File | AudioOutput::FlacFile | AudioOutput::OggFile);
+    let audio_only = matches!(
+        req.output,
+        AudioOutput::Mp3File | AudioOutput::FlacFile | AudioOutput::OggFile
+    );
     // A track the demuxer could name but not read (a codec rivet has no
     // reader for, or packets that would not parse) has no packets: refused
     // by name, never written as though the source were silent.
@@ -392,7 +430,11 @@ pub(super) fn prepare_audio(
     // gives the rate the decoder outputs.
     let core_only = req.he_aac == HeAacPolicy::Core;
     let aac = (codec == "aac" && !denied).then(|| {
-        codec::audio::decode::aac::probe(&track.asc, track.samples.first().map_or(&[][..], Vec::as_slice), core_only)
+        codec::audio::decode::aac::probe(
+            &track.asc,
+            track.samples.first().map_or(&[][..], Vec::as_slice),
+            core_only,
+        )
     });
     let he_aac = matches!(&aac, Some(Ok(info)) if info.he_aac.is_some());
     let profile = match &aac {
@@ -406,16 +448,20 @@ pub(super) fn prepare_audio(
     // Codecs `codec::audio::create_decoder` can turn into PCM (linear PCM
     // included: it only needs converting).
     let decodable = !denied
-        && (matches!(codec.as_str(), "mp3" | "mp2" | "vorbis" | "dts" | "ac3" | "eac3" | "opus" | "flac" | "alac")
-            || codec::audio::decode::PcmFormat::from_codec(&codec).is_some()
+        && (matches!(
+            codec.as_str(),
+            "mp3" | "mp2" | "vorbis" | "dts" | "ac3" | "eac3" | "opus" | "flac" | "alac"
+        ) || codec::audio::decode::PcmFormat::from_codec(&codec).is_some()
             || matches!(aac, Some(Ok(_))));
     // Why this track cannot be decoded, for the messages that refuse a job.
     let undecodable = match &aac {
         _ if denied => format!("decoding {codec} audio is denied by the audio-decode-deny setting"),
         Some(Err(e)) => format!("this {codec} stream cannot be decoded ({e})"),
-        Some(Ok(_)) if he_aac => "the track is HE-AAC, which he-aac=passthrough keeps undecoded (he-aac=auto \
+        Some(Ok(_)) if he_aac => {
+            "the track is HE-AAC, which he-aac=passthrough keeps undecoded (he-aac=auto \
                                   decodes it in full, he-aac=core its AAC-LC core)"
-            .to_string(),
+                .to_string()
+        }
         _ => format!("{codec} has no decoder in this build"),
     };
     // he-aac=passthrough: never decoded, kept whole wherever passing it
@@ -438,7 +484,9 @@ pub(super) fn prepare_audio(
         );
     }
     // The layout asked for is the source's own: nothing to convert.
-    let channels_kept = wanted.as_ref().is_none_or(|w| w.len() == usize::from(track.channels));
+    let channels_kept = wanted
+        .as_ref()
+        .is_none_or(|w| w.len() == usize::from(track.channels));
     let target = req.encode_codec(track);
     let target_name = target.name();
     // The codec asked for, but this source cannot be decoded (an AAC object
@@ -451,7 +499,11 @@ pub(super) fn prepare_audio(
         && !carried
         && !decodable
         && !matches!(req.output, AudioOutput::Mp3File | AudioOutput::FlacFile)
-        && AudioRequest { policy: AudioCodecPolicy::Auto, ..req }.carries(track, profile);
+        && AudioRequest {
+            policy: AudioCodecPolicy::Auto,
+            ..req
+        }
+        .carries(track, profile);
 
     if !filtered && channels_kept && (carried || unreachable) {
         if unreachable && keep_he_aac {
@@ -461,7 +513,10 @@ pub(super) fn prepare_audio(
                  passed through"
             );
         } else if unreachable {
-            tracing::warn!(codec, "{target_name} requested but {undecodable}; passing the source audio through");
+            tracing::warn!(
+                codec,
+                "{target_name} requested but {undecodable}; passing the source audio through"
+            );
         }
         let info = passthrough_info(&codec, track);
         // The source's edit, applied exactly: whole packets outside it (beyond
@@ -481,7 +536,10 @@ pub(super) fn prepare_audio(
                 );
                 (cut.packets, cut.edit)
             }
-            None => (0..track.samples.len(), container::edit::TrackEdit::default()),
+            None => (
+                0..track.samples.len(),
+                container::edit::TrackEdit::default(),
+            ),
         };
         let mut samples: Vec<(Vec<u8>, u32)> = track.samples[packets.clone()]
             .iter()
@@ -497,23 +555,32 @@ pub(super) fn prepare_audio(
                 n += usize::from(container::metadata::scrub::aac_frame(p));
             }
             if n > 0 {
-                tracing::info!(packets = n, "aac passthrough: the source encoder's fill data cleared");
+                tracing::info!(
+                    packets = n,
+                    "aac passthrough: the source encoder's fill data cleared"
+                );
             }
         } else if clear {
-            let mut frames: Vec<Vec<u8>> = samples.iter_mut().map(|(p, _)| std::mem::take(p)).collect();
+            let mut frames: Vec<Vec<u8>> =
+                samples.iter_mut().map(|(p, _)| std::mem::take(p)).collect();
             let n = container::metadata::scrub::mp3_frames(&mut frames);
             for ((p, _), f) in samples.iter_mut().zip(frames) {
                 *p = f;
             }
             if n > 0 {
-                tracing::info!(bytes = n, "mp3 passthrough: the source frames' ancillary data cleared");
+                tracing::info!(
+                    bytes = n,
+                    "mp3 passthrough: the source frames' ancillary data cleared"
+                );
             }
         }
         return Ok(Some(PreparedAudio {
             info,
             samples,
             handling: if unreachable && keep_he_aac {
-                format!("{codec} passthrough ({target_name} requested; HE-AAC kept whole, not decoded)")
+                format!(
+                    "{codec} passthrough ({target_name} requested; HE-AAC kept whole, not decoded)"
+                )
             } else if unreachable && denied {
                 format!("{codec} passthrough ({target_name} requested; decoding {codec} is denied)")
             } else if unreachable {
@@ -543,9 +610,16 @@ pub(super) fn prepare_audio(
         // Refused, naming what needs it, before anything is decoded: a
         // denied codec is never dropped silently either.
         let why = if filtered {
-            format!("audio filters: {}", codec::audio::filter::chain_to_string(filters))
+            format!(
+                "audio filters: {}",
+                codec::audio::filter::chain_to_string(filters)
+            )
         } else if !channels_kept {
-            format!("audio-channels={} of a {}-channel track", req.channels.as_str(), track.channels)
+            format!(
+                "audio-channels={} of a {}-channel track",
+                req.channels.as_str(),
+                track.channels
+            )
         } else if req.output == AudioOutput::Mp3File {
             "an .mp3 file holds MP3".to_string()
         } else if req.output == AudioOutput::FlacFile {
@@ -589,19 +663,32 @@ pub(super) fn prepare_audio(
         }
         return Err(audio_unusable(
             &codec,
-            &format!("can be neither passed into this output nor decoded to {target_name}: {undecodable}"),
+            &format!(
+                "can be neither passed into this output nor decoded to {target_name}: {undecodable}"
+            ),
             audio_only,
         ));
     }
 
     // AAC's configuration is the AudioSpecificConfig the demuxer keeps apart
     // (`asc`); the other codecs' is their codec private data.
-    let private = if codec == "aac" { &track.asc } else { &track.codec_private };
-    let extra: Option<&[u8]> = if private.is_empty() { None } else { Some(private.as_slice()) };
-    let mut dec: Box<dyn codec::audio::AudioDecoder> = if codec == "aac" && core_only {
-        Box::new(codec::audio::decode::aac::AacDecoder::new_core_only(extra).context("audio decoder")?)
+    let private = if codec == "aac" {
+        &track.asc
     } else {
-        audio_decoder(&codec, extra, track.sample_rate, track.channels as u8).context("audio decoder")?
+        &track.codec_private
+    };
+    let extra: Option<&[u8]> = if private.is_empty() {
+        None
+    } else {
+        Some(private.as_slice())
+    };
+    let mut dec: Box<dyn codec::audio::AudioDecoder> = if codec == "aac" && core_only {
+        Box::new(
+            codec::audio::decode::aac::AacDecoder::new_core_only(extra).context("audio decoder")?,
+        )
+    } else {
+        audio_decoder(&codec, extra, track.sample_rate, track.channels as u8)
+            .context("audio decoder")?
     };
     // Opus decodes at 48 kHz whatever the container says the input was, and
     // AAC at the rate its probe found (an HE-AAC track's SBR rate, or its
@@ -693,7 +780,10 @@ pub(super) fn prepare_audio(
         return Ok(Some(dropped(codec)));
     };
     let depth = match target {
-        AudioCodec::Flac { bits_per_sample, .. } | AudioCodec::Alac { bits_per_sample } => {
+        AudioCodec::Flac {
+            bits_per_sample, ..
+        }
+        | AudioCodec::Alac { bits_per_sample } => {
             format!(", {bits_per_sample}-bit")
         }
         _ => String::new(),
@@ -709,9 +799,16 @@ pub(super) fn prepare_audio(
         _ => codec.clone(),
     };
     let handling = if done.out_layout.len() == done.in_layout.len() {
-        format!("{source} → {target_name} ({}ch{depth})", done.out_layout.len())
+        format!(
+            "{source} → {target_name} ({}ch{depth})",
+            done.out_layout.len()
+        )
     } else {
-        format!("{source} → {target_name} ({}ch → {}ch{depth})", done.in_layout.len(), done.out_layout.len())
+        format!(
+            "{source} → {target_name} ({}ch → {}ch{depth})",
+            done.in_layout.len(),
+            done.out_layout.len()
+        )
     };
     if done.in_layout != done.out_layout {
         tracing::info!(from = %done.in_layout, to = %done.out_layout, codec, "audio channel layout converted");
@@ -724,11 +821,24 @@ pub(super) fn prepare_audio(
     // after exactly the samples that went in.
     let out_rate = done.out_rate;
     let edit = container::edit::TrackEdit {
-        delay: edit.map_or(0, |e| container::edit::rescale_round(e.delay, out_rate, track.timescale)),
+        delay: edit.map_or(0, |e| {
+            container::edit::rescale_round(e.delay, out_rate, track.timescale)
+        }),
         media_time: u64::from(done.pre_skip),
-        duration: Some(container::edit::rescale_round(done.encoded_samples, out_rate, done.in_rate)),
+        duration: Some(container::edit::rescale_round(
+            done.encoded_samples,
+            out_rate,
+            done.in_rate,
+        )),
     };
-    Ok(Some(PreparedAudio { info: done.info, samples, handling, encoder: None, file_header: done.file_header, edit }))
+    Ok(Some(PreparedAudio {
+        info: done.info,
+        samples,
+        handling,
+        encoder: None,
+        file_header: done.file_header,
+        edit,
+    }))
 }
 
 /// The edit that hides a decoded Opus track's pre-skip, from its `OpusHead`,
@@ -740,7 +850,11 @@ fn opus_pre_skip_edit(codec: &str, track: &AudioTrack) -> Option<container::edit
     let head = codec::audio::decode::opus::OpusHead::parse(&track.codec_private).ok()?;
     (head.pre_skip > 0).then(|| container::edit::AudioEdit {
         delay: 0,
-        media_start: container::edit::rescale_round(u64::from(head.pre_skip), track.timescale, 48_000),
+        media_start: container::edit::rescale_round(
+            u64::from(head.pre_skip),
+            track.timescale,
+            48_000,
+        ),
         media_end: None,
     })
 }
@@ -832,7 +946,8 @@ impl<'a> EncodeState<'a> {
     ) -> Result<()> {
         self.last = Some((frame.channels, layout.clone()));
         let filters = self.req.filters;
-        let filtered = codec::audio::filter::apply_chain(frame, filters).context("audio filter chain")?;
+        let filtered =
+            codec::audio::filter::apply_chain(frame, filters).context("audio filter chain")?;
         // The speakers the filtered frame carries: the chain's own output
         // layout when it names one, else the decoder's, else the default.
         let source = match codec::audio::filter::output_layout(filters, frame.channels)
@@ -841,13 +956,15 @@ impl<'a> EncodeState<'a> {
             Some(l) => l,
             None => match layout {
                 Some(l) if l.len() == usize::from(filtered.channels) => l,
-                _ => ChannelLayout::default_for(filtered.channels).context("audio channel layout")?,
+                _ => {
+                    ChannelLayout::default_for(filtered.channels).context("audio channel layout")?
+                }
             },
         };
         if self.enc.is_none() {
             let out_layout = self.output_layout(&source)?;
             let enc = audio_encoder(self.encoder_config(filtered.sample_rate, &out_layout))
-            .with_context(|| format!("{:?} encoder", self.codec))?;
+                .with_context(|| format!("{:?} encoder", self.codec))?;
             self.enc = Some(enc);
             self.in_rate = filtered.sample_rate;
             self.in_layout = Some(source.clone());
@@ -862,9 +979,13 @@ impl<'a> EncodeState<'a> {
         }
         let remix = self.remix.as_ref().expect("set above");
         let remixed = remix.apply(&filtered)?;
-        self.encoded_samples += (remixed.samples.len() / usize::from(remixed.channels.max(1))) as u64;
+        self.encoded_samples +=
+            (remixed.samples.len() / usize::from(remixed.channels.max(1))) as u64;
         let enc = self.enc.as_mut().expect("built above");
-        for pkt in enc.encode(&remixed).with_context(|| format!("{:?} encode", self.codec))? {
+        for pkt in enc
+            .encode(&remixed)
+            .with_context(|| format!("{:?} encode", self.codec))?
+        {
             out.push((pkt.data, pkt.duration as u32));
         }
         Ok(())
@@ -893,13 +1014,17 @@ impl<'a> EncodeState<'a> {
             });
         }
         match self.codec {
-            AudioCodec::Opus => remix::opus_layout(source)
-                .with_context(|| format!("no Opus channel mapping carries a {source} source; set audio-channels")),
-            AudioCodec::Vorbis => remix::vorbis_layout(source)
-                .with_context(|| format!("no Vorbis channel layout carries a {source} source; set audio-channels")),
+            AudioCodec::Opus => remix::opus_layout(source).with_context(|| {
+                format!("no Opus channel mapping carries a {source} source; set audio-channels")
+            }),
+            AudioCodec::Vorbis => remix::vorbis_layout(source).with_context(|| {
+                format!("no Vorbis channel layout carries a {source} source; set audio-channels")
+            }),
             AudioCodec::Mp3 => Ok(remix::mp3_layout(source)),
             AudioCodec::Aac | AudioCodec::HeAac => remix::aac_layout(source).with_context(|| {
-                format!("no AAC channel configuration carries a {source} source; set audio-channels")
+                format!(
+                    "no AAC channel configuration carries a {source} source; set audio-channels"
+                )
             }),
             AudioCodec::HeAacV2 => {
                 if source.len() < 2 {
@@ -916,7 +1041,10 @@ impl<'a> EncodeState<'a> {
             // is: a lossless output changes nothing it need not.
             AudioCodec::Flac { .. } | AudioCodec::Alac { .. } => {
                 if source.len() > 8 {
-                    bail!("FLAC and ALAC carry at most 8 channels; this {source} source has {}", source.len());
+                    bail!(
+                        "FLAC and ALAC carry at most 8 channels; this {source} source has {}",
+                        source.len()
+                    );
                 }
                 Ok(source.clone())
             }
@@ -930,27 +1058,35 @@ impl<'a> EncodeState<'a> {
         let Some(mut enc) = self.enc.take() else {
             return Ok(None);
         };
-        for pkt in enc.flush().with_context(|| format!("{:?} encoder flush", self.codec))? {
+        for pkt in enc
+            .flush()
+            .with_context(|| format!("{:?} encoder flush", self.codec))?
+        {
             out.push((pkt.data, pkt.duration as u32));
         }
         let out_layout = self.out_layout.expect("set with the encoder");
         let channels = out_layout.len() as u16;
         let rate = enc.sample_rate();
-        let first = || out.first().map(|(p, _)| p.as_slice()).context("the encoder wrote no packet");
-        let info = match self.codec {
-            AudioCodec::Opus => AudioInfo::opus(self.in_rate, channels, enc.extra_data()),
-            AudioCodec::Mp3 => AudioInfo::mp3(rate, channels),
-            AudioCodec::Aac | AudioCodec::HeAac | AudioCodec::HeAacV2 => {
-                AudioInfo::aac_lc(rate, channels, enc.extra_data())
-            }
-            AudioCodec::Vorbis => AudioInfo::vorbis(rate, channels, enc.extra_data()),
-            AudioCodec::Ac3 | AudioCodec::Eac3 => {
-                AudioInfo::from_ac3_frame(first()?).context("describing the AC-3 stream written")?
-            }
-            AudioCodec::Dts => AudioInfo::from_dts_frame(first()?).context("describing the DTS stream written")?,
-            AudioCodec::Flac { .. } => AudioInfo::flac(rate, channels, enc.extra_data()),
-            AudioCodec::Alac { .. } => AudioInfo::alac(rate, channels, enc.extra_data()),
+        let first = || {
+            out.first()
+                .map(|(p, _)| p.as_slice())
+                .context("the encoder wrote no packet")
         };
+        let info =
+            match self.codec {
+                AudioCodec::Opus => AudioInfo::opus(self.in_rate, channels, enc.extra_data()),
+                AudioCodec::Mp3 => AudioInfo::mp3(rate, channels),
+                AudioCodec::Aac | AudioCodec::HeAac | AudioCodec::HeAacV2 => {
+                    AudioInfo::aac_lc(rate, channels, enc.extra_data())
+                }
+                AudioCodec::Vorbis => AudioInfo::vorbis(rate, channels, enc.extra_data()),
+                AudioCodec::Ac3 | AudioCodec::Eac3 => AudioInfo::from_ac3_frame(first()?)
+                    .context("describing the AC-3 stream written")?,
+                AudioCodec::Dts => AudioInfo::from_dts_frame(first()?)
+                    .context("describing the DTS stream written")?,
+                AudioCodec::Flac { .. } => AudioInfo::flac(rate, channels, enc.extra_data()),
+                AudioCodec::Alac { .. } => AudioInfo::alac(rate, channels, enc.extra_data()),
+            };
         Ok(Some(Encoded {
             info,
             in_layout: self.in_layout.expect("set with the encoder"),
@@ -973,7 +1109,10 @@ impl<'a> EncodeState<'a> {
 /// job is refused, naming the muxer's reason, unless the spec dropped the
 /// audio. HLS writes its audio through the CMAF init segment, which takes
 /// any of these tracks.
-pub(super) fn fit_single_file(audio: Option<PreparedAudio>, container: Container) -> Result<Option<PreparedAudio>> {
+pub(super) fn fit_single_file(
+    audio: Option<PreparedAudio>,
+    container: Container,
+) -> Result<Option<PreparedAudio>> {
     let Some(a) = audio else {
         return Ok(None);
     };
@@ -1023,11 +1162,18 @@ impl PcmWindow {
     pub(super) fn new(edit: &container::edit::AudioEdit, timescale: u32, sample_rate: u32) -> Self {
         let samples = |ticks: u64| container::edit::rescale_round(ticks, sample_rate, timescale);
         let skip = samples(edit.media_start);
-        Self { skip, keep: edit.media_end.map(|end| samples(end).saturating_sub(skip)), at: 0 }
+        Self {
+            skip,
+            keep: edit.media_end.map(|end| samples(end).saturating_sub(skip)),
+            at: 0,
+        }
     }
 
     /// The part of the next decoded `frame` inside the window, `None` when none is.
-    pub(super) fn take(&mut self, frame: &codec::audio::AudioFrame) -> Option<codec::audio::AudioFrame> {
+    pub(super) fn take(
+        &mut self,
+        frame: &codec::audio::AudioFrame,
+    ) -> Option<codec::audio::AudioFrame> {
         let channels = usize::from(frame.channels.max(1));
         let start = self.at;
         let end = start + (frame.samples.len() / channels) as u64;
@@ -1037,7 +1183,10 @@ impl PcmWindow {
         if lo >= hi {
             return None;
         }
-        let (a, b) = ((lo - start) as usize * channels, (hi - start) as usize * channels);
+        let (a, b) = (
+            (lo - start) as usize * channels,
+            (hi - start) as usize * channels,
+        );
         Some(codec::audio::AudioFrame {
             samples: frame.samples[a..b].to_vec(),
             sample_rate: frame.sample_rate,
@@ -1061,14 +1210,42 @@ fn passthrough_info(codec: &str, track: &AudioTrack) -> AudioInfo {
 fn passthrough_description(codec: &str, track: &AudioTrack) -> AudioInfo {
     match codec {
         "aac" => AudioInfo::aac_lc(track.sample_rate, track.channels, track.asc.clone()),
-        "opus" => AudioInfo::opus(track.sample_rate, track.channels, track.codec_private.clone()),
-        "ac3" => AudioInfo::ac3(track.sample_rate, track.channels, track.codec_private.clone()),
-        "eac3" => AudioInfo::eac3(track.sample_rate, track.channels, track.codec_private.clone()),
+        "opus" => AudioInfo::opus(
+            track.sample_rate,
+            track.channels,
+            track.codec_private.clone(),
+        ),
+        "ac3" => AudioInfo::ac3(
+            track.sample_rate,
+            track.channels,
+            track.codec_private.clone(),
+        ),
+        "eac3" => AudioInfo::eac3(
+            track.sample_rate,
+            track.channels,
+            track.codec_private.clone(),
+        ),
         "mp3" => AudioInfo::mp3(track.sample_rate, track.channels),
-        "dts" => AudioInfo::dts(track.sample_rate, track.channels, track.codec_private.clone()),
-        "flac" => AudioInfo::flac(track.sample_rate, track.channels, track.codec_private.clone()),
-        "alac" => AudioInfo::alac(track.sample_rate, track.channels, track.codec_private.clone()),
-        "vorbis" => AudioInfo::vorbis(track.sample_rate, track.channels, track.codec_private.clone()),
+        "dts" => AudioInfo::dts(
+            track.sample_rate,
+            track.channels,
+            track.codec_private.clone(),
+        ),
+        "flac" => AudioInfo::flac(
+            track.sample_rate,
+            track.channels,
+            track.codec_private.clone(),
+        ),
+        "alac" => AudioInfo::alac(
+            track.sample_rate,
+            track.channels,
+            track.codec_private.clone(),
+        ),
+        "vorbis" => AudioInfo::vorbis(
+            track.sample_rate,
+            track.channels,
+            track.codec_private.clone(),
+        ),
         _ => AudioInfo::aac_lc(track.sample_rate, track.channels, track.asc.clone()),
     }
 }
@@ -1078,8 +1255,12 @@ fn passthrough_description(codec: &str, track: &AudioTrack) -> AudioInfo {
 fn source_bits(codec: &str, track: &AudioTrack) -> Option<u8> {
     use codec::audio::lossless::{alac::Config as AlacConfig, flac::stream_info_from_extra};
     match codec {
-        "flac" => stream_info_from_extra(&track.codec_private).ok().map(|i| i.bits_per_sample),
-        "alac" => AlacConfig::parse(&track.codec_private).ok().map(|c| c.bit_depth),
+        "flac" => stream_info_from_extra(&track.codec_private)
+            .ok()
+            .map(|i| i.bits_per_sample),
+        "alac" => AlacConfig::parse(&track.codec_private)
+            .ok()
+            .map(|c| c.bit_depth),
         "pcm_u8" => Some(8),
         "pcm_s16le" => Some(16),
         "pcm_s24le" | "pcm_f32le" | "pcm_f64le" => Some(24),
@@ -1105,8 +1286,11 @@ pub(super) fn build_audio_rendition(
     }
     let audio_dir = asset_root.join(relative_dir);
     let seg_target_ticks = (segment_seconds as f64 * audio.info.timescale as f64).round() as u64;
-    let mut muxer = CmafAudioMuxer::new(&audio_dir, audio.info.clone()).context("CmafAudioMuxer::new")?;
-    muxer.set_edit(audio.edit).context("placing the HLS audio rendition on the source's audio edit")?;
+    let mut muxer =
+        CmafAudioMuxer::new(&audio_dir, audio.info.clone()).context("CmafAudioMuxer::new")?;
+    muxer
+        .set_edit(audio.edit)
+        .context("placing the HLS audio rendition on the source's audio edit")?;
     for (payload, dur) in &audio.samples {
         add_audio_sample_with_segment_flush(&mut muxer, payload.clone(), *dur, seg_target_ticks)?;
     }
@@ -1145,11 +1329,12 @@ pub(super) fn audio_codec_string(info: &AudioInfo) -> String {
         "vorbis" => "vorbis".into(),
         _ => {
             use container::aac_asc::AscSignaling;
-            let aot = container::aac_asc::parse_aac_asc(&info.asc_bytes).map(|a| match a.signaling {
-                AscSignaling::ExplicitSbr => 5,
-                AscSignaling::ExplicitPs => 29,
-                _ => a.aot,
-            });
+            let aot =
+                container::aac_asc::parse_aac_asc(&info.asc_bytes).map(|a| match a.signaling {
+                    AscSignaling::ExplicitSbr => 5,
+                    AscSignaling::ExplicitPs => 29,
+                    _ => a.aot,
+                });
             match aot {
                 Some(aot) => format!("mp4a.40.{aot}"),
                 None => codec::codec_strings::AAC_LC_CODEC_STRING.to_string(),
@@ -1167,11 +1352,24 @@ mod thread_budget_tests {
     /// read as one worker per core whatever else is running.
     #[test]
     fn the_encoder_gets_the_jobs_share_of_the_machine() {
-        for codec in [AudioCodec::Mp3, AudioCodec::Vorbis, AudioCodec::Flac { bits_per_sample: 16, level: FlacLevel::Default }, AudioCodec::Alac { bits_per_sample: 16 }] {
+        for codec in [
+            AudioCodec::Mp3,
+            AudioCodec::Vorbis,
+            AudioCodec::Flac {
+                bits_per_sample: 16,
+                level: FlacLevel::Default,
+            },
+            AudioCodec::Alac {
+                bits_per_sample: 16,
+            },
+        ] {
             let state = EncodeState::new(AudioRequest::plain(AudioCodecPolicy::Auto), codec);
             let cfg = state.encoder_config(48_000, &ChannelLayout::named("stereo"));
             assert!(cfg.threads >= 1, "{codec:?}: no explicit thread count");
-            assert!(cfg.threads <= crate::thread_budget::parallelism(), "{codec:?}: more threads than the machine");
+            assert!(
+                cfg.threads <= crate::thread_budget::parallelism(),
+                "{codec:?}: more threads than the machine"
+            );
         }
     }
 }

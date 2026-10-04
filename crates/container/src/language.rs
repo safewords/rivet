@@ -64,7 +64,9 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
 
 fn lookup(code: &str) -> Option<&'static (&'static str, &'static str, &'static str, &'static str)> {
     let code = code.trim().to_ascii_lowercase();
-    TABLE.iter().find(|(t, b, one, _)| code == *t || (!b.is_empty() && code == *b) || code == *one)
+    TABLE
+        .iter()
+        .find(|(t, b, one, _)| code == *t || (!b.is_empty() && code == *b) || code == *one)
 }
 
 /// The BCP-47 tag for a container language code: `eng` / `en` → `en`,

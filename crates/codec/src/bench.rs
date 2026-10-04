@@ -273,12 +273,10 @@ impl Sweep {
             return None;
         }
 
-        self.samples
-            .iter()
-            .min_by(|a, b| {
-                let cost = |s: &Sample| (1.0 - s.ssim) + lambda * (s.bytes as f64 / pixels);
-                cost(a).total_cmp(&cost(b))
-            })
+        self.samples.iter().min_by(|a, b| {
+            let cost = |s: &Sample| (1.0 - s.ssim) + lambda * (s.bytes as f64 / pixels);
+            cost(a).total_cmp(&cost(b))
+        })
     }
 
     /// Where spending more bytes stops buying much quality.
@@ -304,7 +302,8 @@ impl Sweep {
         self.samples
             .windows(2)
             .map(|pair| {
-                let gain = pair[0].bytes_per_ssim_above(floor) - pair[1].bytes_per_ssim_above(floor);
+                let gain =
+                    pair[0].bytes_per_ssim_above(floor) - pair[1].bytes_per_ssim_above(floor);
                 (gain, &pair[1])
             })
             .max_by(|a, b| a.0.total_cmp(&b.0))
@@ -355,7 +354,11 @@ pub fn sweep(base: &EncoderConfig, frames: &[VideoFrame], candidates: &[i16]) ->
 /// Pin the device through `base.gpu_index` / `base.gpu_vendor` before calling,
 /// or every candidate lands on whichever card the dispatch chain picks first
 /// and the fan-out is a queue with extra steps.
-pub fn measure_candidate(base: &EncoderConfig, frames: &[VideoFrame], delta: i16) -> Result<Sample> {
+pub fn measure_candidate(
+    base: &EncoderConfig,
+    frames: &[VideoFrame],
+    delta: i16,
+) -> Result<Sample> {
     measure(base, frames, delta)
 }
 
@@ -381,7 +384,9 @@ fn measure(base: &EncoderConfig, frames: &[VideoFrame], delta: i16) -> Result<Sa
                 .with_context(|| format!("scaling to {}x{}", config.width, config.height))?
         };
 
-        encoder.send_frame(&source).with_context(|| format!("encoding at delta {delta}"))?;
+        encoder
+            .send_frame(&source)
+            .with_context(|| format!("encoding at delta {delta}"))?;
         while let Some(packet) = encoder.receive_packet()? {
             packet_sizes.push(packet.data.len() as u64);
             trimmed += trimmed_len(&packet.data);
@@ -420,7 +425,9 @@ fn measure(base: &EncoderConfig, frames: &[VideoFrame], delta: i16) -> Result<Sa
 
     let (mut psnr, mut ssim, mut scored) = (0.0f64, 0.0f64, 0usize);
     while let Some(decoded) = decoder.decode_next()? {
-        let Some(reference) = frames.get(scored) else { break };
+        let Some(reference) = frames.get(scored) else {
+            break;
+        };
 
         // Scaled back up to the reference before scoring, because that is what
         // a viewer sees: a 720p rung is not watched at 720p, it is watched
@@ -437,7 +444,9 @@ fn measure(base: &EncoderConfig, frames: &[VideoFrame], delta: i16) -> Result<Sa
             decoded
         } else {
             crate::colorspace::scale_frame(&decoded, reference.width, reference.height)
-                .with_context(|| format!("scaling back to {}x{}", reference.width, reference.height))?
+                .with_context(|| {
+                    format!("scaling back to {}x{}", reference.width, reference.height)
+                })?
         };
 
         if let Some(Score { psnr: p, ssim: s }) = quality::score_frame(reference, &shown) {

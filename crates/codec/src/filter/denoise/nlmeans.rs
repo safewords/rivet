@@ -40,7 +40,10 @@
 //! thread count.
 
 // The vector bodies are only reached through `tiered!`'s x86 arms.
-#![cfg_attr(not(any(target_arch = "x86", target_arch = "x86_64")), allow(dead_code))]
+#![cfg_attr(
+    not(any(target_arch = "x86", target_arch = "x86_64")),
+    allow(dead_code)
+)]
 
 use super::for_row_bands;
 use super::simd::{Simd, Tier, tiered};
@@ -130,7 +133,10 @@ impl Weights {
             return 1.0;
         }
         // `as usize` saturates, so a huge excess lands past the table.
-        self.lut.get((excess * self.scale) as usize).copied().unwrap_or(0.0)
+        self.lut
+            .get((excess * self.scale) as usize)
+            .copied()
+            .unwrap_or(0.0)
     }
 }
 
@@ -153,7 +159,14 @@ struct Kernel<'a> {
 impl<'a> Kernel<'a> {
     /// `None` when there is nothing to average (empty plane or a research
     /// window of one sample) — the caller copies the source.
-    fn new(src: &'a [u8], w: usize, h: usize, patch: u32, research: u32, sigma: f32) -> Option<Self> {
+    fn new(
+        src: &'a [u8],
+        w: usize,
+        h: usize,
+        patch: u32,
+        research: u32,
+        sigma: f32,
+    ) -> Option<Self> {
         if w == 0 || h == 0 || src.len() < w * h {
             return None;
         }
@@ -175,7 +188,17 @@ impl<'a> Kernel<'a> {
             dst[pr + w..].fill(row[w - 1]);
         }
         let side = 2 * pr + 1;
-        Some(Kernel { src, w, h, pr, srx, sry, pad, pw, weights: Weights::new(sigma, side * side) })
+        Some(Kernel {
+            src,
+            w,
+            h,
+            pr,
+            srx,
+            sry,
+            pad,
+            pw,
+            weights: Weights::new(sigma, side * side),
+        })
     }
 
     /// Denoise output rows `y0 .. y0 + rows.len() / w` into `rows`.
@@ -239,7 +262,9 @@ impl<'a> Kernel<'a> {
                         let c0 = ((y + dy) * w) as isize + xa as isize + dx;
                         let cand = &src[c0 as usize..][..xb - xa];
                         let (s, ws) = (&mut sum[acc + xa..acc + xb], &mut wsum[acc + xa..acc + xb]);
-                        for (((s, ws), &wt), &c) in s.iter_mut().zip(ws.iter_mut()).zip(wr).zip(cand) {
+                        for (((s, ws), &wt), &c) in
+                            s.iter_mut().zip(ws.iter_mut()).zip(wr).zip(cand)
+                        {
                             *s += wt * c as f32;
                             *ws += wt;
                         }
@@ -251,7 +276,9 @@ impl<'a> Kernel<'a> {
                         let cand = &src[qy * w + xa..qy * w + xb];
                         let x0 = (acc as isize + xa as isize + dx) as usize;
                         let (s, ws) = (&mut sum[x0..x0 + (xb - xa)], &mut wsum[x0..x0 + (xb - xa)]);
-                        for (((s, ws), &wt), &c) in s.iter_mut().zip(ws.iter_mut()).zip(wr).zip(cand) {
+                        for (((s, ws), &wt), &c) in
+                            s.iter_mut().zip(ws.iter_mut()).zip(wr).zip(cand)
+                        {
                             *s += wt * c as f32;
                             *ws += wt;
                         }
@@ -341,7 +368,11 @@ impl<'a> Kernel<'a> {
 fn weights_row_scalar(win: &[u32], out: &mut [f32], free: f32, scale: f32, lut: &[f32]) {
     for (o, &s) in out.iter_mut().zip(win) {
         let excess = s as f32 - free;
-        *o = if excess <= 0.0 { 1.0 } else { lut.get((excess * scale) as usize).copied().unwrap_or(0.0) };
+        *o = if excess <= 0.0 {
+            1.0
+        } else {
+            lut.get((excess * scale) as usize).copied().unwrap_or(0.0)
+        };
     }
 }
 
@@ -353,18 +384,34 @@ tiered!(fn weights_row(win: &[u32], out: &mut [f32], free: f32, scale: f32, lut:
 /// the table's trailing 0 past its end, which is what `unwrap_or(0.0)`
 /// reads there; 1 elsewhere.
 #[inline(always)]
-unsafe fn weights_row_body<S: Simd>(win: &[u32], out: &mut [f32], free: f32, scale: f32, lut: &[f32]) {
+unsafe fn weights_row_body<S: Simd>(
+    win: &[u32],
+    out: &mut [f32],
+    free: f32,
+    scale: f32,
+    lut: &[f32],
+) {
     unsafe {
         let l = S::LANES;
         let wide = win.len() - win.len() % l;
         let (zero, one) = (S::set1_f32(0.0), S::set1_f32(1.0));
-        let (vfree, vscale, end) = (S::set1_f32(free), S::set1_f32(scale), S::set1_f32((lut.len() - 1) as f32));
+        let (vfree, vscale, end) = (
+            S::set1_f32(free),
+            S::set1_f32(scale),
+            S::set1_f32((lut.len() - 1) as f32),
+        );
         let mut i = 0;
         while i < wide {
-            let excess = S::sub_f32(S::i32_to_f32(S::load_i32(win.as_ptr().add(i) as *const i32)), vfree);
+            let excess = S::sub_f32(
+                S::i32_to_f32(S::load_i32(win.as_ptr().add(i) as *const i32)),
+                vfree,
+            );
             let p = S::min_f32(S::max_f32(S::mul_f32(excess, vscale), zero), end);
             let wt = S::gather_f32(lut, S::trunc_f32_i32(p));
-            S::store_f32(out.as_mut_ptr().add(i), S::blend_f32(wt, one, S::cmpge_f32(zero, excess)));
+            S::store_f32(
+                out.as_mut_ptr().add(i),
+                S::blend_f32(wt, one, S::cmpge_f32(zero, excess)),
+            );
             i += l;
         }
         weights_row_scalar(&win[wide..], &mut out[wide..], free, scale, lut);
@@ -384,7 +431,9 @@ mod tests {
     fn every_tier_weighs_like_the_scalar_row() {
         let mut seed = 0x77_u64;
         let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) as u32
         };
         for (sigma, n) in [(1.0f32, 9usize), (10.0, 9), (30.0, 49), (4.0, 9801)] {
@@ -409,7 +458,12 @@ mod tests {
                 for tier in Tier::available() {
                     let mut got = vec![0f32; len];
                     weights_row(tier, &win, &mut got, wt.free, wt.scale, &wt.lut);
-                    assert!(got.iter().zip(&want).all(|(a, b)| a.to_bits() == b.to_bits()), "{tier:?} sigma {sigma} len {len}");
+                    assert!(
+                        got.iter()
+                            .zip(&want)
+                            .all(|(a, b)| a.to_bits() == b.to_bits()),
+                        "{tier:?} sigma {sigma} len {len}"
+                    );
                 }
             }
         }
@@ -462,7 +516,13 @@ mod tests {
     #[test]
     fn the_fast_kernel_equals_the_direct_definition() {
         for (w, h, src) in planes() {
-            for (p, r, s) in [(3, 5, 10.0), (1, 3, 30.0), (5, 7, 4.0), (7, 9, 1.0), (4, 6, 12.0)] {
+            for (p, r, s) in [
+                (3, 5, 10.0),
+                (1, 3, 30.0),
+                (5, 7, 4.0),
+                (7, 9, 1.0),
+                (4, 6, 12.0),
+            ] {
                 assert_eq!(
                     plane_params(&src, w, h, p, r, s),
                     direct(&src, w, h, p, r, s),
@@ -493,9 +553,15 @@ mod tests {
         let row = noisy(41, 3);
         let out = plane_params(&row, 41, 1, 3, 7, 30.0);
         assert_eq!(out, direct(&row, 41, 1, 3, 7, 30.0));
-        assert_ne!(out, row, "a 1-row plane must still be filtered horizontally");
+        assert_ne!(
+            out, row,
+            "a 1-row plane must still be filtered horizontally"
+        );
         let colm = noisy(41, 4);
-        assert_eq!(plane_params(&colm, 1, 41, 3, 7, 30.0), direct(&colm, 1, 41, 3, 7, 30.0));
+        assert_eq!(
+            plane_params(&colm, 1, 41, 3, 7, 30.0),
+            direct(&colm, 1, 41, 3, 7, 30.0)
+        );
     }
 
     #[test]

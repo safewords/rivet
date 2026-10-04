@@ -51,14 +51,33 @@ fn source(n: u64) -> VideoFrame {
             data[w * h + cw * ch + y * cw + x] = 150 - y as u8;
         }
     }
-    VideoFrame::new(data.into(), W, H, PixelFormat::Yuv420p, ColorSpace::Bt709, n)
+    VideoFrame::new(
+        data.into(),
+        W,
+        H,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        n,
+    )
 }
 
 /// `frames` frames encoded by the encoder `select_encoder` builds for `codec`.
-fn encode(codec: VideoCodec, frames: u64, tweak: impl FnOnce(&mut EncoderConfig)) -> Vec<EncodedPacket> {
-    let mut cfg = EncoderConfig { width: W, height: H, frame_rate: FPS, codec, keyframe_interval: 10, ..Default::default() };
+fn encode(
+    codec: VideoCodec,
+    frames: u64,
+    tweak: impl FnOnce(&mut EncoderConfig),
+) -> Vec<EncodedPacket> {
+    let mut cfg = EncoderConfig {
+        width: W,
+        height: H,
+        frame_rate: FPS,
+        codec,
+        keyframe_interval: 10,
+        ..Default::default()
+    };
     tweak(&mut cfg);
-    let mut enc: Box<dyn Encoder> = select_encoder(cfg, None).expect("rivet's own encoder for the codec");
+    let mut enc: Box<dyn Encoder> =
+        select_encoder(cfg, None).expect("rivet's own encoder for the codec");
     let mut out = Vec::new();
     for n in 0..frames {
         enc.send_frame(&source(n)).expect("send_frame");
@@ -105,7 +124,8 @@ fn read_back(file: &[u8]) -> Readback {
         Err(e) => panic!("rivet demuxes the file: {e:#}"),
     };
     let header = demux.header().clone();
-    let mut dec = codec::decode::create_decoder(&header.codec, header.info.clone()).expect("a decoder for the codec");
+    let mut dec = codec::decode::create_decoder(&header.codec, header.info.clone())
+        .expect("a decoder for the codec");
     let mut pts = Vec::new();
     let mut frames = Vec::new();
     while let Some(s) = demux.next_video_sample().unwrap() {
@@ -119,7 +139,12 @@ fn read_back(file: &[u8]) -> Readback {
     while let Some(f) = dec.decode_next().unwrap() {
         frames.push(f);
     }
-    Readback { codec: header.codec.clone(), dims: (header.info.width, header.info.height), pts, frames }
+    Readback {
+        codec: header.codec.clone(),
+        dims: (header.info.width, header.info.height),
+        pts,
+        frames,
+    }
 }
 
 /// Luma PSNR of `frame` against source frame `n` (8-bit, or 10-bit scaled).
@@ -131,10 +156,16 @@ fn psnr(frame: &VideoFrame, n: u64) -> f64 {
         if bits == 8 {
             f64::from(frame.data[i])
         } else {
-            f64::from(u16::from_le_bytes([frame.data[2 * i], frame.data[2 * i + 1]])) / f64::from(1u32 << (bits - 8))
+            f64::from(u16::from_le_bytes([
+                frame.data[2 * i],
+                frame.data[2 * i + 1],
+            ])) / f64::from(1u32 << (bits - 8))
         }
     };
-    let mse: f64 = (0..luma).map(|i| (sample(i) - f64::from(src.data[i])).powi(2)).sum::<f64>() / luma as f64;
+    let mse: f64 = (0..luma)
+        .map(|i| (sample(i) - f64::from(src.data[i])).powi(2))
+        .sum::<f64>()
+        / luma as f64;
     10.0 * (255.0f64 * 255.0 / mse.max(1e-9)).log10()
 }
 
@@ -146,12 +177,19 @@ fn check(file: &[u8], label: &str, frames: u64, floor: f64) -> f64 {
     assert_eq!(r.codec, label, "codec label");
     assert_eq!(r.dims, (W, H), "{label}: dimensions");
     assert_eq!(r.pts.len() as u64, frames, "{label}: one sample per frame");
-    assert_eq!(r.frames.len() as u64, frames, "{label}: one decoded frame per frame");
+    assert_eq!(
+        r.frames.len() as u64,
+        frames,
+        "{label}: one decoded frame per frame"
+    );
     let mut presented = r.pts.clone();
     presented.sort_by(f64::total_cmp);
     for (i, t) in presented.iter().enumerate() {
         let want = presented[0] + i as f64 / FPS;
-        assert!((t - want).abs() < 0.0015, "{label}: frame {i} presented at {t:.4}s, want {want:.4}s");
+        assert!(
+            (t - want).abs() < 0.0015,
+            "{label}: frame {i} presented at {t:.4}s, want {want:.4}s"
+        );
     }
     let mut worst = f64::INFINITY;
     for (n, f) in r.frames.iter().enumerate() {
@@ -160,7 +198,10 @@ fn check(file: &[u8], label: &str, frames: u64, floor: f64) -> f64 {
         assert!(q > floor, "{label}: frame {n} at {q:.2} dB (floor {floor})");
         worst = worst.min(q);
     }
-    eprintln!("{label}: {frames} frames, worst luma PSNR {worst:.2} dB, {} bytes", file.len());
+    eprintln!(
+        "{label}: {frames} frames, worst luma PSNR {worst:.2} dB, {} bytes",
+        file.len()
+    );
     worst
 }
 
@@ -209,7 +250,11 @@ fn mpeg2_with_b_pictures_in_mp4_and_mov() {
 
 #[test]
 fn mpeg4_simple_and_advanced_simple_in_mp4() {
-    let sp = mp4(VideoCodec::Mpeg4, encode(VideoCodec::Mpeg4, 12, |_| {}), false);
+    let sp = mp4(
+        VideoCodec::Mpeg4,
+        encode(VideoCodec::Mpeg4, 12, |_| {}),
+        false,
+    );
     check(&sp, "mpeg4", 12, 30.0);
     let asp_packets = encode(VideoCodec::Mpeg4, 12, |c| c.overrides.bframes = Some(2));
     let asp = mp4(VideoCodec::Mpeg4, asp_packets, true);
@@ -225,8 +270,14 @@ fn mpeg4_from_mp4_with_the_vol_only_in_the_esds() {
     let file = mp4(VideoCodec::Mpeg4, packets.clone(), false);
     // The muxer's esds holds the configuration headers verbatim, and the
     // first sample keeps its own copy.
-    let vol = container::mpeg_es::mpeg4_config(&packets[0].data).unwrap().to_vec();
-    let copies = |f: &[u8]| f.windows(vol.len()).filter(|w| *w == vol.as_slice()).count();
+    let vol = container::mpeg_es::mpeg4_config(&packets[0].data)
+        .unwrap()
+        .to_vec();
+    let copies = |f: &[u8]| {
+        f.windows(vol.len())
+            .filter(|w| *w == vol.as_slice())
+            .count()
+    };
     assert_eq!(copies(&file), 2);
     // The file as other muxers write it: the VOL in the esds alone.
     let stripped = strip_first_sample_prefix(&file, &packets[0].data, vol.len());
@@ -239,7 +290,10 @@ fn mpeg4_from_mp4_with_the_vol_only_in_the_esds() {
 /// Rebuilt by moving the sample's tail over the cut and shifting the mdat:
 /// simpler here than a second muxer, and only this test needs it.
 fn strip_first_sample_prefix(file: &[u8], first: &[u8], n: usize) -> Vec<u8> {
-    let at = file.windows(first.len()).position(|w| w == first).expect("the first sample in the mdat");
+    let at = file
+        .windows(first.len())
+        .position(|w| w == first)
+        .expect("the first sample in the mdat");
     let mut out = file.to_vec();
     out.drain(at..at + n);
     // stsz: the first entry_size follows sample_size (0) and sample_count.
@@ -282,7 +336,8 @@ fn prores_every_profile_in_mov() {
         check(&mov, "prores", 4, floor);
     }
     // ProRes is a QuickTime codec: an ISO MP4 is refused.
-    let mut m = Av1Mp4Muxer::new_with_codec(W, H, FPS, VideoCodec::ProRes(ProresProfile::Hq)).unwrap();
+    let mut m =
+        Av1Mp4Muxer::new_with_codec(W, H, FPS, VideoCodec::ProRes(ProresProfile::Hq)).unwrap();
     for p in encode(VideoCodec::ProRes(ProresProfile::Hq), 1, |_| {}) {
         m.add_packet(p).unwrap();
     }
@@ -323,7 +378,10 @@ fn matroska(codec_id: &str, codec_private: Option<&[u8]>, frames: &[Vec<u8>]) ->
     ebml.extend(uint(&[0x42, 0x87], 4));
     ebml.extend(uint(&[0x42, 0x85], 2));
     let mut info = uint(&[0x2A, 0xD7, 0xB1], 1_000_000);
-    info.extend(el(&[0x44, 0x89], &(frames.len() as f64 * 40.0).to_be_bytes()));
+    info.extend(el(
+        &[0x44, 0x89],
+        &(frames.len() as f64 * 40.0).to_be_bytes(),
+    ));
     info.extend(el(&[0x4D, 0x80], b"test"));
     info.extend(el(&[0x57, 0x41], b"test"));
     let mut video = uint(&[0xB0], u64::from(W));
@@ -374,7 +432,9 @@ fn matroska_check(file: &[u8], label: &str, frames: u64, floor: f64) {
 #[test]
 fn mpeg4_from_matroska_with_the_vol_in_codec_private() {
     let packets = encode(VideoCodec::Mpeg4, 6, |_| {});
-    let vol = container::mpeg_es::mpeg4_config(&packets[0].data).unwrap().to_vec();
+    let vol = container::mpeg_es::mpeg4_config(&packets[0].data)
+        .unwrap()
+        .to_vec();
     let mut frames = frames_of(&packets);
     frames[0].drain(..vol.len());
     for id in ["V_MPEG4/ISO/SP", "V_MPEG4/ISO/ASP"] {
@@ -386,16 +446,33 @@ fn mpeg4_from_matroska_with_the_vol_in_codec_private() {
     bih[0..4].copy_from_slice(&40u32.to_le_bytes());
     bih[16..20].copy_from_slice(b"XVID");
     bih.extend_from_slice(&vol);
-    matroska_check(&matroska("V_MS/VFW/FOURCC", Some(&bih), &frames), "mpeg4", 6, 30.0);
+    matroska_check(
+        &matroska("V_MS/VFW/FOURCC", Some(&bih), &frames),
+        "mpeg4",
+        6,
+        30.0,
+    );
 }
 
 #[test]
 fn mpeg1_and_mpeg2_from_matroska() {
     let packets = encode(VideoCodec::Mpeg2, 7, |_| {});
-    let seq = container::mpeg_es::mpeg2_config(&packets[0].data).unwrap().to_vec();
-    matroska_check(&matroska("V_MPEG2", Some(&seq), &frames_of(&packets)), "mpeg2", 7, 30.0);
+    let seq = container::mpeg_es::mpeg2_config(&packets[0].data)
+        .unwrap()
+        .to_vec();
+    matroska_check(
+        &matroska("V_MPEG2", Some(&seq), &frames_of(&packets)),
+        "mpeg2",
+        7,
+        30.0,
+    );
     // V_MPEG1 takes the same path (the MPEG-2 decoder reads both).
-    matroska_check(&matroska("V_MPEG1", None, &frames_of(&packets)), "mpeg1", 7, 30.0);
+    matroska_check(
+        &matroska("V_MPEG1", None, &frames_of(&packets)),
+        "mpeg1",
+        7,
+        30.0,
+    );
 }
 
 #[test]
@@ -406,7 +483,12 @@ fn prores_from_matroska_without_its_frame_header() {
     // size and `icpf`); the demuxer puts them back.
     let frames: Vec<Vec<u8>> = packets.iter().map(|p| p.data[8..].to_vec()).collect();
     assert_eq!(&packets[0].data[4..8], b"icpf");
-    matroska_check(&matroska("V_PRORES", Some(b"apch"), &frames), "prores", 3, 35.0);
+    matroska_check(
+        &matroska("V_PRORES", Some(b"apch"), &frames),
+        "prores",
+        3,
+        35.0,
+    );
 }
 
 /// One 188-byte TS packet stream for `payload` on `pid`, the first packet
@@ -416,7 +498,11 @@ fn ts_packetize(pid: u16, payload: &[u8], cc: &mut u8) -> Vec<u8> {
     let mut rest = payload;
     let mut first = true;
     while !rest.is_empty() {
-        let mut pkt = vec![0x47, (if first { 0x40 } else { 0 }) | (pid >> 8) as u8, pid as u8];
+        let mut pkt = vec![
+            0x47,
+            (if first { 0x40 } else { 0 }) | (pid >> 8) as u8,
+            pid as u8,
+        ];
         let take = rest.len().min(184);
         if take < 184 {
             let af_len = 184 - take - 1;
@@ -470,10 +556,15 @@ fn mpeg1_video_from_mpeg_ts() {
     let (mut cc_pat, mut cc_pmt, mut cc_vid) = (0u8, 0u8, 0u8);
     let mut ts = Vec::new();
     // PAT: program 1 on PID 0x100.
-    let pat = [0x00, 0xB0, 13, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xE1, 0x00];
+    let pat = [
+        0x00, 0xB0, 13, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xE1, 0x00,
+    ];
     ts.extend(section_packet(0, &pat, &mut cc_pat));
     // PMT: PCR on 0x200, one stream: type 0x01 on 0x200.
-    let pmt = [0x02, 0xB0, 18, 0x00, 0x01, 0xC1, 0x00, 0x00, 0xE2, 0x00, 0xF0, 0x00, 0x01, 0xE2, 0x00, 0xF0, 0x00];
+    let pmt = [
+        0x02, 0xB0, 18, 0x00, 0x01, 0xC1, 0x00, 0x00, 0xE2, 0x00, 0xF0, 0x00, 0x01, 0xE2, 0x00,
+        0xF0, 0x00,
+    ];
     ts.extend(section_packet(0x100, &pmt, &mut cc_pmt));
     for p in &packets {
         let pts = 90_000 + p.pts * 3600;
@@ -494,7 +585,17 @@ fn mpeg1_video_from_mpeg_ts() {
 /// One MPEG-2 PES packet (`'10'` header, PTS only) around `payload`.
 fn pes(stream_id: u8, pts: u64, payload: &[u8]) -> Vec<u8> {
     let len = 3 + 5 + payload.len();
-    let mut p = vec![0, 0, 1, stream_id, (len >> 8) as u8, len as u8, 0x80, 0x80, 5];
+    let mut p = vec![
+        0,
+        0,
+        1,
+        stream_id,
+        (len >> 8) as u8,
+        len as u8,
+        0x80,
+        0x80,
+        5,
+    ];
     p.extend(pts_bytes(pts));
     p.extend_from_slice(payload);
     p
@@ -508,9 +609,16 @@ fn pes(stream_id: u8, pts: u64, payload: &[u8]) -> Vec<u8> {
 #[test]
 fn mpeg2_and_ac3_from_a_program_stream() {
     let packets = encode(VideoCodec::Mpeg2, 10, |_| {});
-    let ts = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../container/tests/fixtures/timing/ac3_video_first.ts"))
-        .expect("the AC-3 fixture");
-    let ac3 = demux_streaming(&ts).unwrap().audio().cloned().expect("its AC-3 track");
+    let ts = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../container/tests/fixtures/timing/ac3_video_first.ts"
+    ))
+    .expect("the AC-3 fixture");
+    let ac3 = demux_streaming(&ts)
+        .unwrap()
+        .audio()
+        .cloned()
+        .expect("its AC-3 track");
     assert_eq!(ac3.codec, "ac3");
     let pack = [0, 0, 1, 0xBA, 0x44, 0, 4, 0, 4, 1, 0x01, 0x89, 0xC3, 0xF8];
     let mut ps = Vec::new();
@@ -525,10 +633,16 @@ fn mpeg2_and_ac3_from_a_program_stream() {
         }
     }
     ps.extend([0, 0, 1, 0xB9]);
-    assert_eq!(container::sniff_container(&ps), container::ContainerKind::MpegPs);
+    assert_eq!(
+        container::sniff_container(&ps),
+        container::ContainerKind::MpegPs
+    );
     let demux = demux_streaming(&ps).unwrap();
     let track = demux.audio().cloned().expect("the AC-3 sub-stream");
-    assert_eq!((track.codec.as_str(), track.sample_rate, track.channels), ("ac3", ac3.sample_rate, ac3.channels));
+    assert_eq!(
+        (track.codec.as_str(), track.sample_rate, track.channels),
+        ("ac3", ac3.sample_rate, ac3.channels)
+    );
     assert_eq!(track.samples.len(), packets.len().min(ac3.samples.len()));
     let r = read_back(&ps);
     assert_eq!((r.codec.as_str(), r.dims), ("mpeg2", (W, H)));

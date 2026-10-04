@@ -20,7 +20,9 @@ use super::streaming::build_fragmented_sample_table;
 /// Every `tx3g` / `wvtt` track in the file, in `trak` order. Tracks with no
 /// usable cues are left out.
 pub(crate) fn extract_mp4_subtitle_tracks(data: &[u8]) -> Vec<SubtitleTrack> {
-    let Some(moov) = find_direct_child(data, b"moov") else { return Vec::new() };
+    let Some(moov) = find_direct_child(data, b"moov") else {
+        return Vec::new();
+    };
     direct_children(moov, b"trak")
         .filter_map(|trak| extract_track(data, trak))
         .collect()
@@ -67,7 +69,11 @@ fn extract_track(file: &[u8], trak: &[u8]) -> Option<SubtitleTrack> {
     for s in samples {
         let end = s.offset.checked_add(s.size as u64)?;
         let Some(bytes) = file.get(s.offset as usize..end as usize) else {
-            tracing::warn!(offset = s.offset, size = s.size, "subtitle sample past end of file; stopping");
+            tracing::warn!(
+                offset = s.offset,
+                size = s.size,
+                "subtitle sample past end of file; stopping"
+            );
             break;
         };
         let text = match codec {
@@ -83,7 +89,11 @@ fn extract_track(file: &[u8], trak: &[u8]) -> Option<SubtitleTrack> {
         if text.is_empty() {
             continue;
         }
-        cues.push(SubtitleCue { start: s.start, duration: s.duration.max(1), text });
+        cues.push(SubtitleCue {
+            start: s.start,
+            duration: s.duration.max(1),
+            text,
+        });
     }
     finish(codec, cues, timescale, language)
 }
@@ -124,7 +134,11 @@ fn unpack_language(packed: u16) -> String {
 }
 
 fn tkhd_track_id(tkhd: &[u8]) -> Option<u32> {
-    let at = if *tkhd.first()? == 1 { 4 + 8 + 8 } else { 4 + 4 + 4 };
+    let at = if *tkhd.first()? == 1 {
+        4 + 8 + 8
+    } else {
+        4 + 4 + 4
+    };
     Some(u32::from_be_bytes(tkhd.get(at..at + 4)?.try_into().ok()?))
 }
 
@@ -148,7 +162,9 @@ fn static_samples(stbl: &[u8]) -> Option<Vec<SampleRef>> {
     let sizes: Vec<u32> = if fixed_size != 0 {
         vec![fixed_size; count]
     } else {
-        (0..count).map(|i| be32(stsz, 12 + 4 * i)).collect::<Option<_>>()?
+        (0..count)
+            .map(|i| be32(stsz, 12 + 4 * i))
+            .collect::<Option<_>>()?
     };
 
     // stts: run-length durations.
@@ -168,11 +184,15 @@ fn static_samples(stbl: &[u8]) -> Option<Vec<SampleRef>> {
     // Chunk offsets: stco (32-bit) or co64.
     let chunk_offsets: Vec<u64> = if let Some(stco) = find_direct_child(stbl, b"stco") {
         let n = be32(stco, 4)? as usize;
-        (0..n).map(|i| be32(stco, 8 + 4 * i).map(u64::from)).collect::<Option<_>>()?
+        (0..n)
+            .map(|i| be32(stco, 8 + 4 * i).map(u64::from))
+            .collect::<Option<_>>()?
     } else {
         let co64 = find_direct_child(stbl, b"co64")?;
         let n = be32(co64, 4)? as usize;
-        (0..n).map(|i| be64(co64, 8 + 8 * i)).collect::<Option<_>>()?
+        (0..n)
+            .map(|i| be64(co64, 8 + 8 * i))
+            .collect::<Option<_>>()?
     };
 
     // stsc: (first_chunk, samples_per_chunk, description_index) runs.
@@ -199,7 +219,12 @@ fn static_samples(stbl: &[u8]) -> Option<Vec<SampleRef>> {
             }
             let size = sizes[sample];
             let duration = durations[sample];
-            out.push(SampleRef { offset, size, start, duration });
+            out.push(SampleRef {
+                offset,
+                size,
+                start,
+                duration,
+            });
             offset = offset.checked_add(size as u64)?;
             start = start.checked_add(duration as u64)?;
             sample += 1;
@@ -256,7 +281,11 @@ mod tests {
     use frame::EncodedPacket;
 
     fn cue(start: u64, duration: u32, text: &str) -> SubtitleCue {
-        SubtitleCue { start, duration, text: text.into() }
+        SubtitleCue {
+            start,
+            duration,
+            text: text.into(),
+        }
     }
 
     /// A file from the crate's own muxer: video plus the given subtitle
@@ -267,7 +296,11 @@ mod tests {
         let mut first = vec![header, 5];
         first.extend_from_slice(&[0u8; 5]);
         muxer
-            .add_packet(EncodedPacket { data: Bytes::from(first), pts: 0, is_keyframe: true })
+            .add_packet(EncodedPacket {
+                data: Bytes::from(first),
+                pts: 0,
+                is_keyframe: true,
+            })
             .unwrap();
         for i in 1..30u64 {
             muxer
@@ -279,14 +312,19 @@ mod tests {
                 .unwrap();
         }
         for (cues, timescale, language) in tracks {
-            muxer.add_subtitle_track(cues, *timescale, language).unwrap();
+            muxer
+                .add_subtitle_track(cues, *timescale, language)
+                .unwrap();
         }
         muxer.finalize().unwrap().to_vec()
     }
 
     #[test]
     fn tx3g_round_trips_through_the_muxer() {
-        let eng = vec![cue(500, 1_500, "Hello, world"), cue(3_000, 2_500, "Second\nline")];
+        let eng = vec![
+            cue(500, 1_500, "Hello, world"),
+            cue(3_000, 2_500, "Second\nline"),
+        ];
         let deu = vec![cue(1_000, 1_500, "Hallo Welt")];
         let mp4 = mux_with_subtitles(&[(eng.clone(), 1_000, "eng"), (deu.clone(), 1_000, "deu")]);
 
@@ -342,8 +380,15 @@ mod tests {
         assert_eq!(tx3g_sample_text(&[0, 2, b'h', b'i']), Some("hi".into()));
         assert_eq!(tx3g_sample_text(&[0, 0]), None, "an empty sample is a gap");
         // Style modifier boxes after the text are ignored.
-        assert_eq!(tx3g_sample_text(&[0, 1, b'x', 0, 0, 0, 8, b's', b't', b'y', b'l']), Some("x".into()));
-        assert_eq!(tx3g_sample_text(&[0, 5, b'a']), None, "truncated sample is not text");
+        assert_eq!(
+            tx3g_sample_text(&[0, 1, b'x', 0, 0, 0, 8, b's', b't', b'y', b'l']),
+            Some("x".into())
+        );
+        assert_eq!(
+            tx3g_sample_text(&[0, 5, b'a']),
+            None,
+            "truncated sample is not text"
+        );
     }
 
     /// Build a `wvtt` sample per ISO/IEC 14496-30 §6.4: boxes with a 32-bit
@@ -358,11 +403,25 @@ mod tests {
 
     #[test]
     fn wvtt_sample_text_reads_vttc_payloads_and_skips_vtte() {
-        let cue1 = boxed(b"vttc", &[boxed(b"iden", b"1"), boxed(b"payl", b"Hello &amp; <i>bye</i>")].concat());
+        let cue1 = boxed(
+            b"vttc",
+            &[
+                boxed(b"iden", b"1"),
+                boxed(b"payl", b"Hello &amp; <i>bye</i>"),
+            ]
+            .concat(),
+        );
         let cue2 = boxed(b"vttc", &boxed(b"payl", b"second"));
         let sample = [cue1, cue2].concat();
-        assert_eq!(wvtt_sample_text(&sample), Some("Hello &amp; <i>bye</i>\nsecond".into()));
-        assert_eq!(wvtt_sample_text(&boxed(b"vtte", &[])), None, "vtte is a gap");
+        assert_eq!(
+            wvtt_sample_text(&sample),
+            Some("Hello &amp; <i>bye</i>\nsecond".into())
+        );
+        assert_eq!(
+            wvtt_sample_text(&boxed(b"vtte", &[])),
+            None,
+            "vtte is a gap"
+        );
         assert_eq!(wvtt_sample_text(&[]), None);
     }
 
@@ -419,7 +478,17 @@ mod tests {
             let mut stco_body = vec![0u8, 0, 0, 0];
             stco_body.extend_from_slice(&1u32.to_be_bytes());
             stco_body.extend_from_slice(&chunk_offset.to_be_bytes());
-            let stbl = boxed(b"stbl", &[stsd.clone(), stts.clone(), stsc.clone(), stsz.clone(), boxed(b"stco", &stco_body)].concat());
+            let stbl = boxed(
+                b"stbl",
+                &[
+                    stsd.clone(),
+                    stts.clone(),
+                    stsc.clone(),
+                    stsz.clone(),
+                    boxed(b"stco", &stco_body),
+                ]
+                .concat(),
+            );
             let mdhd = {
                 let mut b = vec![0u8, 0, 0, 0];
                 b.extend_from_slice(&0u32.to_be_bytes());
@@ -450,6 +519,9 @@ mod tests {
         assert_eq!(t.language, "deu");
         assert_eq!(t.timescale, 1_000);
         // The vtte gap is not a cue; the tag is stripped and the entity decoded.
-        assert_eq!(t.cues, vec![cue(0, 1_000, "First cue"), cue(3_000, 500, "Bold & plain")]);
+        assert_eq!(
+            t.cues,
+            vec![cue(0, 1_000, "First cue"), cue(3_000, 500, "Bold & plain")]
+        );
     }
 }

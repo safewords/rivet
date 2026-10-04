@@ -66,7 +66,8 @@ impl FromStr for RateMode {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        parse_rate_mode(s).ok_or_else(|| format!("rate mode must be cbr|constant|average|abr; got '{s}'"))
+        parse_rate_mode(s)
+            .ok_or_else(|| format!("rate mode must be cbr|constant|average|abr; got '{s}'"))
     }
 }
 
@@ -105,7 +106,10 @@ impl ConstantRate {
             return None;
         }
         let bps = overrides.bitrate.filter(|&bps| bps > 0)?;
-        Some(Self { bps, buffer_ms: overrides.buffer_ms.unwrap_or(CBR_DEFAULT_BUFFER_MS) })
+        Some(Self {
+            bps,
+            buffer_ms: overrides.buffer_ms.unwrap_or(CBR_DEFAULT_BUFFER_MS),
+        })
     }
 
     /// The buffer's size in bits.
@@ -126,7 +130,11 @@ impl ConstantRate {
 ///
 /// `crf` is the rung's CRF when it names one, and `constant_qp` whether its
 /// encode must be constant-QP (the chunked path's `--seam-mode constqp`).
-pub fn constant_rate_refusal(overrides: &EncodeOverrides, crf: Option<u8>, constant_qp: bool) -> Option<String> {
+pub fn constant_rate_refusal(
+    overrides: &EncodeOverrides,
+    crf: Option<u8>,
+    constant_qp: bool,
+) -> Option<String> {
     if overrides.rate_mode != Some(RateMode::Constant) {
         return None;
     }
@@ -210,7 +218,11 @@ pub fn default_cbr_bitrate(codec: VideoCodec, short_side: u32, fps: f64) -> u32 
             })
             .unwrap_or(last.1)
     };
-    let fps = if fps.is_finite() && fps > 30.0 { fps.min(120.0) } else { 30.0 };
+    let fps = if fps.is_finite() && fps > 30.0 {
+        fps.min(120.0)
+    } else {
+        30.0
+    };
     let frame_rate_scale = 1.0 + 0.5 * (fps / 30.0 - 1.0);
     let codec_scale = match codec {
         VideoCodec::H264 => 1.0,
@@ -284,24 +296,54 @@ mod tests {
             assert_eq!(parse_rate_mode(s), Some(RateMode::Average), "{s}");
         }
         assert_eq!(parse_rate_mode("vbr"), None);
-        assert!("vbr".parse::<RateMode>().unwrap_err().contains("cbr|constant|average|abr"));
-        assert_eq!(RateMode::Constant.name().parse::<RateMode>(), Ok(RateMode::Constant));
-        assert_eq!(RateMode::Average.name().parse::<RateMode>(), Ok(RateMode::Average));
+        assert!(
+            "vbr"
+                .parse::<RateMode>()
+                .unwrap_err()
+                .contains("cbr|constant|average|abr")
+        );
+        assert_eq!(
+            RateMode::Constant.name().parse::<RateMode>(),
+            Ok(RateMode::Constant)
+        );
+        assert_eq!(
+            RateMode::Average.name().parse::<RateMode>(),
+            Ok(RateMode::Average)
+        );
     }
 
     fn cbr(bps: Option<u32>) -> EncodeOverrides {
-        EncodeOverrides { rate_mode: Some(RateMode::Constant), bitrate: bps, ..Default::default() }
+        EncodeOverrides {
+            rate_mode: Some(RateMode::Constant),
+            bitrate: bps,
+            ..Default::default()
+        }
     }
 
     #[test]
     fn a_constant_rate_resolves_with_the_default_buffer() {
-        assert_eq!(ConstantRate::from_overrides(&cbr(Some(3_000_000))), Some(ConstantRate { bps: 3_000_000, buffer_ms: 1000 }));
-        let named = EncodeOverrides { buffer_ms: Some(500), ..cbr(Some(3_000_000)) };
+        assert_eq!(
+            ConstantRate::from_overrides(&cbr(Some(3_000_000))),
+            Some(ConstantRate {
+                bps: 3_000_000,
+                buffer_ms: 1000
+            })
+        );
+        let named = EncodeOverrides {
+            buffer_ms: Some(500),
+            ..cbr(Some(3_000_000))
+        };
         let rate = ConstantRate::from_overrides(&named).unwrap();
         assert_eq!(rate.buffer_bits(), 1_500_000);
         assert_eq!(rate.initial_fullness_bits(), 1_125_000);
         // An average rung, a rung with no rate, and a zero rate resolve to none.
-        assert_eq!(ConstantRate::from_overrides(&EncodeOverrides { bitrate: Some(3_000_000), ..Default::default() }), None);
+        assert_eq!(
+            ConstantRate::from_overrides(&EncodeOverrides {
+                bitrate: Some(3_000_000),
+                ..Default::default()
+            }),
+            None
+        );
         assert_eq!(ConstantRate::from_overrides(&cbr(None)), None);
         assert_eq!(ConstantRate::from_overrides(&cbr(Some(0))), None);
     }
@@ -314,14 +356,39 @@ mod tests {
                 assert!(why.contains(w), "{w} not in: {why}");
             }
         };
-        refuse(cbr(None), None, false, &["rate=cbr", "no bitrate", "--video-bitrate"]);
+        refuse(
+            cbr(None),
+            None,
+            false,
+            &["rate=cbr", "no bitrate", "--video-bitrate"],
+        );
         refuse(cbr(Some(0)), None, false, &["bitrate=0"]);
-        refuse(cbr(Some(2_000_000)), Some(28), false, &["crf=28", "rate=cbr", "2000000"]);
+        refuse(
+            cbr(Some(2_000_000)),
+            Some(28),
+            false,
+            &["crf=28", "rate=cbr", "2000000"],
+        );
         refuse(cbr(Some(2_000_000)), None, true, &["constqp", "rate=cbr"]);
-        refuse(EncodeOverrides { buffer_ms: Some(0), ..cbr(Some(2_000_000)) }, None, false, &["buffer=0", "rate=cbr"]);
+        refuse(
+            EncodeOverrides {
+                buffer_ms: Some(0),
+                ..cbr(Some(2_000_000))
+            },
+            None,
+            false,
+            &["buffer=0", "rate=cbr"],
+        );
         // What can be coded, and what is not a constant-rate rung at all.
-        assert_eq!(constant_rate_refusal(&cbr(Some(2_000_000)), None, false), None);
-        let average = EncodeOverrides { bitrate: Some(2_000_000), buffer_ms: Some(0), ..Default::default() };
+        assert_eq!(
+            constant_rate_refusal(&cbr(Some(2_000_000)), None, false),
+            None
+        );
+        let average = EncodeOverrides {
+            bitrate: Some(2_000_000),
+            buffer_ms: Some(0),
+            ..Default::default()
+        };
         assert_eq!(constant_rate_refusal(&average, Some(28), true), None);
     }
 }

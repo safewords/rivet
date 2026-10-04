@@ -95,7 +95,11 @@ pub(crate) fn run(args: SpliceArgs) -> Result<()> {
     {
         let inputs: Vec<&std::path::Path> = parsed.iter().map(|(p, _, _)| p.as_path()).collect();
         if matches!(args.mode, ModeArg::Hls) {
-            rivet::output_guard::refuse_input_in_dir(&args.output, &inputs, rivet::output_guard::hls_package_writes_at)?;
+            rivet::output_guard::refuse_input_in_dir(
+                &args.output,
+                &inputs,
+                rivet::output_guard::hls_package_writes_at,
+            )?;
         } else {
             rivet::output_guard::refuse_input_as_output(&args.output, &inputs)?;
         }
@@ -147,7 +151,8 @@ pub(crate) fn run(args: SpliceArgs) -> Result<()> {
         && let Some(r) = out.rungs.first()
         && let RungArtifact::File(bytes) = &r.artifact
     {
-        rivet::output_guard::write_atomic(&output, bytes).with_context(|| format!("writing {}", output.display()))?;
+        rivet::output_guard::write_atomic(&output, bytes)
+            .with_context(|| format!("writing {}", output.display()))?;
     }
     eprintln!(
         "  spliced {} clip(s) → {} ({:.2} MiB) in {:.2}s",
@@ -173,10 +178,17 @@ fn parse_clip_spec(s: &str) -> Result<(PathBuf, Option<f64>, Option<f64>)> {
                 if x.is_empty() {
                     Ok(None)
                 } else {
-                    Ok(Some(x.parse::<f64>().with_context(|| format!("bad {what} time '{x}'"))?))
+                    Ok(Some(
+                        x.parse::<f64>()
+                            .with_context(|| format!("bad {what} time '{x}'"))?,
+                    ))
                 }
             };
-            Ok((PathBuf::from(path), parse(start_s, "start")?, parse(end_s, "end")?))
+            Ok((
+                PathBuf::from(path),
+                parse(start_s, "start")?,
+                parse(end_s, "end")?,
+            ))
         }
         None => Ok((PathBuf::from(s), None, None)),
     }

@@ -14,21 +14,22 @@
 //! the worker wrote so the orchestrator can merge contributions
 //! into the per-rung manifest.
 
-mod invariant;
-mod config;
-mod cmaf_worker;
 mod chunk_worker;
+mod cmaf_worker;
+mod config;
+mod invariant;
 mod session_pool;
 #[cfg(test)]
 mod tests;
 
-pub use invariant::{
-    Av1Invariant, H26xInvariant, InvariantCheck, RungCodecInvariant,
-    validate_or_set_rung_invariant,
+pub use chunk_worker::{
+    ChunkPackets, ChunkUnitOutcome, encode_chunk_unit, run_chunk_encoder_worker_blocking,
 };
-pub use config::{EncoderWorkerConfig, WorkerOutput};
 pub use cmaf_worker::{UnitOutcome, encode_segment_unit, run_encoder_worker_blocking};
-pub use chunk_worker::{ChunkPackets, ChunkUnitOutcome, encode_chunk_unit, run_chunk_encoder_worker_blocking};
+pub use config::{EncoderWorkerConfig, WorkerOutput};
+pub use invariant::{
+    Av1Invariant, H26xInvariant, InvariantCheck, RungCodecInvariant, validate_or_set_rung_invariant,
+};
 pub use session_pool::{EncoderBuilder, EncoderSessionPool, PoolStats};
 
 use codec::encode::EncoderConfig;

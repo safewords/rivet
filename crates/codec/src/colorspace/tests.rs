@@ -4,14 +4,14 @@ use crate::frame::{ColorSpace, PixelFormat, VideoFrame};
 
 // Re-import all pub items from the colorspace module tree.
 use super::{
-    bilinear_scale_plane, bilinear_scale_plane_scalar, bilinear_scale_plane_u16,
+    ChromaDownsample, bilinear_scale_plane, bilinear_scale_plane_scalar, bilinear_scale_plane_u16,
     bilinear_scale_plane_u16_scalar, bt601_to_bt709_planes, bt601_to_bt709_planes_10bit,
     bt601_to_bt709_planes_10bit_scalar, bt601_to_bt709_planes_scalar, convert_bit_depth_frame,
     convert_to_sdr_bt709, convert_to_yuv420p_bt709, downsample_444_to_420_frame,
-    downsample_chroma_444_to_420, downsample_chroma_444_to_420_10bit, narrow_u16_to_u8,
-    narrow_u16_to_u8_scalar, narrow_u16_to_u16, narrow_u16_to_u16_scalar,
-    normalize_layout_to_420, scale_frame, ChromaDownsample, downsample_444_to_420_frame_with,
-    downsample_plane_lanczos, downsample_plane_lanczos_scalar,
+    downsample_444_to_420_frame_with, downsample_chroma_444_to_420,
+    downsample_chroma_444_to_420_10bit, downsample_plane_lanczos, downsample_plane_lanczos_scalar,
+    narrow_u16_to_u8, narrow_u16_to_u8_scalar, narrow_u16_to_u16, narrow_u16_to_u16_scalar,
+    normalize_layout_to_420, scale_frame,
 };
 
 // -------- BT.601 → BT.709 --------
@@ -940,12 +940,7 @@ fn downsample_frame_yuva444p10le_drops_alpha() {
     // Verify alpha wasn't smuggled in (no 65535 samples).
     for i in (0..out.data.len()).step_by(2) {
         let s = u16::from_le_bytes([out.data[i], out.data[i + 1]]);
-        assert!(
-            s < 1024,
-            "stray alpha sample {} at {}",
-            s,
-            i
-        );
+        assert!(s < 1024, "stray alpha sample {} at {}", s, i);
         assert_ne!(s, 65535, "alpha plane leaked into output");
     }
 }
@@ -986,7 +981,11 @@ fn every_12bit_code_le() -> Vec<u8> {
 }
 
 fn le_u16s(b: &[u8]) -> Vec<u16> {
-    b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+    b.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect()
 }
 
 #[test]
@@ -1004,7 +1003,11 @@ fn narrow_12_to_10_is_a_rounded_shift_hand_verified() {
     assert_eq!(got[4093], 1023); // (4093+2)>>2 = 1023
     assert_eq!(got[4094], 1023); // 1024 → clamp
     assert_eq!(got[4095], 1023);
-    assert_eq!(got[4096 + 6], 1023, "an out-of-range sample clamps, never wraps");
+    assert_eq!(
+        got[4096 + 6],
+        1023,
+        "an out-of-range sample clamps, never wraps"
+    );
     for (i, &g) in got.iter().enumerate().take(4096) {
         let want = ((i as u32 + 2) >> 2).min(1023) as u16;
         assert_eq!(g, want, "code {i}");
@@ -1075,7 +1078,14 @@ fn planar_frame_u16(w: usize, h: usize, format: PixelFormat, seed: u16, max: u16
         x = x.wrapping_mul(1_103_515_245).wrapping_add(12_345);
         buf.extend_from_slice(&(((x >> 8) as u16) % (max + 1)).to_le_bytes());
     }
-    VideoFrame::new(Bytes::from(buf), w as u32, h as u32, format, ColorSpace::Bt709, 7)
+    VideoFrame::new(
+        Bytes::from(buf),
+        w as u32,
+        h as u32,
+        format,
+        ColorSpace::Bt709,
+        7,
+    )
 }
 
 #[test]
@@ -1083,7 +1093,10 @@ fn convert_bit_depth_frame_keeps_layout_and_widen_narrow_round_trips() {
     let f12 = planar_frame_u16(16, 8, PixelFormat::Yuv420p12le, 3, 4095);
     let f10 = convert_bit_depth_frame(&f12, 10).expect("12 → 10");
     assert_eq!(f10.format, PixelFormat::Yuv420p10le);
-    assert_eq!(f10.data.len(), PixelFormat::Yuv420p10le.bytes_per_frame(16, 8));
+    assert_eq!(
+        f10.data.len(),
+        PixelFormat::Yuv420p10le.bytes_per_frame(16, 8)
+    );
     assert_eq!((f10.width, f10.height, f10.pts), (16, 8, 7));
     let f8 = convert_bit_depth_frame(&f12, 8).expect("12 → 8");
     assert_eq!(f8.format, PixelFormat::Yuv420p);
@@ -1092,20 +1105,40 @@ fn convert_bit_depth_frame_keeps_layout_and_widen_narrow_round_trips() {
     // the direct path against the definition instead.
     let src = le_u16s(&f12.data);
     for (i, &v) in src.iter().enumerate() {
-        assert_eq!(f8.data[i], ((v as u32 + 8) >> 4).min(255) as u8, "sample {i}");
+        assert_eq!(
+            f8.data[i],
+            ((v as u32 + 8) >> 4).min(255) as u8,
+            "sample {i}"
+        );
     }
     // 8 → 10 → 8 is exact.
     let back = convert_bit_depth_frame(&convert_bit_depth_frame(&f8, 10).unwrap(), 8).unwrap();
     assert_eq!(back.data, f8.data);
     // 4:2:2 and 4:4:4 layouts survive.
     let f422 = planar_frame_u16(16, 8, PixelFormat::Yuv422p12le, 5, 4095);
-    assert_eq!(convert_bit_depth_frame(&f422, 10).unwrap().format, PixelFormat::Yuv422p10le);
-    assert_eq!(convert_bit_depth_frame(&f422, 8).unwrap().format, PixelFormat::Yuv422p);
+    assert_eq!(
+        convert_bit_depth_frame(&f422, 10).unwrap().format,
+        PixelFormat::Yuv422p10le
+    );
+    assert_eq!(
+        convert_bit_depth_frame(&f422, 8).unwrap().format,
+        PixelFormat::Yuv422p
+    );
     let f444 = planar_frame_u16(16, 8, PixelFormat::Yuv444p12le, 9, 4095);
-    assert_eq!(convert_bit_depth_frame(&f444, 10).unwrap().format, PixelFormat::Yuv444p10le);
+    assert_eq!(
+        convert_bit_depth_frame(&f444, 10).unwrap().format,
+        PixelFormat::Yuv444p10le
+    );
     // Same depth is a no-op; RGB / alpha refused.
     assert_eq!(convert_bit_depth_frame(&f10, 10).unwrap().data, f10.data);
-    let rgb = VideoFrame::new(Bytes::from(vec![0u8; 16 * 8 * 3]), 16, 8, PixelFormat::Rgb24, ColorSpace::Bt709, 0);
+    let rgb = VideoFrame::new(
+        Bytes::from(vec![0u8; 16 * 8 * 3]),
+        16,
+        8,
+        PixelFormat::Rgb24,
+        ColorSpace::Bt709,
+        0,
+    );
     assert!(convert_bit_depth_frame(&rgb, 8).is_err());
     let a = planar_frame_u16(16, 8, PixelFormat::Yuva444p10le, 1, 1023);
     assert!(convert_bit_depth_frame(&a, 8).is_err());
@@ -1121,8 +1154,15 @@ fn twelve_bit_layouts_normalise_to_yuv420p10le() {
         let f = planar_frame_u16(32, 16, fmt, seed, 4095);
         let n = normalize_layout_to_420(&f).expect("normalise");
         assert_eq!(n.format, PixelFormat::Yuv420p10le, "{fmt:?}");
-        assert_eq!(n.data.len(), PixelFormat::Yuv420p10le.bytes_per_frame(32, 16), "{fmt:?}");
-        assert!(le_u16s(&n.data).iter().all(|&v| v <= 1023), "{fmt:?} stays in 10-bit range");
+        assert_eq!(
+            n.data.len(),
+            PixelFormat::Yuv420p10le.bytes_per_frame(32, 16),
+            "{fmt:?}"
+        );
+        assert!(
+            le_u16s(&n.data).iter().all(|&v| v <= 1023),
+            "{fmt:?} stays in 10-bit range"
+        );
         // The SDR dispatcher no longer bails on 12-bit.
         let c = convert_to_yuv420p_bt709(&f).expect("convert_to_yuv420p_bt709 on 12-bit");
         assert_eq!(c.format, PixelFormat::Yuv420p10le);
@@ -1141,7 +1181,10 @@ fn twelve_bit_layouts_normalise_to_yuv420p10le() {
 #[test]
 fn hdr_in_any_wide_layout_tonemaps_to_8bit_sdr() {
     use crate::frame::{ColorMetadata, TransferFn};
-    let hdr = ColorMetadata { transfer: TransferFn::St2084, ..Default::default() };
+    let hdr = ColorMetadata {
+        transfer: TransferFn::St2084,
+        ..Default::default()
+    };
     for fmt in [
         PixelFormat::Yuv420p12le,
         PixelFormat::Yuv422p10le,
@@ -1149,11 +1192,19 @@ fn hdr_in_any_wide_layout_tonemaps_to_8bit_sdr() {
         PixelFormat::Yuv444p10le,
         PixelFormat::Yuv444p12le,
     ] {
-        let max = if fmt == PixelFormat::Yuv422p10le || fmt == PixelFormat::Yuv444p10le { 1023 } else { 4095 };
+        let max = if fmt == PixelFormat::Yuv422p10le || fmt == PixelFormat::Yuv444p10le {
+            1023
+        } else {
+            4095
+        };
         let mut f = planar_frame_u16(32, 16, fmt, 4, max);
         f.color_space = ColorSpace::Bt2020;
         let out = convert_to_sdr_bt709(&f, &hdr).expect("tonemap");
-        assert_eq!(out.format, PixelFormat::Yuv420p, "{fmt:?} must reach 8-bit SDR");
+        assert_eq!(
+            out.format,
+            PixelFormat::Yuv420p,
+            "{fmt:?} must reach 8-bit SDR"
+        );
         assert_eq!(out.color_space, ColorSpace::Bt709);
     }
 }
@@ -1176,7 +1227,11 @@ fn lanczos_constant_plane_is_constant_and_taps_sum_to_one() {
         let plane = vec![v; 37 * 21];
         let out = downsample_plane_lanczos_scalar(&plane, 37, 21, max);
         assert_eq!(out.len(), 19 * 11);
-        assert!(out.iter().all(|&o| o == v), "constant {v} at max {max}: {:?}", &out[..8]);
+        assert!(
+            out.iter().all(|&o| o == v),
+            "constant {v} at max {max}: {:?}",
+            &out[..8]
+        );
     }
 }
 
@@ -1249,38 +1304,74 @@ fn box_stays_the_default_and_is_byte_identical_to_the_old_kernel() {
     let mut data = y.clone();
     data.extend_from_slice(&cb);
     data.extend_from_slice(&cr);
-    let frame = VideoFrame::new(Bytes::from(data), w as u32, h as u32, PixelFormat::Yuv444p, ColorSpace::Bt709, 0);
+    let frame = VideoFrame::new(
+        Bytes::from(data),
+        w as u32,
+        h as u32,
+        PixelFormat::Yuv444p,
+        ColorSpace::Bt709,
+        0,
+    );
     let old = downsample_chroma_444_to_420(&y, &cb, &cr, w, h);
     assert_eq!(ChromaDownsample::default(), ChromaDownsample::Box);
-    assert_eq!(downsample_444_to_420_frame(&frame).unwrap().data.as_ref(), &old[..]);
     assert_eq!(
-        downsample_444_to_420_frame_with(&frame, ChromaDownsample::Box).unwrap().data.as_ref(),
+        downsample_444_to_420_frame(&frame).unwrap().data.as_ref(),
+        &old[..]
+    );
+    assert_eq!(
+        downsample_444_to_420_frame_with(&frame, ChromaDownsample::Box)
+            .unwrap()
+            .data
+            .as_ref(),
         &old[..]
     );
     let lz = downsample_444_to_420_frame_with(&frame, ChromaDownsample::Lanczos).unwrap();
     assert_eq!(lz.format, PixelFormat::Yuv420p);
     assert_eq!(lz.data.len(), old.len());
     assert_eq!(&lz.data[..w * h], &y[..], "luma untouched");
-    assert_ne!(lz.data.as_ref(), &old[..], "the option must actually change the chroma");
+    assert_ne!(
+        lz.data.as_ref(),
+        &old[..],
+        "the option must actually change the chroma"
+    );
     // 10-bit and 12-bit frames go through the same switch.
-    for (fmt, max) in [(PixelFormat::Yuv444p10le, 1023u16), (PixelFormat::Yuv444p12le, 4095)] {
+    for (fmt, max) in [
+        (PixelFormat::Yuv444p10le, 1023u16),
+        (PixelFormat::Yuv444p12le, 4095),
+    ] {
         let mut d = Vec::new();
         for seed in 1..=3 {
             for v in lcg_plane(w, h, max, seed) {
                 d.extend_from_slice(&v.to_le_bytes());
             }
         }
-        let f = VideoFrame::new(Bytes::from(d), w as u32, h as u32, fmt, ColorSpace::Bt709, 0);
+        let f = VideoFrame::new(
+            Bytes::from(d),
+            w as u32,
+            h as u32,
+            fmt,
+            ColorSpace::Bt709,
+            0,
+        );
         let b = downsample_444_to_420_frame_with(&f, ChromaDownsample::Box).unwrap();
         let l = downsample_444_to_420_frame_with(&f, ChromaDownsample::Lanczos).unwrap();
         assert_eq!(b.format, l.format);
         assert_eq!(b.data.len(), l.data.len());
         assert_ne!(b.data, l.data);
-        assert!(le_u16s(&l.data).iter().all(|&v| v <= max), "{fmt:?} in range");
+        assert!(
+            le_u16s(&l.data).iter().all(|&v| v <= max),
+            "{fmt:?} in range"
+        );
     }
     // The vocabulary.
-    assert_eq!(ChromaDownsample::parse("box").unwrap(), ChromaDownsample::Box);
-    assert_eq!(ChromaDownsample::parse("Lanczos").unwrap(), ChromaDownsample::Lanczos);
+    assert_eq!(
+        ChromaDownsample::parse("box").unwrap(),
+        ChromaDownsample::Box
+    );
+    assert_eq!(
+        ChromaDownsample::parse("Lanczos").unwrap(),
+        ChromaDownsample::Lanczos
+    );
     assert!(ChromaDownsample::parse("bicubic").is_err());
     assert_eq!(ChromaDownsample::Lanczos.label(), "lanczos");
 }
@@ -1497,13 +1588,24 @@ fn region_frame(w: u32, h: u32, luma: impl Fn(u32, u32) -> u8, u: u8, v: u8) -> 
     }
     data.extend(std::iter::repeat_n(u, (cw * ch) as usize));
     data.extend(std::iter::repeat_n(v, (cw * ch) as usize));
-    VideoFrame::new(Bytes::from(data), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, 7)
+    VideoFrame::new(
+        Bytes::from(data),
+        w,
+        h,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        7,
+    )
 }
 
 fn planes_of(f: &VideoFrame) -> (&[u8], &[u8], &[u8]) {
     let (w, h) = (f.width as usize, f.height as usize);
     let c = (w / 2) * (h / 2);
-    (&f.data[..w * h], &f.data[w * h..w * h + c], &f.data[w * h + c..w * h + 2 * c])
+    (
+        &f.data[..w * h],
+        &f.data[w * h..w * h + c],
+        &f.data[w * h + c..w * h + 2 * c],
+    )
 }
 
 #[test]
@@ -1534,7 +1636,10 @@ fn scale_region_crops_before_it_scales() {
     let src = region_frame(64, 32, |x, _| if x < 32 { 235 } else { 16 }, 128, 128);
     let out = super::scale_region(&src, (32, 0, 32, 32), (16, 16), (16, 16), (0, 0)).unwrap();
     let (y, _, _) = planes_of(&out);
-    assert!(y.iter().all(|&s| s == 16), "white leaked into a crop of the black half: {y:?}");
+    assert!(
+        y.iter().all(|&s| s == 16),
+        "white leaked into a crop of the black half: {y:?}"
+    );
 }
 
 #[test]
@@ -1561,7 +1666,10 @@ fn scale_region_of_the_whole_even_frame_is_scale_frame() {
 fn scale_region_refuses_a_picture_that_overflows_its_canvas() {
     let src = region_frame(16, 16, |_, _| 100, 128, 128);
     assert!(super::scale_region(&src, (0, 0, 16, 16), (16, 16), (16, 8), (0, 0)).is_err());
-    assert!(super::scale_region(&src, (0, 0, 16, 16), (14, 16), (16, 16), (1, 0)).is_err(), "odd offset");
+    assert!(
+        super::scale_region(&src, (0, 0, 16, 16), (14, 16), (16, 16), (1, 0)).is_err(),
+        "odd offset"
+    );
 }
 
 /// An odd frame evened by a crop: the 350x240 top-left of a 351x241
@@ -1582,13 +1690,22 @@ fn scale_region_crops_an_odd_frame_to_even_exactly() {
     let (y, u, v) = planes_of(&out);
     for row in 0..240 {
         for col in 0..350 {
-            assert_eq!(y[row * 350 + col], luma(col as u32, row as u32), "luma at {col},{row}");
+            assert_eq!(
+                y[row * 350 + col],
+                luma(col as u32, row as u32),
+                "luma at {col},{row}"
+            );
         }
     }
-    let at = |plane: usize, x: usize, y: usize| src.data[(w * h) as usize + plane * cw * ch + y * cw + x];
+    let at = |plane: usize, x: usize, y: usize| {
+        src.data[(w * h) as usize + plane * cw * ch + y * cw + x]
+    };
     for row in 0..120 {
         for col in 0..175 {
-            assert_eq!((u[row * 175 + col], v[row * 175 + col]), (at(0, col, row), at(1, col, row)));
+            assert_eq!(
+                (u[row * 175 + col], v[row * 175 + col]),
+                (at(0, col, row), at(1, col, row))
+            );
         }
     }
 }
@@ -1617,9 +1734,21 @@ fn scale_region_pads_ten_bit_with_ten_bit_black() {
     for _ in 0..2 * (w / 2) * (h / 2) {
         data.extend_from_slice(&512u16.to_le_bytes());
     }
-    let src = VideoFrame::new(Bytes::from(data), w, h, PixelFormat::Yuv420p10le, ColorSpace::Bt709, 0);
+    let src = VideoFrame::new(
+        Bytes::from(data),
+        w,
+        h,
+        PixelFormat::Yuv420p10le,
+        ColorSpace::Bt709,
+        0,
+    );
     let out = super::scale_region(&src, (0, 0, 16, 16), (8, 8), (8, 16), (0, 4)).unwrap();
-    let luma: Vec<u16> = out.data[..8 * 16 * 2].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let luma: Vec<u16> = out.data[..8 * 16 * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
     assert_eq!(luma[0], 64, "top bar");
     assert_eq!(luma[8 * 8], 700, "picture");
     assert_eq!(luma[8 * 15], 64, "bottom bar");
@@ -1638,7 +1767,9 @@ fn separable_avx2_scaler_writes_the_gather_kernels_bytes() {
     }
     let mut seed = 0x5ca1e_u64;
     let mut next = || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (seed >> 33) as u32
     };
     let shapes = [
@@ -1664,7 +1795,8 @@ fn separable_avx2_scaler_writes_the_gather_kernels_bytes() {
                 .collect();
             let got = bilinear_scale_plane(&src, sw, sh, dw, dh);
             // SAFETY: AVX2 checked above.
-            let want = unsafe { super::scale::bilinear_scale_plane_avx2_gather(&src, sw, sh, dw, dh) };
+            let want =
+                unsafe { super::scale::bilinear_scale_plane_avx2_gather(&src, sw, sh, dw, dh) };
             assert!(got == want, "{sw}x{sh} -> {dw}x{dh} kind {kind}");
         }
     }
@@ -1680,7 +1812,9 @@ fn separable_avx2_scaler_u16_writes_the_gather_kernels_samples() {
     }
     let mut seed = 0x10b_u64;
     let mut next = || {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (seed >> 33) as u32
     };
     let shapes = [
@@ -1705,7 +1839,8 @@ fn separable_avx2_scaler_u16_writes_the_gather_kernels_samples() {
                 .collect();
             let got = bilinear_scale_plane_u16(&src, sw, sh, dw, dh);
             // SAFETY: AVX2 checked above.
-            let want = unsafe { super::scale::bilinear_scale_plane_u16_avx2_gather(&src, sw, sh, dw, dh) };
+            let want =
+                unsafe { super::scale::bilinear_scale_plane_u16_avx2_gather(&src, sw, sh, dw, dh) };
             assert!(got == want, "{sw}x{sh} -> {dw}x{dh} kind {kind}");
         }
     }

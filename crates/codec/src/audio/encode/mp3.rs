@@ -24,8 +24,8 @@
 
 use crate::audio::resample::AlignedResampler;
 use crate::audio::{
-    AudioCodec, AudioEncoder, AudioEncoderConfig, AudioError, AudioFrame, EncodedAudioPacket, MP3_BITRATES,
-    MP3_FRAME_SAMPLES, mp3_default_bitrate, mp3_sample_rate,
+    AudioCodec, AudioEncoder, AudioEncoderConfig, AudioError, AudioFrame, EncodedAudioPacket,
+    MP3_BITRATES, MP3_FRAME_SAMPLES, mp3_default_bitrate, mp3_sample_rate,
 };
 
 /// The name the tag frame's extension carries.
@@ -33,7 +33,9 @@ pub const ENCODER_NAME: &str = "rivetmp3";
 
 fn encode_error(e: ::mp3::Error) -> AudioError {
     match e {
-        ::mp3::Error::Config(m) | ::mp3::Error::Unsupported(m) => AudioError::Unsupported(format!("mp3: {m}")),
+        ::mp3::Error::Config(m) | ::mp3::Error::Unsupported(m) => {
+            AudioError::Unsupported(format!("mp3: {m}"))
+        }
         other => AudioError::Encode(format!("mp3: {other}")),
     }
 }
@@ -60,7 +62,10 @@ impl Mp3Encoder {
 
     pub fn new(config: AudioEncoderConfig) -> Result<Self, AudioError> {
         if config.codec != AudioCodec::Mp3 {
-            return Err(AudioError::Encode(format!("Mp3Encoder constructed with codec {:?}", config.codec)));
+            return Err(AudioError::Encode(format!(
+                "Mp3Encoder constructed with codec {:?}",
+                config.codec
+            )));
         }
         if !(1..=2).contains(&config.channels) {
             return Err(AudioError::Unsupported(format!(
@@ -71,7 +76,11 @@ impl Mp3Encoder {
         if config.sample_rate == 0 {
             return Err(AudioError::Encode("input sample_rate is 0".into()));
         }
-        let bitrate = if config.bitrate == 0 { mp3_default_bitrate(config.channels) } else { config.bitrate };
+        let bitrate = if config.bitrate == 0 {
+            mp3_default_bitrate(config.channels)
+        } else {
+            config.bitrate
+        };
         if !MP3_BITRATES.contains(&bitrate) {
             return Err(AudioError::Unsupported(format!(
                 "{bitrate} bps is not an MPEG-1 Layer III bitrate (32k..320k: {})",
@@ -108,9 +117,14 @@ impl Mp3Encoder {
             .into_iter()
             .map(|data| {
                 let pts = first
-                    + (self.frames_out * u64::from(MP3_FRAME_SAMPLES) * 1_000_000 / u64::from(self.out_rate)) as i64;
+                    + (self.frames_out * u64::from(MP3_FRAME_SAMPLES) * 1_000_000
+                        / u64::from(self.out_rate)) as i64;
                 self.frames_out += 1;
-                EncodedAudioPacket { data, pts, duration: i64::from(MP3_FRAME_SAMPLES) }
+                EncodedAudioPacket {
+                    data,
+                    pts,
+                    duration: i64::from(MP3_FRAME_SAMPLES),
+                }
             })
             .collect()
     }
@@ -176,7 +190,15 @@ mod tests {
     use super::*;
 
     fn config(sample_rate: u32, channels: u8, bitrate: u32) -> AudioEncoderConfig {
-        AudioEncoderConfig { codec: AudioCodec::Mp3, sample_rate, channels, bitrate, quality: None, layout: None, threads: 0 }
+        AudioEncoderConfig {
+            codec: AudioCodec::Mp3,
+            sample_rate,
+            channels,
+            bitrate,
+            quality: None,
+            layout: None,
+            threads: 0,
+        }
     }
 
     #[test]
@@ -193,14 +215,20 @@ mod tests {
             (8_000, 48_000),
         ] {
             assert_eq!(mp3_sample_rate(input), out, "{input}");
-            assert_eq!(Mp3Encoder::new(config(input, 1, 0)).unwrap().sample_rate(), out);
+            assert_eq!(
+                Mp3Encoder::new(config(input, 1, 0)).unwrap().sample_rate(),
+                out
+            );
         }
     }
 
     #[test]
     fn off_ladder_bitrates_and_surround_are_refused() {
         let e = Mp3Encoder::new(config(48_000, 2, 100_000)).err().unwrap();
-        assert!(e.to_string().contains("not an MPEG-1 Layer III bitrate"), "{e}");
+        assert!(
+            e.to_string().contains("not an MPEG-1 Layer III bitrate"),
+            "{e}"
+        );
         let e = Mp3Encoder::new(config(48_000, 6, 0)).err().unwrap();
         assert!(e.to_string().contains("one or two channels"), "{e}");
     }
@@ -214,10 +242,20 @@ mod tests {
         assert_eq!(enc.pre_skip(), 528 + 529);
         assert!(enc.file_header().is_none(), "not before the flush");
         let n = 44_100;
-        let pcm: Vec<f32> = (0..n * 2).map(|i| 0.25 * ((i / 2) as f32 * 0.0627).sin()).collect();
+        let pcm: Vec<f32> = (0..n * 2)
+            .map(|i| 0.25 * ((i / 2) as f32 * 0.0627).sin())
+            .collect();
         let mut packets = Vec::new();
         for c in pcm.chunks(2000) {
-            packets.extend(enc.encode(&AudioFrame { samples: c.to_vec(), sample_rate: 44_100, channels: 2, pts: 0 }).unwrap());
+            packets.extend(
+                enc.encode(&AudioFrame {
+                    samples: c.to_vec(),
+                    sample_rate: 44_100,
+                    channels: 2,
+                    pts: 0,
+                })
+                .unwrap(),
+            );
         }
         packets.extend(enc.flush().unwrap());
         for p in &packets {
@@ -227,15 +265,30 @@ mod tests {
         }
         assert!(packets.len() * 1152 >= n + 528 + 529);
         let tag = enc.file_header().unwrap();
-        assert_eq!(&tag[156..164], ENCODER_NAME.as_bytes(), "the extension's encoder string");
+        assert_eq!(
+            &tag[156..164],
+            ENCODER_NAME.as_bytes(),
+            "the extension's encoder string"
+        );
         let mut file = tag;
         for p in &packets {
             file.extend_from_slice(&p.data);
         }
-        let decoded: Vec<f32> = ::mp3::Decoder::decode_all(&file).unwrap().into_iter().flat_map(|f| f.samples).collect();
-        assert_eq!(decoded.len(), n * 2, "the tag's delay and padding give back exactly the input");
+        let decoded: Vec<f32> = ::mp3::Decoder::decode_all(&file)
+            .unwrap()
+            .into_iter()
+            .flat_map(|f| f.samples)
+            .collect();
+        assert_eq!(
+            decoded.len(),
+            n * 2,
+            "the tag's delay and padding give back exactly the input"
+        );
         let (mut s, mut e) = (0.0f64, 0.0f64);
-        for (a, b) in pcm[4000..n * 2 - 4000].iter().zip(&decoded[4000..n * 2 - 4000]) {
+        for (a, b) in pcm[4000..n * 2 - 4000]
+            .iter()
+            .zip(&decoded[4000..n * 2 - 4000])
+        {
             s += f64::from(*a).powi(2);
             e += f64::from(a - b).powi(2);
         }
@@ -250,15 +303,30 @@ mod tests {
     fn a_resampled_source_keeps_the_codec_delay_alone() {
         let mut enc = Mp3Encoder::new(config(22_050, 1, 0)).unwrap();
         assert_eq!(enc.sample_rate(), 44_100);
-        assert_eq!(enc.pre_skip(), 528 + 529, "the resampler's delay is trimmed, not added");
+        assert_eq!(
+            enc.pre_skip(),
+            528 + 529,
+            "the resampler's delay is trimmed, not added"
+        );
         let pcm: Vec<f32> = (0..22_050).map(|i| 0.25 * (i as f32 * 0.1).sin()).collect();
-        let mut packets = enc.encode(&AudioFrame { samples: pcm, sample_rate: 22_050, channels: 1, pts: 0 }).unwrap();
+        let mut packets = enc
+            .encode(&AudioFrame {
+                samples: pcm,
+                sample_rate: 22_050,
+                channels: 1,
+                pts: 0,
+            })
+            .unwrap();
         packets.extend(enc.flush().unwrap());
         let mut file = enc.file_header().unwrap();
         for p in &packets {
             file.extend_from_slice(&p.data);
         }
-        let decoded: usize = ::mp3::Decoder::decode_all(&file).unwrap().iter().map(|f| f.len()).sum();
+        let decoded: usize = ::mp3::Decoder::decode_all(&file)
+            .unwrap()
+            .iter()
+            .map(|f| f.len())
+            .sum();
         assert_eq!(decoded, 44_100);
     }
 }

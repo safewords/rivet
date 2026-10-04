@@ -21,20 +21,53 @@
 
 use super::{
     // ffi.rs items (brought into amf via private `use self::ffi::*;`)
-    AMF_EOF, AMF_FAIL, AMF_IID_BUFFER, AMF_IID_CONTEXT1, AMF_INPUT_FULL, AMF_NEED_MORE_INPUT,
-    AMF_NOT_FOUND, AMF_OK, AMF_REPEAT, AMF_SURFACE_NV12, AMF_SURFACE_P010, AMF_VARIANT_BOOL,
-    AMF_VARIANT_INT64, AMF_VARIANT_RATE, AmfComponentObj, AmfComponentVtbl, AmfDataVtbl,
-    AmfGuid, AmfLong, AmfPropertyStorageVtbl, AmfResult, AmfSurfaceObj, AmfSurfaceVtbl,
-    AmfVariant, AmfWchar, INPUT_FULL_MAX_RETRIES, RING_SIZE, Slot,
+    AMF_EOF,
+    AMF_FAIL,
+    AMF_IID_BUFFER,
+    AMF_IID_CONTEXT1,
+    AMF_INPUT_FULL,
+    AMF_NEED_MORE_INPUT,
+    AMF_NOT_FOUND,
+    AMF_OK,
+    AMF_REPEAT,
+    AMF_SURFACE_NV12,
+    AMF_SURFACE_P010,
+    AMF_VARIANT_BOOL,
+    AMF_VARIANT_INT64,
+    AMF_VARIANT_RATE,
+    // codec plans
+    AV1_PLAN,
+    AVC_PLAN,
+    AmfComponentObj,
+    AmfComponentVtbl,
+    AmfDataVtbl,
+    AmfGuid,
+    AmfLong,
+    AmfPropertyStorageVtbl,
+    AmfResult,
+    AmfSurfaceObj,
+    AmfSurfaceVtbl,
+    AmfVariant,
+    AmfWchar,
+    CodecPlan,
+    HEVC_PLAN,
+    INPUT_FULL_MAX_RETRIES,
+    RING_SIZE,
+    Slot,
     // surface.rs items
     SurfaceGuard,
     // config.rs / amf_runtime items
-    amf_color_bit_depth_for, amf_color_profile_for, amf_surface_format_for, frame_rate_rational,
-    from_wide, set_int_property, transfer_to_h273, wide,
-    // codec plans
-    AV1_PLAN, AVC_PLAN, CodecPlan, HEVC_PLAN,
+    amf_color_bit_depth_for,
+    amf_color_profile_for,
+    amf_surface_format_for,
     // private free functions in mod.rs
-    drain_until_hungry_raw, submit_with_backpressure,
+    drain_until_hungry_raw,
+    frame_rate_rational,
+    from_wide,
+    set_int_property,
+    submit_with_backpressure,
+    transfer_to_h273,
+    wide,
 };
 use crate::frame::{PixelFormat, TransferFn};
 
@@ -104,7 +137,11 @@ pub(super) fn recorded() -> Vec<(String, AmfVariant)> {
 
 // ── Mock vtable functions ─────────────────────────────────────
 
-unsafe extern "system" fn mock_qi(_: *mut c_void, _: *const AmfGuid, _: *mut *mut c_void) -> AmfResult {
+unsafe extern "system" fn mock_qi(
+    _: *mut c_void,
+    _: *const AmfGuid,
+    _: *mut *mut c_void,
+) -> AmfResult {
     AMF_OK
 }
 unsafe extern "system" fn mock_acquire(_: *mut c_void) -> AmfLong {
@@ -114,12 +151,20 @@ unsafe extern "system" fn mock_release_component(_: *mut c_void) -> AmfLong {
     1
 }
 /// Records every SetProperty (component and surface alike).
-unsafe extern "system" fn mock_set_property(_: *mut c_void, name: *const AmfWchar, v: AmfVariant) -> AmfResult {
+unsafe extern "system" fn mock_set_property(
+    _: *mut c_void,
+    name: *const AmfWchar,
+    v: AmfVariant,
+) -> AmfResult {
     let s = unsafe { from_wide(name) };
     RECORDED.with(|r| r.borrow_mut().push((s, v)));
     AMF_OK
 }
-unsafe extern "system" fn mock_get_property(_: *mut c_void, _: *const AmfWchar, _: *mut AmfVariant) -> AmfResult {
+unsafe extern "system" fn mock_get_property(
+    _: *mut c_void,
+    _: *const AmfWchar,
+    _: *mut AmfVariant,
+) -> AmfResult {
     AMF_NOT_FOUND
 }
 unsafe extern "system" fn mock_has_property(_: *mut c_void, _: *const AmfWchar) -> u8 {
@@ -159,7 +204,10 @@ unsafe extern "system" fn mock_query_output(_: *mut c_void, data: *mut *mut c_vo
 
 unsafe extern "system" fn mock_surface_release(_: *mut c_void) -> AmfLong {
     let prev = MOCK_SURFACE_REFCOUNT.with(|c| c.fetch_sub(1, Ordering::SeqCst));
-    assert!(prev > 0, "surface Release when refcount already zero (UAF indicator)");
+    assert!(
+        prev > 0,
+        "surface Release when refcount already zero (UAF indicator)"
+    );
     (prev - 1) as AmfLong
 }
 unsafe extern "system" fn mock_convert(_: *mut c_void, _: i32) -> AmfResult {
@@ -182,7 +230,9 @@ unsafe extern "system" fn mock_get_plane(_: *mut c_void, _: i32) -> *mut c_void 
     ptr::null_mut()
 }
 
-const fn mock_ps(release: unsafe extern "system" fn(*mut c_void) -> AmfLong) -> AmfPropertyStorageVtbl {
+const fn mock_ps(
+    release: unsafe extern "system" fn(*mut c_void) -> AmfLong,
+) -> AmfPropertyStorageVtbl {
     AmfPropertyStorageVtbl {
         acquire: mock_acquire,
         release,
@@ -247,8 +297,12 @@ pub(super) static MOCK_COMPONENT_VTBL: AmfComponentVtbl = AmfComponentVtbl {
 
 /// A fake surface + component that resolve to the mock vtables.
 pub(super) fn make_mock_pair() -> (Box<AmfSurfaceObj>, Box<AmfComponentObj>) {
-    let surface = Box::new(AmfSurfaceObj { vtbl: &MOCK_SURFACE_VTBL });
-    let component = Box::new(AmfComponentObj { vtbl: &MOCK_COMPONENT_VTBL });
+    let surface = Box::new(AmfSurfaceObj {
+        vtbl: &MOCK_SURFACE_VTBL,
+    });
+    let component = Box::new(AmfComponentObj {
+        vtbl: &MOCK_COMPONENT_VTBL,
+    });
     (surface, component)
 }
 
@@ -270,13 +324,30 @@ fn test_amf_input_full_does_not_release_surface_before_retry() {
     let mut guard = SurfaceGuard::new(surface_ptr);
     let mut packets = Vec::new();
 
-    let result = unsafe { submit_with_backpressure(&mut packets, component_ptr, &mut guard, &AVC_PLAN, 333_333) };
-    assert!(result.is_ok(), "submit_with_backpressure failed: {result:?}");
+    let result = unsafe {
+        submit_with_backpressure(&mut packets, component_ptr, &mut guard, &AVC_PLAN, 333_333)
+    };
+    assert!(
+        result.is_ok(),
+        "submit_with_backpressure failed: {result:?}"
+    );
 
-    assert_eq!(submit_call_count(), 2, "SubmitInput must retry exactly once on INPUT_FULL");
+    assert_eq!(
+        submit_call_count(),
+        2,
+        "SubmitInput must retry exactly once on INPUT_FULL"
+    );
     assert_eq!(submit_pointer_at(0), Some(surface_ptr));
-    assert_eq!(submit_pointer_at(1), Some(surface_ptr), "retry must pass the SAME surface pointer");
-    assert_eq!(surface_refcount(), 0, "exactly one release after success (no leak, no double-release)");
+    assert_eq!(
+        submit_pointer_at(1),
+        Some(surface_ptr),
+        "retry must pass the SAME surface pointer"
+    );
+    assert_eq!(
+        surface_refcount(),
+        0,
+        "exactly one release after success (no leak, no double-release)"
+    );
     drop(guard);
     assert_eq!(surface_refcount(), 0, "Drop after transfer must be a no-op");
 }
@@ -303,8 +374,13 @@ fn test_amf_eof_ends_drain_cleanly() {
     let (_, mut component) = make_mock_pair();
     let component_ptr: *mut c_void = component.as_mut() as *mut _ as *mut c_void;
     let mut packets = Vec::new();
-    let result = unsafe { drain_until_hungry_raw(&mut packets, component_ptr, &HEVC_PLAN, 333_333) };
-    assert_eq!(result.unwrap(), super::DrainEnd::Eof, "EOF is reported so the flush loop can stop");
+    let result =
+        unsafe { drain_until_hungry_raw(&mut packets, component_ptr, &HEVC_PLAN, 333_333) };
+    assert_eq!(
+        result.unwrap(),
+        super::DrainEnd::Eof,
+        "EOF is reported so the flush loop can stop"
+    );
     assert_eq!(packets.len(), 0);
     assert_eq!(query_call_count(), 1);
 }
@@ -318,9 +394,14 @@ fn test_amf_ok_null_data_returns_repeat() {
     let (_, mut component) = make_mock_pair();
     let component_ptr: *mut c_void = component.as_mut() as *mut _ as *mut c_void;
     let mut packets = Vec::new();
-    let end = unsafe { drain_until_hungry_raw(&mut packets, component_ptr, &AV1_PLAN, 333_333) }.unwrap();
+    let end =
+        unsafe { drain_until_hungry_raw(&mut packets, component_ptr, &AV1_PLAN, 333_333) }.unwrap();
     assert_eq!(end, super::DrainEnd::Repeat);
-    assert_eq!(query_call_count(), 1, "one call, then back to the caller's pacing");
+    assert_eq!(
+        query_call_count(),
+        1,
+        "one call, then back to the caller's pacing"
+    );
     assert!(packets.is_empty());
 }
 
@@ -337,7 +418,10 @@ fn test_amf_ring_buffer_index_cycles() {
 
 #[test]
 fn test_amf_ring_size_is_four() {
-    assert_eq!(RING_SIZE, 4, "the in-flight bookkeeping depth the logs report");
+    assert_eq!(
+        RING_SIZE, 4,
+        "the in-flight bookkeeping depth the logs report"
+    );
 }
 
 /// AMF_REPEAT on SubmitInput has the same "retry same surface" semantics.
@@ -351,7 +435,9 @@ fn test_amf_repeat_on_submit_retries_same_surface() {
     let component_ptr: *mut c_void = component.as_mut() as *mut _ as *mut c_void;
     let mut guard = SurfaceGuard::new(surface_ptr);
     let mut packets = Vec::new();
-    let result = unsafe { submit_with_backpressure(&mut packets, component_ptr, &mut guard, &HEVC_PLAN, 333_333) };
+    let result = unsafe {
+        submit_with_backpressure(&mut packets, component_ptr, &mut guard, &HEVC_PLAN, 333_333)
+    };
     assert!(result.is_ok());
     assert_eq!(submit_call_count(), 2);
     assert_eq!(submit_pointer_at(1), Some(surface_ptr));
@@ -372,12 +458,21 @@ fn test_amf_submit_hard_error_releases_through_guard() {
     let mut packets = Vec::new();
     {
         let mut guard = SurfaceGuard::new(surface_ptr);
-        let result = unsafe { submit_with_backpressure(&mut packets, component_ptr, &mut guard, &AVC_PLAN, 333_333) };
+        let result = unsafe {
+            submit_with_backpressure(&mut packets, component_ptr, &mut guard, &AVC_PLAN, 333_333)
+        };
         assert!(result.is_err(), "hard error must propagate as Err");
         let msg = format!("{:#}", result.unwrap_err());
-        assert!(msg.contains("AMF_FAIL"), "error names the result code: {msg}");
+        assert!(
+            msg.contains("AMF_FAIL"),
+            "error names the result code: {msg}"
+        );
     }
-    assert_eq!(surface_refcount(), 0, "hard-error path must release exactly once via the guard");
+    assert_eq!(
+        surface_refcount(),
+        0,
+        "hard-error path must release exactly once via the guard"
+    );
 }
 
 /// Saturated forever → bail after INPUT_FULL_MAX_RETRIES + 1 attempts.
@@ -393,8 +488,13 @@ fn test_amf_submit_bounded_retry_budget() {
     let mut packets = Vec::new();
     {
         let mut guard = SurfaceGuard::new(surface_ptr);
-        let result = unsafe { submit_with_backpressure(&mut packets, component_ptr, &mut guard, &AVC_PLAN, 333_333) };
-        assert!(result.is_err(), "stuck backpressure must eventually bail (not spin)");
+        let result = unsafe {
+            submit_with_backpressure(&mut packets, component_ptr, &mut guard, &AVC_PLAN, 333_333)
+        };
+        assert!(
+            result.is_err(),
+            "stuck backpressure must eventually bail (not spin)"
+        );
         assert_eq!(submit_call_count() as u32, INPUT_FULL_MAX_RETRIES + 1);
     }
     assert_eq!(surface_refcount(), 0);
@@ -416,7 +516,11 @@ fn test_amf_variant_layout_and_arms() {
     // Byte view: the LE int64 sits at bytes 8..16.
     let bytes: [u8; 24] = unsafe { std::mem::transmute(v) };
     assert_eq!(&bytes[8..16], &0x0123_4567_89ab_cdefi64.to_le_bytes());
-    assert_eq!(&bytes[16..24], &[0u8; 8], "unused tail of the union stays zero");
+    assert_eq!(
+        &bytes[16..24],
+        &[0u8; 8],
+        "unused tail of the union stays zero"
+    );
 
     let b = AmfVariant::bool_(true);
     assert_eq!(b.ty, AMF_VARIANT_BOOL);
@@ -443,16 +547,30 @@ fn test_amf_variant_layout_and_arms() {
 #[test]
 fn test_amf_iid_byte_layout() {
     let bytes: [u8; 16] = unsafe { std::mem::transmute(AMF_IID_BUFFER) };
-    assert_eq!(&bytes[0..4], &0xb04b_7248u32.to_le_bytes(), "IID_AMFBuffer data1 (Buffer.h:135)");
+    assert_eq!(
+        &bytes[0..4],
+        &0xb04b_7248u32.to_le_bytes(),
+        "IID_AMFBuffer data1 (Buffer.h:135)"
+    );
     assert_eq!(&bytes[4..6], &0xb6f0u16.to_le_bytes());
     assert_eq!(&bytes[6..8], &0x4321u16.to_le_bytes());
-    assert_eq!(&bytes[8..16], &[0xb6, 0x91, 0xba, 0xa4, 0x74, 0x0f, 0x9f, 0xcb]);
+    assert_eq!(
+        &bytes[8..16],
+        &[0xb6, 0x91, 0xba, 0xa4, 0x74, 0x0f, 0x9f, 0xcb]
+    );
 
     let bytes: [u8; 16] = unsafe { std::mem::transmute(AMF_IID_CONTEXT1) };
-    assert_eq!(&bytes[0..4], &0xd9e9_f868u32.to_le_bytes(), "IID_AMFContext1 data1 (Context.h:278)");
+    assert_eq!(
+        &bytes[0..4],
+        &0xd9e9_f868u32.to_le_bytes(),
+        "IID_AMFContext1 data1 (Context.h:278)"
+    );
     assert_eq!(&bytes[4..6], &0x6220u16.to_le_bytes());
     assert_eq!(&bytes[6..8], &0x44c6u16.to_le_bytes());
-    assert_eq!(&bytes[8..16], &[0xa2, 0x2f, 0x7c, 0xd6, 0xda, 0xc6, 0x86, 0x46]);
+    assert_eq!(
+        &bytes[8..16],
+        &[0xa2, 0x2f, 0x7c, 0xd6, 0xda, 0xc6, 0x86, 0x46]
+    );
 }
 
 /// Property names are `wchar_t` strings: 2-byte code units on Windows,
@@ -462,7 +580,10 @@ fn test_amf_wide_encoding() {
     let w = wide("HevcQP_I");
     assert_eq!(w.len(), "HevcQP_I".len() + 1);
     assert_eq!(*w.last().unwrap(), 0);
-    assert_eq!(std::mem::size_of::<AmfWchar>(), if cfg!(windows) { 2 } else { 4 });
+    assert_eq!(
+        std::mem::size_of::<AmfWchar>(),
+        if cfg!(windows) { 2 } else { 4 }
+    );
     assert_eq!(unsafe { from_wide(w.as_ptr()) }, "HevcQP_I");
 }
 
@@ -470,8 +591,14 @@ fn test_amf_wide_encoding() {
 
 #[test]
 fn test_amf_surface_format_dispatch() {
-    assert_eq!(amf_surface_format_for(PixelFormat::Yuv420p).unwrap(), AMF_SURFACE_NV12);
-    assert_eq!(amf_surface_format_for(PixelFormat::Yuv420p10le).unwrap(), AMF_SURFACE_P010);
+    assert_eq!(
+        amf_surface_format_for(PixelFormat::Yuv420p).unwrap(),
+        AMF_SURFACE_NV12
+    );
+    assert_eq!(
+        amf_surface_format_for(PixelFormat::Yuv420p10le).unwrap(),
+        AMF_SURFACE_P010
+    );
     assert!(amf_surface_format_for(PixelFormat::Yuv422p).is_err());
     assert!(amf_surface_format_for(PixelFormat::Rgb24).is_err());
     assert!(amf_surface_format_for(PixelFormat::Yuv444p10le).is_err());
@@ -503,7 +630,11 @@ fn test_amf_color_profile_mapping() {
     assert_eq!(amf_color_profile_for(1, true), 7);
     assert_eq!(amf_color_profile_for(9, false), 2);
     assert_eq!(amf_color_profile_for(10, true), 8);
-    assert_eq!(amf_color_profile_for(6, false), 1, "BT.601 has no AMF profile of its own; 709");
+    assert_eq!(
+        amf_color_profile_for(6, false),
+        1,
+        "BT.601 has no AMF profile of its own; 709"
+    );
 }
 
 #[test]
@@ -512,7 +643,11 @@ fn test_amf_frame_rate_rational() {
     assert_eq!(frame_rate_rational(60.0), (60, 1));
     assert_eq!(frame_rate_rational(29.97), (29970, 1000));
     assert_eq!(frame_rate_rational(23.976), (23976, 1000));
-    assert_eq!(frame_rate_rational(0.0), (30, 1), "nonsense falls back to 30");
+    assert_eq!(
+        frame_rate_rational(0.0),
+        (30, 1),
+        "nonsense falls back to 30"
+    );
     assert_eq!(frame_rate_rational(f64::NAN), (30, 1));
 }
 
@@ -542,18 +677,48 @@ fn plan_names(p: &CodecPlan) -> (&'static str, &'static str, &'static str) {
 /// enum values (IDR = 0 for both H.26x output types, KEY = 0 for AV1).
 #[test]
 fn test_codec_plans_match_headers() {
-    assert_eq!(plan_names(&AVC_PLAN), ("AMFVideoEncoderVCE_AVC", "ForcePictureType", "OutputDataType"));
-    assert_eq!(AVC_PLAN.force_key.1, 2, "AMF_VIDEO_ENCODER_PICTURE_TYPE_IDR");
+    assert_eq!(
+        plan_names(&AVC_PLAN),
+        (
+            "AMFVideoEncoderVCE_AVC",
+            "ForcePictureType",
+            "OutputDataType"
+        )
+    );
+    assert_eq!(
+        AVC_PLAN.force_key.1, 2,
+        "AMF_VIDEO_ENCODER_PICTURE_TYPE_IDR"
+    );
     assert_eq!(AVC_PLAN.key_extras, &["InsertSPS", "InsertPPS"]);
     assert!((AVC_PLAN.is_keyframe)(0) && !(AVC_PLAN.is_keyframe)(1) && !(AVC_PLAN.is_keyframe)(2));
 
-    assert_eq!(plan_names(&HEVC_PLAN), ("AMFVideoEncoderHW_HEVC", "HevcForcePictureType", "HevcOutputDataType"));
-    assert_eq!(HEVC_PLAN.force_key.1, 2, "AMF_VIDEO_ENCODER_HEVC_PICTURE_TYPE_IDR");
+    assert_eq!(
+        plan_names(&HEVC_PLAN),
+        (
+            "AMFVideoEncoderHW_HEVC",
+            "HevcForcePictureType",
+            "HevcOutputDataType"
+        )
+    );
+    assert_eq!(
+        HEVC_PLAN.force_key.1, 2,
+        "AMF_VIDEO_ENCODER_HEVC_PICTURE_TYPE_IDR"
+    );
     assert_eq!(HEVC_PLAN.key_extras, &["HevcInsertHeader"]);
     assert!((HEVC_PLAN.is_keyframe)(0) && !(HEVC_PLAN.is_keyframe)(1));
 
-    assert_eq!(plan_names(&AV1_PLAN), ("AMFVideoEncoderHW_AV1", "Av1ForceFrameType", "Av1OutputFrameType"));
-    assert_eq!(AV1_PLAN.force_key.1, 1, "AMF_VIDEO_ENCODER_AV1_FORCE_FRAME_TYPE_KEY");
+    assert_eq!(
+        plan_names(&AV1_PLAN),
+        (
+            "AMFVideoEncoderHW_AV1",
+            "Av1ForceFrameType",
+            "Av1OutputFrameType"
+        )
+    );
+    assert_eq!(
+        AV1_PLAN.force_key.1, 1,
+        "AMF_VIDEO_ENCODER_AV1_FORCE_FRAME_TYPE_KEY"
+    );
     assert!(AV1_PLAN.key_extras.is_empty());
     assert!((AV1_PLAN.is_keyframe)(0) && !(AV1_PLAN.is_keyframe)(1) && !(AV1_PLAN.is_keyframe)(2));
 }
@@ -615,7 +780,8 @@ fn test_amf_runtime_property_storage_abi() {
     let _hw = crate::amf_hwtest::hw_lock();
     let Some(lib) = load_runtime() else { return };
     unsafe {
-        let amf_init: libloading::Symbol<super::FnAmfInit> = lib.get(b"AMFInit").expect("AMFInit export");
+        let amf_init: libloading::Symbol<super::FnAmfInit> =
+            lib.get(b"AMFInit").expect("AMFInit export");
         let mut factory: *mut c_void = ptr::null_mut();
         let rc = amf_init(super::AMF_VERSION, &mut factory);
         assert_eq!(rc, AMF_OK, "AMFInit(1.4.30)");
@@ -623,24 +789,42 @@ fn test_amf_runtime_property_storage_abi() {
         let factory_vt = &*(*(factory as *mut super::AmfFactoryObj)).vtbl;
 
         let mut ctx: *mut c_void = ptr::null_mut();
-        assert_eq!((factory_vt.create_context)(factory, &mut ctx), AMF_OK, "CreateContext");
+        assert_eq!(
+            (factory_vt.create_context)(factory, &mut ctx),
+            AMF_OK,
+            "CreateContext"
+        );
         assert!(!ctx.is_null());
         let ctx_vt = &*(*(ctx as *mut super::AmfContextObj)).vtbl;
         let ps = &ctx_vt.ps;
 
         // SetProperty / GetProperty round trip through the by-value variant.
         set_int_property(ctx, "RivetAbiProbe", 0x1234_5678_9abc).expect("SetProperty on a context");
-        assert_eq!(super::get_int_property(ctx, "RivetAbiProbe"), Some(0x1234_5678_9abc));
+        assert_eq!(
+            super::get_int_property(ctx, "RivetAbiProbe"),
+            Some(0x1234_5678_9abc)
+        );
         // HasProperty returns amf_bool; GetPropertyCount counts what we set.
         let name = wide("RivetAbiProbe");
-        assert_eq!((ps.has_property)(ctx, name.as_ptr()), 1, "HasProperty(set) == true");
+        assert_eq!(
+            (ps.has_property)(ctx, name.as_ptr()),
+            1,
+            "HasProperty(set) == true"
+        );
         let missing = wide("RivetAbiMissing");
-        assert_eq!((ps.has_property)(ctx, missing.as_ptr()), 0, "HasProperty(unset) == false");
+        assert_eq!(
+            (ps.has_property)(ctx, missing.as_ptr()),
+            0,
+            "HasProperty(unset) == false"
+        );
         assert!((ps.get_property_count)(ctx) >= 1, "GetPropertyCount");
         // GetProperty on a missing name is AMF_NOT_FOUND (= 11), the value
         // the old decoder misread as "not AMF-capable".
         let mut var = AmfVariant::empty();
-        assert_eq!((ps.get_property)(ctx, missing.as_ptr(), &mut var), AMF_NOT_FOUND);
+        assert_eq!(
+            (ps.get_property)(ctx, missing.as_ptr(), &mut var),
+            AMF_NOT_FOUND
+        );
         // A bool round-trips as a bool.
         super::set_bool_property(ctx, "RivetAbiBool", true).unwrap();
         let bname = wide("RivetAbiBool");
@@ -656,17 +840,29 @@ fn test_amf_runtime_property_storage_abi() {
 
         // QueryInterface(IID_AMFContext1): the IID bytes and slot 2.
         let mut ctx1: *mut c_void = ptr::null_mut();
-        assert_eq!((ps.query_interface)(ctx, &AMF_IID_CONTEXT1, &mut ctx1), AMF_OK, "QI(AMFContext1)");
+        assert_eq!(
+            (ps.query_interface)(ctx, &AMF_IID_CONTEXT1, &mut ctx1),
+            AMF_OK,
+            "QI(AMFContext1)"
+        );
         assert!(!ctx1.is_null());
         // Acquire / Release (slots 0 / 1) return the new count.
         let after_acquire = (ps.acquire)(ctx);
         let after_release = (ps.release)(ctx);
-        assert_eq!(after_acquire - 1, after_release, "Acquire then Release nets to zero");
+        assert_eq!(
+            after_acquire - 1,
+            after_release,
+            "Acquire then Release nets to zero"
+        );
         let ctx1_vt = &*(*(ctx1 as *mut super::AmfContext1Obj)).vtbl;
         let _ = (ctx1_vt.base.ps.release)(ctx1);
 
         // Teardown through slots 13 and 1.
-        assert_eq!((ctx_vt.terminate)(ctx), AMF_OK, "Terminate on an unbound context");
+        assert_eq!(
+            (ctx_vt.terminate)(ctx),
+            AMF_OK,
+            "Terminate on an unbound context"
+        );
         assert_eq!((ps.release)(ctx), 0, "final Release returns 0");
     }
     eprintln!("AMF runtime property-storage ABI: verified against the installed runtime");
@@ -694,7 +890,9 @@ fn test_amf_encoder_new_on_this_machine_fails_or_succeeds_cleanly() {
         };
         match super::AmfEncoder::new(cfg, 0) {
             Ok(enc) => {
-                eprintln!("{codec:?}: AmfEncoder::new succeeded on this machine (AMF-capable GPU present)");
+                eprintln!(
+                    "{codec:?}: AmfEncoder::new succeeded on this machine (AMF-capable GPU present)"
+                );
                 drop(enc);
             }
             Err(e) => {

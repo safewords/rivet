@@ -111,13 +111,19 @@ pub fn decode_threads_shared(share: usize) -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or_else(|| {
-            crate::threads::cap((std::thread::available_parallelism().map_or(1, |n| n.get()) / share.max(1)).clamp(1, 4))
+            crate::threads::cap(
+                (std::thread::available_parallelism().map_or(1, |n| n.get()) / share.max(1))
+                    .clamp(1, 4),
+            )
         })
 }
 
 fn worker_disabled() -> bool {
     matches!(
-        std::env::var("RIVET_AV1_DECODE_THREAD").as_deref().map(str::to_ascii_lowercase).as_deref(),
+        std::env::var("RIVET_AV1_DECODE_THREAD")
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
         Ok("0" | "false" | "no" | "off")
     )
 }
@@ -162,7 +168,12 @@ impl Av1Decoder {
                     }
                 })
                 .context("starting the AV1 decode thread")?;
-            Engine::Worker { samples: Some(sample_tx), results, handle: Some(handle), pending: 0 }
+            Engine::Worker {
+                samples: Some(sample_tx),
+                results,
+                handle: Some(handle),
+                pending: 0,
+            }
         };
         tracing::info!(
             backend = "av1",
@@ -171,7 +182,12 @@ impl Av1Decoder {
             threads,
             "AV1 software decode engaged (rivet's own decoder)"
         );
-        Ok(Self { info, engine, ready: VecDeque::new(), next_pts: 0 })
+        Ok(Self {
+            info,
+            engine,
+            ready: VecDeque::new(),
+            next_pts: 0,
+        })
     }
 
     fn accept(&mut self, decoded: Decoded) -> Result<()> {
@@ -187,19 +203,26 @@ impl Av1Decoder {
     /// given.
     fn collect(&mut self, wait: bool) -> Result<()> {
         loop {
-            let Engine::Worker { results, pending, .. } = &mut self.engine else {
+            let Engine::Worker {
+                results, pending, ..
+            } = &mut self.engine
+            else {
                 return Ok(());
             };
             if *pending == 0 {
                 return Ok(());
             }
             let got = if wait {
-                results.recv().map_err(|_| anyhow!("the AV1 decode thread ended early"))?
+                results
+                    .recv()
+                    .map_err(|_| anyhow!("the AV1 decode thread ended early"))?
             } else {
                 match results.try_recv() {
                     Ok(got) => got,
                     Err(mpsc::TryRecvError::Empty) => return Ok(()),
-                    Err(mpsc::TryRecvError::Disconnected) => bail!("the AV1 decode thread ended early"),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        bail!("the AV1 decode thread ended early")
+                    }
                 }
             };
             *pending -= 1;
@@ -219,7 +242,9 @@ impl Av1Decoder {
             (C::Yuv444, 8) => PixelFormat::Yuv444p,
             (C::Yuv444, 10) => PixelFormat::Yuv444p10le,
             (C::Yuv444, 12) => PixelFormat::Yuv444p12le,
-            (chroma, depth) => bail!("AV1 decoded a {chroma:?} {depth}-bit picture, which AV1 does not define"),
+            (chroma, depth) => {
+                bail!("AV1 decoded a {chroma:?} {depth}-bit picture, which AV1 does not define")
+            }
         };
         let color_space = match frame.color.matrix_coefficients {
             1 => ColorSpace::Bt709,
@@ -254,7 +279,14 @@ impl Av1Decoder {
         apply_color(&mut self.info.color_metadata, &frame.color, &frame.hdr);
         let pts = self.next_pts;
         self.next_pts += 1;
-        Ok(VideoFrame::new(Bytes::from(data), w, h, format, color_space, pts))
+        Ok(VideoFrame::new(
+            Bytes::from(data),
+            w,
+            h,
+            format,
+            color_space,
+            pts,
+        ))
     }
 }
 
@@ -272,7 +304,10 @@ fn apply_color(meta: &mut crate::frame::ColorMetadata, c: &av1::ColorInfo, hdr: 
         meta.full_range = c.full_range;
     }
     if let Some(cl) = hdr.content_light {
-        meta.content_light_level = Some(ContentLightLevel { max_cll: cl.max_cll, max_fall: cl.max_fall });
+        meta.content_light_level = Some(ContentLightLevel {
+            max_cll: cl.max_cll,
+            max_fall: cl.max_fall,
+        });
     }
     if let Some(md) = hdr.mastering_display {
         let xy = |v: u16| ((u64::from(v) * 50_000 + 32_768) / 65_536).min(65_535) as u16;
@@ -285,8 +320,10 @@ fn apply_color(meta: &mut crate::frame::ColorMetadata, c: &av1::ColorInfo, hdr: 
             primaries_b_y: xy(md.primaries[2][1]),
             white_point_x: xy(md.white_point[0]),
             white_point_y: xy(md.white_point[1]),
-            max_luminance: ((u64::from(md.luminance_max) * 10_000 + 128) / 256).min(u64::from(u32::MAX)) as u32,
-            min_luminance: ((u64::from(md.luminance_min) * 10_000 + 8_192) / 16_384).min(u64::from(u32::MAX)) as u32,
+            max_luminance: ((u64::from(md.luminance_max) * 10_000 + 128) / 256)
+                .min(u64::from(u32::MAX)) as u32,
+            min_luminance: ((u64::from(md.luminance_min) * 10_000 + 8_192) / 16_384)
+                .min(u64::from(u32::MAX)) as u32,
         });
     }
 }
@@ -302,8 +339,12 @@ impl Decoder for Av1Decoder {
                 let decoded = decoder.decode_all(data);
                 self.accept(decoded)
             }
-            Engine::Worker { samples, pending, .. } => {
-                let tx = samples.as_ref().ok_or_else(|| anyhow!("an AV1 sample after the end of the stream"))?;
+            Engine::Worker {
+                samples, pending, ..
+            } => {
+                let tx = samples
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("an AV1 sample after the end of the stream"))?;
                 if tx.send(data.to_vec()).is_err() {
                     // The worker stopped on an error it has already sent:
                     // collect it, so the caller sees the decoder's reason.
@@ -326,7 +367,9 @@ impl Decoder for Av1Decoder {
         if let Engine::Worker { handle, .. } = &mut self.engine
             && let Some(handle) = handle.take()
         {
-            handle.join().map_err(|_| anyhow!("the AV1 decode thread panicked"))?;
+            handle
+                .join()
+                .map_err(|_| anyhow!("the AV1 decode thread panicked"))?;
         }
         Ok(())
     }
@@ -341,7 +384,13 @@ impl Decoder for Av1Decoder {
 
 impl Drop for Av1Decoder {
     fn drop(&mut self) {
-        if let Engine::Worker { samples, results, handle, .. } = &mut self.engine {
+        if let Engine::Worker {
+            samples,
+            results,
+            handle,
+            ..
+        } = &mut self.engine
+        {
             samples.take();
             // Unblock a worker waiting to send, then let it run out.
             while results.try_recv().is_ok() {}
@@ -418,7 +467,10 @@ mod tests {
         let frames = decode_all(&units);
         assert_eq!(frames.len(), 9);
         for (i, f) in frames.iter().enumerate() {
-            assert_eq!((f.pts, f.width, f.height, f.format), (i as u64, 64, 48, PixelFormat::Yuv420p));
+            assert_eq!(
+                (f.pts, f.width, f.height, f.format),
+                (i as u64, 64, 48, PixelFormat::Yuv420p)
+            );
             assert_eq!(f.data.len(), 64 * 48 * 3 / 2);
         }
     }
@@ -445,7 +497,10 @@ mod tests {
             chroma_sample_position: 0,
         };
         cfg.hdr = av1::HdrMetadata {
-            content_light: Some(av1::ContentLightLevel { max_cll: 1000, max_fall: 400 }),
+            content_light: Some(av1::ContentLightLevel {
+                max_cll: 1000,
+                max_fall: 400,
+            }),
             mastering_display: Some(av1::MasteringDisplay {
                 primaries: [[46_399, 19_136], [11_141, 52_167], [8_585, 3_015]],
                 white_point: [20_493, 21_561],
@@ -462,14 +517,20 @@ mod tests {
         assert!(dec.decode_next().unwrap().is_some());
         let m = dec.stream_info().color_metadata;
         assert_eq!(m.transfer, crate::frame::TransferFn::St2084);
-        assert_eq!((m.colour_primaries, m.matrix_coefficients, m.full_range), (9, 9, false));
+        assert_eq!(
+            (m.colour_primaries, m.matrix_coefficients, m.full_range),
+            (9, 9, false)
+        );
         assert_eq!(dec.stream_info().color_space, ColorSpace::Bt2020);
         let md = m.mastering_display.expect("mastering display");
         // 46399 / 65536 = 0.70799 -> 35400 steps of 0.00002.
         assert_eq!(md.primaries_r_x, 35_400);
         assert_eq!(md.max_luminance, 10_000_000);
         assert_eq!(md.min_luminance, 50);
-        assert_eq!(m.content_light_level.map(|c| (c.max_cll, c.max_fall)), Some((1000, 400)));
+        assert_eq!(
+            m.content_light_level.map(|c| (c.max_cll, c.max_fall)),
+            Some((1000, 400))
+        );
     }
 
     #[test]

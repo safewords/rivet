@@ -219,10 +219,19 @@ pub(super) fn render_node_of(host_pci_address: &str) -> Option<u32> {
     } else {
         format!("0000:{host_pci_address}")
     };
-    let drm = std::path::Path::new("/sys/bus/pci/devices").join(bdf).join("drm");
+    let drm = std::path::Path::new("/sys/bus/pci/devices")
+        .join(bdf)
+        .join("drm");
     std::fs::read_dir(drm)
         .ok()?
         .flatten()
-        .filter_map(|entry| entry.file_name().to_str()?.strip_prefix("renderD")?.parse().ok())
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_str()?
+                .strip_prefix("renderD")?
+                .parse()
+                .ok()
+        })
         .min()
 }

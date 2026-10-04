@@ -93,7 +93,11 @@ pub struct SampleSpec {
 
 impl Default for SampleSpec {
     fn default() -> Self {
-        Self { frames: 180, windows: 1, max_skip_frames: 900 }
+        Self {
+            frames: 180,
+            windows: 1,
+            max_skip_frames: 900,
+        }
     }
 }
 
@@ -205,7 +209,9 @@ fn sample_decoded(
             let here = idx;
             idx += 1;
 
-            let Some(&begin) = starts.get(window_i) else { break 'demux };
+            let Some(&begin) = starts.get(window_i) else {
+                break 'demux;
+            };
             if here < begin {
                 continue;
             }
@@ -220,7 +226,11 @@ fn sample_decoded(
             // the clip is cheaper than it is.
             let blank = codec::quality::blank_fraction(&current);
             if codec::quality::window_looks_blank(&current) {
-                tracing::debug!(begin, blank, "per-title: a sample window reads as blank; dropping it");
+                tracing::debug!(
+                    begin,
+                    blank,
+                    "per-title: a sample window reads as blank; dropping it"
+                );
                 if fallback.as_ref().is_none_or(|(worst, _)| blank < *worst) {
                     fallback = Some((blank, std::mem::take(&mut current)));
                 }
@@ -248,11 +258,19 @@ fn sample_decoded(
     if kept.is_empty()
         && let Some((blank, frames)) = fallback.filter(|(_, f)| !f.is_empty())
     {
-        tracing::warn!(blank, "per-title: every sample window looked blank; measuring the least blank one");
+        tracing::warn!(
+            blank,
+            "per-title: every sample window looked blank; measuring the least blank one"
+        );
         return Ok(frames);
     }
 
-    tracing::debug!(windows = starts.len(), per_window, collected = kept.len(), "per-title: sample gathered");
+    tracing::debug!(
+        windows = starts.len(),
+        per_window,
+        collected = kept.len(),
+        "per-title: sample gathered"
+    );
     Ok(kept)
 }
 
@@ -287,7 +305,10 @@ pub async fn sweep_on_pool(
     let mut tasks: JoinSet<Option<Sample>> = JoinSet::new();
     for &delta in deltas {
         let Some(lease) = Arc::clone(gpu_pool).claim().await else {
-            tracing::warn!(delta, "per-title: no GPU available for a candidate; skipping it");
+            tracing::warn!(
+                delta,
+                "per-title: no GPU available for a candidate; skipping it"
+            );
             continue;
         };
 
@@ -351,7 +372,10 @@ impl Selection {
     pub fn overrides(&self) -> Option<EncodeOverrides> {
         match self {
             Selection::Chosen { sample, .. } if sample.quality_delta != 0 => {
-                Some(EncodeOverrides { quality_delta: sample.quality_delta, ..Default::default() })
+                Some(EncodeOverrides {
+                    quality_delta: sample.quality_delta,
+                    ..Default::default()
+                })
             }
             _ => None,
         }
@@ -377,7 +401,10 @@ pub fn select_shift(sweep: &Sweep, floor: f64, deltas: &[i16]) -> Selection {
     match sweep.cheapest_reaching(floor) {
         Some(best) => {
             let capped = deltas.len() > 1 && deltas.last() == Some(&best.quality_delta);
-            Selection::Chosen { sample: *best, capped }
+            Selection::Chosen {
+                sample: *best,
+                capped,
+            }
         }
         None => Selection::KeptBase,
     }
@@ -443,7 +470,12 @@ mod tests {
     #[test]
     fn the_cheapest_candidate_reaching_the_floor_wins() {
         let sweep = Sweep {
-            samples: vec![sample(-2, 0.9999), sample(0, 0.9998), sample(2, 0.9990), sample(4, 0.9970)],
+            samples: vec![
+                sample(-2, 0.9999),
+                sample(0, 0.9998),
+                sample(2, 0.9990),
+                sample(4, 0.9970),
+            ],
         };
         match select_shift(&sweep, 0.9985, &[-2, 0, 2, 4]) {
             Selection::Chosen { sample, capped } => {
@@ -458,13 +490,18 @@ mod tests {
     fn a_winner_at_the_edge_of_the_range_is_reported_as_capped() {
         // Everything cleared the floor, so the cheapest on the list won
         // because the list stopped there — the range decided, not the clip.
-        let sweep = Sweep { samples: vec![sample(0, 0.9999), sample(4, 0.9995), sample(8, 0.9990)] };
+        let sweep = Sweep {
+            samples: vec![sample(0, 0.9999), sample(4, 0.9995), sample(8, 0.9990)],
+        };
         match select_shift(&sweep, 0.9985, &[0, 4, 8]) {
             Selection::Chosen { sample, capped } => {
                 assert_eq!(sample.quality_delta, 8);
                 assert!(capped);
                 assert_eq!(
-                    Selection::Chosen { sample, capped }.overrides().unwrap().quality_delta,
+                    Selection::Chosen { sample, capped }
+                        .overrides()
+                        .unwrap()
+                        .quality_delta,
                     8
                 );
             }
@@ -474,7 +511,9 @@ mod tests {
 
     #[test]
     fn a_clip_that_cannot_reach_the_floor_keeps_its_base() {
-        let sweep = Sweep { samples: vec![sample(0, 0.98), sample(4, 0.97)] };
+        let sweep = Sweep {
+            samples: vec![sample(0, 0.98), sample(4, 0.97)],
+        };
         let selection = select_shift(&sweep, 0.9985, &[0, 4]);
         assert!(matches!(selection, Selection::KeptBase));
         assert!(selection.overrides().is_none());
@@ -482,7 +521,9 @@ mod tests {
 
     #[test]
     fn choosing_the_base_itself_is_no_override() {
-        let sweep = Sweep { samples: vec![sample(0, 0.9999), sample(2, 0.9)] };
+        let sweep = Sweep {
+            samples: vec![sample(0, 0.9999), sample(2, 0.9)],
+        };
         let selection = select_shift(&sweep, 0.9985, &[0, 2]);
         assert!(matches!(selection, Selection::Chosen { .. }));
         assert!(selection.overrides().is_none(), "a zero shift is the base");
@@ -491,12 +532,18 @@ mod tests {
     #[test]
     fn the_defaults_are_a_segments_worth_and_lean_cheaper() {
         let s = SampleSpec::default();
-        assert!(s.frames >= 150, "a sample shorter than a segment cannot carry the ladder's GOP");
+        assert!(
+            s.frames >= 150,
+            "a sample shorter than a segment cannot carry the ladder's GOP"
+        );
         assert_eq!(s.windows, 1, "extra windows mean extra keyframes");
         let cheaper = DEFAULT_CANDIDATES.iter().filter(|d| **d > 0).count();
         let dearer = DEFAULT_CANDIDATES.iter().filter(|d| **d < 0).count();
         assert!(cheaper > dearer);
-        assert!(DEFAULT_CANDIDATES.contains(&0), "the base itself must be a candidate");
+        assert!(
+            DEFAULT_CANDIDATES.contains(&0),
+            "the base itself must be a candidate"
+        );
     }
 
     const H264_601: &[u8] = include_bytes!("../../container/tests/fixtures/colour/h264_601.mp4");

@@ -1,6 +1,6 @@
 //! Small pixel-format and frame-rate mapping helpers.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::os::raw::c_uint;
 
 use crate::frame::{PixelFormat, TransferFn};
@@ -135,7 +135,10 @@ const _: () = assert!(pixel_bit_depth_minus8_for(PixelFormat::Yuv420p) == 0);
 /// `targetQuality` is cleared (it is a VBR knob; the quality target is not
 /// consulted at a constant rate). The same for every codec this backend
 /// encodes — these are rate-control fields, not codec-union ones.
-pub(super) fn apply_constant_rate(rc: &mut super::ffi::NvEncRcParams, rate: crate::encode::tuning::ConstantRate) {
+pub(super) fn apply_constant_rate(
+    rc: &mut super::ffi::NvEncRcParams,
+    rate: crate::encode::tuning::ConstantRate,
+) {
     let bits = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
     rc.rate_control_mode = super::constants::NV_ENC_PARAMS_RC_CBR;
     rc.average_bitrate = rate.bps;

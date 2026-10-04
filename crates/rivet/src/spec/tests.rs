@@ -1,5 +1,5 @@
-use super::*;
 use super::hdr_metadata;
+use super::*;
 use codec::encode::EncoderConfig;
 use codec::frame::{PixelFormat, TransferFn};
 
@@ -9,12 +9,30 @@ fn decode_policy_parses_and_resolves() {
     assert_eq!("auto".parse::<DecodePolicy>().unwrap(), DecodePolicy::Auto);
     assert_eq!("".parse::<DecodePolicy>().unwrap(), DecodePolicy::Auto);
     assert_eq!("AUTO".parse::<DecodePolicy>().unwrap(), DecodePolicy::Auto);
-    assert_eq!("fastest".parse::<DecodePolicy>().unwrap(), DecodePolicy::FastestGpu);
-    assert_eq!(" Fastest ".parse::<DecodePolicy>().unwrap(), DecodePolicy::FastestGpu);
-    assert_eq!("2".parse::<DecodePolicy>().unwrap(), DecodePolicy::SpecificGpu(2));
-    assert_eq!("gpu:2".parse::<DecodePolicy>().unwrap(), DecodePolicy::SpecificGpu(2));
-    assert_eq!("whole".parse::<DecodePolicy>().unwrap(), DecodePolicy::Whole);
-    assert_eq!("ranges:3".parse::<DecodePolicy>().unwrap(), DecodePolicy::Ranges(3));
+    assert_eq!(
+        "fastest".parse::<DecodePolicy>().unwrap(),
+        DecodePolicy::FastestGpu
+    );
+    assert_eq!(
+        " Fastest ".parse::<DecodePolicy>().unwrap(),
+        DecodePolicy::FastestGpu
+    );
+    assert_eq!(
+        "2".parse::<DecodePolicy>().unwrap(),
+        DecodePolicy::SpecificGpu(2)
+    );
+    assert_eq!(
+        "gpu:2".parse::<DecodePolicy>().unwrap(),
+        DecodePolicy::SpecificGpu(2)
+    );
+    assert_eq!(
+        "whole".parse::<DecodePolicy>().unwrap(),
+        DecodePolicy::Whole
+    );
+    assert_eq!(
+        "ranges:3".parse::<DecodePolicy>().unwrap(),
+        DecodePolicy::Ranges(3)
+    );
     assert!("bogus".parse::<DecodePolicy>().is_err());
     // One enum, so a pinned decode is never split: it asks for one range.
     assert_eq!(DecodePolicy::SpecificGpu(2).ranges_for(3), 1);
@@ -119,7 +137,11 @@ fn validate_rejects_empty_rungs() {
 
 #[test]
 fn validate_rejects_odd_dimensions() {
-    assert!(OutputSpec::single_file(vec![Rung::new(1281, 720)]).validate().is_err());
+    assert!(
+        OutputSpec::single_file(vec![Rung::new(1281, 720)])
+            .validate()
+            .is_err()
+    );
 }
 
 #[test]
@@ -174,23 +196,39 @@ fn resolve_output_sdr_tags_a_rederived_matrix_bt709() {
         ..Default::default()
     };
     let (color, pix) = s.resolve_output(bt601, PixelFormat::Yuv420p);
-    assert_eq!(color.matrix_coefficients, 1, "the matrix the pump re-derived");
-    assert_eq!(color.colour_primaries, 6, "primaries are not converted, so not re-tagged");
+    assert_eq!(
+        color.matrix_coefficients, 1,
+        "the matrix the pump re-derived"
+    );
+    assert_eq!(
+        color.colour_primaries, 6,
+        "primaries are not converted, so not re-tagged"
+    );
     assert_eq!(color.transfer, TransferFn::Bt709);
     assert!(!color.full_range);
     assert_eq!(pix, PixelFormat::Yuv420p);
     // BT.470BG (PAL, matrix 5) and 8-bit BT.2020 (matrix 9) take the same path.
     for m in [5u8, 9, 10] {
-        let src = codec::frame::ColorMetadata { matrix_coefficients: m, colour_primaries: m, ..bt601 };
+        let src = codec::frame::ColorMetadata {
+            matrix_coefficients: m,
+            colour_primaries: m,
+            ..bt601
+        };
         let (color, _) = s.resolve_output(src, PixelFormat::Yuv420p);
         assert_eq!(color.matrix_coefficients, 1, "matrix {m}");
     }
     // A 10-bit BT.601 source is layout-normalised only: its tags stay.
     let (color, pix) = s.resolve_output(bt601, PixelFormat::Yuv420p10le);
-    assert_eq!(color.matrix_coefficients, 6, "10-bit: no matrix conversion, no re-tag");
+    assert_eq!(
+        color.matrix_coefficients, 6,
+        "10-bit: no matrix conversion, no re-tag"
+    );
     assert_eq!(pix, PixelFormat::Yuv420p10le);
     // A full-range BT.709 source is untouched: nothing to re-tag, range kept.
-    let full = codec::frame::ColorMetadata { full_range: true, ..Default::default() };
+    let full = codec::frame::ColorMetadata {
+        full_range: true,
+        ..Default::default()
+    };
     let (color, _) = s.resolve_output(full, PixelFormat::Yuv420p);
     assert_eq!(color, full);
 }
@@ -226,19 +264,37 @@ fn resolve_output_hdr_policies_keep_the_sources_static_metadata() {
         max_luminance: 10_000_000,
         min_luminance: 1,
     };
-    let cll = ContentLightLevel { max_cll: 1000, max_fall: 400 };
+    let cll = ContentLightLevel {
+        max_cll: 1000,
+        max_fall: 400,
+    };
     let src = codec::frame::ColorMetadata {
         mastering_display: Some(md),
         content_light_level: Some(cll),
         ..hdr_metadata(TransferFn::St2084)
     };
-    for (policy, transfer) in [(ColorPolicy::Hdr10, TransferFn::St2084), (ColorPolicy::Hlg, TransferFn::AribStdB67)] {
+    for (policy, transfer) in [
+        (ColorPolicy::Hdr10, TransferFn::St2084),
+        (ColorPolicy::Hlg, TransferFn::AribStdB67),
+    ] {
         let s = OutputSpec::single_file(vec![Rung::new(640, 360)]).with_color(policy);
         let (color, pix) = s.resolve_output(src, PixelFormat::Yuv420p10le);
         assert_eq!(color.transfer, transfer, "{policy:?}");
-        assert_eq!((color.colour_primaries, color.matrix_coefficients), (9, 9), "{policy:?}: BT.2020");
-        assert_eq!(color.mastering_display, Some(md), "{policy:?}: the source's mastering display");
-        assert_eq!(color.content_light_level, Some(cll), "{policy:?}: the source's content light level");
+        assert_eq!(
+            (color.colour_primaries, color.matrix_coefficients),
+            (9, 9),
+            "{policy:?}: BT.2020"
+        );
+        assert_eq!(
+            color.mastering_display,
+            Some(md),
+            "{policy:?}: the source's mastering display"
+        );
+        assert_eq!(
+            color.content_light_level,
+            Some(cll),
+            "{policy:?}: the source's content light level"
+        );
         assert_eq!(pix, PixelFormat::Yuv420p10le);
     }
     // An HDR source without any says nothing either way. (An SDR source mapped
@@ -261,7 +317,11 @@ fn resolve_output_hdr_policies_keep_the_sources_static_metadata() {
 #[test]
 fn validate_checks_the_output_policy_against_the_jobs_codec_on_this_build() {
     use codec::encode::build_output_caps_for;
-    for codec in [VideoCodecPolicy::Av1, VideoCodecPolicy::H264, VideoCodecPolicy::H265] {
+    for codec in [
+        VideoCodecPolicy::Av1,
+        VideoCodecPolicy::H264,
+        VideoCodecPolicy::H265,
+    ] {
         let caps = build_output_caps_for(codec.codec());
         for (color, depth) in TEN_BIT_POLICIES {
             let s = OutputSpec::single_file(vec![Rung::new(640, 360)])
@@ -279,22 +339,44 @@ fn validate_checks_the_output_policy_against_the_jobs_codec_on_this_build() {
         let sdr = OutputSpec::single_file(vec![Rung::new(640, 360)])
             .with_video_codec(codec)
             .with_bit_depth(BitDepth::EightBit);
-        assert!(sdr.validate().is_ok(), "{codec:?}: 8-bit SDR is never refused for capability");
+        assert!(
+            sdr.validate().is_ok(),
+            "{codec:?}: 8-bit SDR is never refused for capability"
+        );
     }
     // The two cases the codec-agnostic check got wrong, by name.
     let h264_hdr = OutputSpec::single_file(vec![Rung::new(640, 360)])
         .with_video_codec(VideoCodecPolicy::H264)
         .hdr10();
     if cfg!(feature = "h26x-fallback") {
-        assert!(h264_hdr.validate().is_ok(), "h26x-fallback encodes H.264 High 10");
+        assert!(
+            h264_hdr.validate().is_ok(),
+            "h26x-fallback encodes H.264 High 10"
+        );
     } else {
-        let err = h264_hdr.validate().expect_err("no 10-bit H.264 encoder without h26x-fallback").to_string();
-        assert!(err.contains("h264 at 10 bits") && err.contains("`h26x-fallback`"), "{err}");
+        let err = h264_hdr
+            .validate()
+            .expect_err("no 10-bit H.264 encoder without h26x-fallback")
+            .to_string();
+        assert!(
+            err.contains("h264 at 10 bits") && err.contains("`h26x-fallback`"),
+            "{err}"
+        );
     }
     let av1_hdr = OutputSpec::single_file(vec![Rung::new(640, 360)]).hdr10();
     // HDR AV1: a GPU, or the software AV1 tier (it signals HDR).
-    let reachable = cfg!(any(feature = "nvidia", feature = "amd", feature = "qsv", feature = "av1-sw-fallback"));
-    assert_eq!(av1_hdr.validate().is_ok(), reachable, "HDR AV1 needs a GPU or av1-sw-fallback: {:?}", av1_hdr.validate().err());
+    let reachable = cfg!(any(
+        feature = "nvidia",
+        feature = "amd",
+        feature = "qsv",
+        feature = "av1-sw-fallback"
+    ));
+    assert_eq!(
+        av1_hdr.validate().is_ok(),
+        reachable,
+        "HDR AV1 needs a GPU or av1-sw-fallback: {:?}",
+        av1_hdr.validate().err()
+    );
 }
 
 /// Every policy that needs 10 bits: the HDR two, and a forced 10-bit depth
@@ -313,7 +395,9 @@ fn refusal(
     codec: VideoCodec,
     backends: &[codec::encode::EncoderBackend],
 ) -> Option<String> {
-    super::caps::check_output_caps(color, depth, codec, backends, None).err().map(|e| e.to_string())
+    super::caps::check_output_caps(color, depth, codec, backends, None)
+        .err()
+        .map(|e| e.to_string())
 }
 
 fn refusal_pinned(
@@ -323,7 +407,9 @@ fn refusal_pinned(
     backends: &[codec::encode::EncoderBackend],
     pinned: codec::encode::EncoderBackend,
 ) -> Option<String> {
-    super::caps::check_output_caps(color, depth, codec, backends, Some(pinned)).err().map(|e| e.to_string())
+    super::caps::check_output_caps(color, depth, codec, backends, Some(pinned))
+        .err()
+        .map(|e| e.to_string())
 }
 
 /// A backend asked for by name (`TRANSCODE_ENCODER_BACKEND`) is built whether
@@ -338,16 +424,29 @@ fn a_backend_pinned_by_name_counts_without_its_fallback_feature() {
     for (color, depth) in TEN_BIT_POLICIES {
         // The pin is what serves: without it the same set refuses.
         assert!(refusal(color, depth, VideoCodec::H264, &[Nvenc, Amf, Qsv]).is_some());
-        assert_eq!(refusal_pinned(color, depth, VideoCodec::H264, &[Nvenc, Amf, Qsv], H26x), None);
-        assert_eq!(refusal_pinned(color, depth, VideoCodec::H264, &[], H26x), None);
-        assert_eq!(refusal_pinned(color, depth, VideoCodec::H265, &[], H26x), None);
+        assert_eq!(
+            refusal_pinned(color, depth, VideoCodec::H264, &[Nvenc, Amf, Qsv], H26x),
+            None
+        );
+        assert_eq!(
+            refusal_pinned(color, depth, VideoCodec::H264, &[], H26x),
+            None
+        );
+        assert_eq!(
+            refusal_pinned(color, depth, VideoCodec::H265, &[], H26x),
+            None
+        );
 
         // The software AV1 encoder pinned: 10-bit AV1, HDR included (it
         // writes the colour description and the HDR10 metadata), and no H.264
         // at all.
         let pinned = refusal_pinned(color, depth, VideoCodec::Av1, &[H26x], Av1);
-        assert_eq!(pinned, None, "10-bit AV1 on the software encoder: {color:?} {depth:?}");
-        let err = refusal_pinned(color, depth, VideoCodec::H264, &[Nvenc], Av1).expect("the AV1 encoder has no H.264");
+        assert_eq!(
+            pinned, None,
+            "10-bit AV1 on the software encoder: {color:?} {depth:?}"
+        );
+        let err = refusal_pinned(color, depth, VideoCodec::H264, &[Nvenc], Av1)
+            .expect("the AV1 encoder has no H.264");
         assert!(
             err.contains(
                 "this build encodes h264 with nvenc (8-bit SDR); TRANSCODE_ENCODER_BACKEND=av1 pins av1, \
@@ -356,12 +455,22 @@ fn a_backend_pinned_by_name_counts_without_its_fallback_feature() {
             "{err}"
         );
         // A pin already in the compiled set is listed once.
-        let err = refusal_pinned(color, depth, VideoCodec::H264, &[Nvenc], Nvenc).expect("nvenc H.264 is 8-bit");
+        let err = refusal_pinned(color, depth, VideoCodec::H264, &[Nvenc], Nvenc)
+            .expect("nvenc H.264 is 8-bit");
         assert_eq!(err.matches("nvenc (8-bit SDR)").count(), 1, "{err}");
-        assert!(err.contains("TRANSCODE_ENCODER_BACKEND=nvenc pins nvenc, which is 8-bit SDR for h264"), "{err}");
+        assert!(
+            err.contains("TRANSCODE_ENCODER_BACKEND=nvenc pins nvenc, which is 8-bit SDR for h264"),
+            "{err}"
+        );
     }
     // Without a pin the wording is exactly what it was.
-    let err = refusal(ColorPolicy::Hdr10, BitDepth::Auto, VideoCodec::H264, &[Nvenc]).unwrap();
+    let err = refusal(
+        ColorPolicy::Hdr10,
+        BitDepth::Auto,
+        VideoCodec::H264,
+        &[Nvenc],
+    )
+    .unwrap();
     assert!(!err.contains("TRANSCODE_ENCODER_BACKEND"), "{err}");
 }
 
@@ -377,17 +486,32 @@ fn check_encoder_caps_honours_the_pinned_backend_on_this_build() {
                 .with_video_codec(codec)
                 .with_color(color)
                 .with_bit_depth(depth);
-            assert!(s.check_encoder_caps(Some(H26x)).is_ok(), "{codec:?} {color:?} {depth:?}: {:?}", s.check_encoder_caps(Some(H26x)).err());
+            assert!(
+                s.check_encoder_caps(Some(H26x)).is_ok(),
+                "{codec:?} {color:?} {depth:?}: {:?}",
+                s.check_encoder_caps(Some(H26x)).err()
+            );
         }
-        let av1 = OutputSpec::single_file(vec![Rung::new(640, 360)]).with_color(color).with_bit_depth(depth);
-        assert!(av1.check_encoder_caps(Some(Av1)).is_ok(), "{color:?} {depth:?}");
+        let av1 = OutputSpec::single_file(vec![Rung::new(640, 360)])
+            .with_color(color)
+            .with_bit_depth(depth);
+        assert!(
+            av1.check_encoder_caps(Some(Av1)).is_ok(),
+            "{color:?} {depth:?}"
+        );
     }
     // The software AV1 tier's old name still pins it.
     assert_eq!(super::caps::encoder_backend_from_name("rav1e"), Some(Av1));
     // The env spellings the serial encode path accepts.
     for b in ENCODE_BACKENDS {
-        assert_eq!(super::caps::encoder_backend_from_name(encode_backend_name(b)), Some(b));
-        assert_eq!(super::caps::encoder_backend_from_name(&encode_backend_name(b).to_ascii_uppercase()), Some(b));
+        assert_eq!(
+            super::caps::encoder_backend_from_name(encode_backend_name(b)),
+            Some(b)
+        );
+        assert_eq!(
+            super::caps::encoder_backend_from_name(&encode_backend_name(b).to_ascii_uppercase()),
+            Some(b)
+        );
     }
     assert_eq!(super::caps::encoder_backend_from_name("x264"), None);
     assert_eq!(super::caps::encoder_backend_from_name(""), None);
@@ -421,14 +545,19 @@ fn a_pin_counts_for_single_file_validation_and_not_for_hls() {
             single.validate_with_pin(Some(H26x)).err()
         );
         // HLS: exactly what the build says without a pin.
-        let pinned = hls.validate_with_pin(Some(H26x)).map_err(|e| format!("{e:#}"));
+        let pinned = hls
+            .validate_with_pin(Some(H26x))
+            .map_err(|e| format!("{e:#}"));
         let unpinned = hls.validate_with_pin(None).map_err(|e| format!("{e:#}"));
         assert_eq!(pinned, unpinned, "{color:?} {depth:?}");
         if cfg!(feature = "h26x-fallback") {
             assert!(pinned.is_ok(), "{color:?} {depth:?}: {pinned:?}");
         } else {
             let err = pinned.expect_err("HLS has no 10-bit H.264 encoder without h26x-fallback");
-            assert!(err.contains("h264 at 10 bits") && err.contains("`h26x-fallback`"), "{err}");
+            assert!(
+                err.contains("h264 at 10 bits") && err.contains("`h26x-fallback`"),
+                "{err}"
+            );
             assert!(!err.contains("TRANSCODE_ENCODER_BACKEND"), "{err}");
         }
     }
@@ -442,24 +571,43 @@ fn a_pin_counts_for_single_file_validation_and_not_for_hls() {
 fn ten_bit_h264_is_refused_on_hardware_and_pointed_at_the_software_tier() {
     use codec::encode::EncoderBackend::{Amf, Av1, H26x, Nvenc, Qsv};
     for (color, depth) in TEN_BIT_POLICIES {
-        let err = refusal(color, depth, VideoCodec::H264, &[Nvenc, Amf, Qsv]).expect("hardware H.264 is 8-bit");
+        let err = refusal(color, depth, VideoCodec::H264, &[Nvenc, Amf, Qsv])
+            .expect("hardware H.264 is 8-bit");
         assert!(err.starts_with("h264 at 10 bits ("), "{err}");
         assert!(
-            err.contains("this build encodes h264 with nvenc (8-bit SDR), amf (8-bit SDR), qsv (8-bit SDR)"),
+            err.contains(
+                "this build encodes h264 with nvenc (8-bit SDR), amf (8-bit SDR), qsv (8-bit SDR)"
+            ),
             "{err}"
         );
-        assert!(err.contains("h264 at 10 bits needs the software tier (build with `h26x-fallback`)"), "{err}");
-        assert!(err.contains("no hardware backend encodes h264 at 10 bits"), "{err}");
-        assert!(!err.contains("`nvidia`") && !err.contains("`amd`") && !err.contains("`qsv`"), "{err}");
+        assert!(
+            err.contains("h264 at 10 bits needs the software tier (build with `h26x-fallback`)"),
+            "{err}"
+        );
+        assert!(
+            err.contains("no hardware backend encodes h264 at 10 bits"),
+            "{err}"
+        );
+        assert!(
+            !err.contains("`nvidia`") && !err.contains("`amd`") && !err.contains("`qsv`"),
+            "{err}"
+        );
         for hw in [Nvenc, Amf, Qsv] {
-            assert!(refusal(color, depth, VideoCodec::H264, &[hw]).is_some(), "{hw:?}");
+            assert!(
+                refusal(color, depth, VideoCodec::H264, &[hw]).is_some(),
+                "{hw:?}"
+            );
             // The same backend is 10-bit for the other two codecs.
-            assert!(refusal(color, depth, VideoCodec::H265, &[hw]).is_none(), "{hw:?}");
+            assert!(
+                refusal(color, depth, VideoCodec::H265, &[hw]).is_none(),
+                "{hw:?}"
+            );
         }
         assert!(refusal(color, depth, VideoCodec::H264, &[H26x]).is_none());
         assert!(refusal(color, depth, VideoCodec::H264, &[Nvenc, H26x]).is_none());
         // The software AV1 encoder does not encode H.264 at all.
-        let err = refusal(color, depth, VideoCodec::H264, &[Av1]).expect("the AV1 encoder has no H.264");
+        let err =
+            refusal(color, depth, VideoCodec::H264, &[Av1]).expect("the AV1 encoder has no H.264");
         assert!(err.contains("this build has no h264 encoder"), "{err}");
     }
 }
@@ -484,9 +632,15 @@ fn ten_bit_and_hdr_av1_need_a_gpu_or_the_software_tier() {
             ),
             "{err}"
         );
-        assert!(refusal(color, depth, VideoCodec::Av1, &[Av1, H26x]).is_none(), "{color:?} {depth:?}");
+        assert!(
+            refusal(color, depth, VideoCodec::Av1, &[Av1, H26x]).is_none(),
+            "{color:?} {depth:?}"
+        );
         for hw in [Nvenc, Amf, Qsv] {
-            assert!(refusal(color, depth, VideoCodec::Av1, &[hw, Av1]).is_none(), "{hw:?}");
+            assert!(
+                refusal(color, depth, VideoCodec::Av1, &[hw, Av1]).is_none(),
+                "{hw:?}"
+            );
         }
     }
 }
@@ -497,7 +651,8 @@ fn ten_bit_h265_names_the_hardware_and_the_software_tier() {
     use codec::encode::EncoderBackend::{Amf, Av1, H26x, Nvenc, Qsv};
     for (color, depth) in TEN_BIT_POLICIES {
         for set in [&[][..], &[Av1][..]] {
-            let err = refusal(color, depth, VideoCodec::H265, set).expect("no 10-bit H.265 encoder");
+            let err =
+                refusal(color, depth, VideoCodec::H265, set).expect("no 10-bit H.265 encoder");
             assert!(err.contains("this build has no h265 encoder"), "{err}");
             assert!(
                 err.contains(
@@ -509,7 +664,10 @@ fn ten_bit_h265_names_the_hardware_and_the_software_tier() {
             assert!(!err.contains("no hardware backend"), "{err}");
         }
         for b in [Nvenc, Amf, Qsv, H26x] {
-            assert!(refusal(color, depth, VideoCodec::H265, &[b]).is_none(), "{b:?}");
+            assert!(
+                refusal(color, depth, VideoCodec::H265, &[b]).is_none(),
+                "{b:?}"
+            );
         }
     }
 }
@@ -526,7 +684,10 @@ fn eight_bit_policies_are_not_capability_checked() {
             (ColorPolicy::Passthrough, BitDepth::Auto),
             (ColorPolicy::Passthrough, BitDepth::EightBit),
         ] {
-            assert!(refusal(color, depth, codec, &[]).is_none(), "{codec:?} {color:?} {depth:?}");
+            assert!(
+                refusal(color, depth, codec, &[]).is_none(),
+                "{codec:?} {color:?} {depth:?}"
+            );
         }
     }
 }
@@ -541,12 +702,23 @@ fn codec_output_caps_agree_with_the_codec_crate() {
         OutputCaps, backend_output_caps_for, build_output_caps_for, compiled_encode_backends,
         encode_backends,
     };
-    let floor = OutputCaps { max_bit_depth: 8, hdr: false };
+    let floor = OutputCaps {
+        max_bit_depth: 8,
+        hdr: false,
+    };
     for codec in OUTPUT_CODECS {
-        assert_eq!(CodecOutputCaps::of_this_build(codec).caps, build_output_caps_for(codec), "{codec:?}");
+        assert_eq!(
+            CodecOutputCaps::of_this_build(codec).caps,
+            build_output_caps_for(codec),
+            "{codec:?}"
+        );
         for b in ENCODE_BACKENDS {
             let one = CodecOutputCaps::over(codec, &[b]);
-            assert_eq!(one.caps, backend_output_caps_for(b, codec), "{b:?} {codec:?}");
+            assert_eq!(
+                one.caps,
+                backend_output_caps_for(b, codec),
+                "{b:?} {codec:?}"
+            );
             if encode_backend_serves(b, codec) {
                 assert_eq!(one.backends, vec![(b, backend_output_caps_for(b, codec))]);
             } else {
@@ -555,9 +727,20 @@ fn codec_output_caps_agree_with_the_codec_crate() {
             }
         }
     }
-    let names: Vec<&str> = ENCODE_BACKENDS.iter().map(|&b| encode_backend_name(b)).collect();
-    assert_eq!(names, ["nvenc", "amf", "qsv", "av1", "h26x", "prores", "vp8", "vp9", "mpeg2", "mpeg4"]);
-    let compiled: Vec<&str> = compiled_encode_backends().into_iter().map(encode_backend_name).collect();
+    let names: Vec<&str> = ENCODE_BACKENDS
+        .iter()
+        .map(|&b| encode_backend_name(b))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "nvenc", "amf", "qsv", "av1", "h26x", "prores", "vp8", "vp9", "mpeg2", "mpeg4"
+        ]
+    );
+    let compiled: Vec<&str> = compiled_encode_backends()
+        .into_iter()
+        .map(encode_backend_name)
+        .collect();
     assert_eq!(compiled, encode_backends());
 }
 
@@ -587,7 +770,10 @@ fn rung_policy_resolves_by_position_and_the_rungs_own_knobs_win() {
         // A per-title style shift on this rung alone, plus its own tile grid.
         Rung::new(1280, 720).with_quality(Quality::default().with_overrides(EncodeOverrides {
             quality_delta: 4,
-            tiles: Some(TileGrid { columns: 2, rows: 1 }),
+            tiles: Some(TileGrid {
+                columns: 2,
+                rows: 1,
+            }),
             ..Default::default()
         })),
         Rung::new(640, 360),
@@ -608,27 +794,56 @@ fn rung_policy_resolves_by_position_and_the_rungs_own_knobs_win() {
     assert_eq!(mid.quality_delta, 6);
     assert_eq!(low.quality_delta, 4);
     // The rung's own tile grid beats the policy's single tile.
-    assert_eq!(mid.tiles, Some(TileGrid { columns: 2, rows: 1 }));
+    assert_eq!(
+        mid.tiles,
+        Some(TileGrid {
+            columns: 2,
+            rows: 1
+        })
+    );
     assert_eq!(low.tiles, Some(TileGrid::SINGLE));
     // Global knobs reach every rung.
     assert_eq!(top.reference_frames, Some(3));
 
     // An empty policy is the identity.
     let plain = OutputSpec::hls(vec![Rung::new(1920, 1080)], 4.0);
-    assert!(plain.with_rung_policy_resolved().rungs[0].quality.overrides.is_empty());
+    assert!(
+        plain.with_rung_policy_resolved().rungs[0]
+            .quality
+            .overrides
+            .is_empty()
+    );
 }
 
 #[test]
 fn encode_policy_parses_the_whole_plan() {
     // `--encode` value space: one enum for "which cards" and "how".
-    assert_eq!("all".parse::<EncodePolicy>().unwrap(), EncodePolicy::AllGpus);
+    assert_eq!(
+        "all".parse::<EncodePolicy>().unwrap(),
+        EncodePolicy::AllGpus
+    );
     assert_eq!("".parse::<EncodePolicy>().unwrap(), EncodePolicy::AllGpus);
-    assert_eq!("per-rung".parse::<EncodePolicy>().unwrap(), EncodePolicy::PerRung);
-    assert_eq!("single".parse::<EncodePolicy>().unwrap(), EncodePolicy::SingleGpu(None));
+    assert_eq!(
+        "per-rung".parse::<EncodePolicy>().unwrap(),
+        EncodePolicy::PerRung
+    );
+    assert_eq!(
+        "single".parse::<EncodePolicy>().unwrap(),
+        EncodePolicy::SingleGpu(None)
+    );
     // The old seam-mode spelling of "one encoder" lands where it belongs.
-    assert_eq!("serial".parse::<EncodePolicy>().unwrap(), EncodePolicy::SingleGpu(None));
-    assert_eq!("gpu:1".parse::<EncodePolicy>().unwrap(), EncodePolicy::SingleGpu(Some(1)));
-    assert_eq!("family:intel".parse::<EncodePolicy>().unwrap(), EncodePolicy::Family(GpuFamily::Intel));
+    assert_eq!(
+        "serial".parse::<EncodePolicy>().unwrap(),
+        EncodePolicy::SingleGpu(None)
+    );
+    assert_eq!(
+        "gpu:1".parse::<EncodePolicy>().unwrap(),
+        EncodePolicy::SingleGpu(Some(1))
+    );
+    assert_eq!(
+        "family:intel".parse::<EncodePolicy>().unwrap(),
+        EncodePolicy::Family(GpuFamily::Intel)
+    );
     assert!("family:voodoo".parse::<EncodePolicy>().is_err());
     assert!("bogus".parse::<EncodePolicy>().is_err());
 
@@ -655,7 +870,11 @@ fn resolve_output_folds_every_source_layout_onto_the_encoder_formats() {
         PixelFormat::Yuv444p12le,
         PixelFormat::Yuva444p10le,
     ] {
-        assert_eq!(s.resolve_output(sdr, fmt).1, PixelFormat::Yuv420p10le, "{fmt:?}");
+        assert_eq!(
+            s.resolve_output(sdr, fmt).1,
+            PixelFormat::Yuv420p10le,
+            "{fmt:?}"
+        );
         assert_eq!(encoder_input_format(fmt), PixelFormat::Yuv420p10le);
     }
     for fmt in [
@@ -666,14 +885,24 @@ fn resolve_output_folds_every_source_layout_onto_the_encoder_formats() {
         PixelFormat::Rgb24,
         PixelFormat::Rgba32,
     ] {
-        assert_eq!(s.resolve_output(sdr, fmt).1, PixelFormat::Yuv420p, "{fmt:?}");
+        assert_eq!(
+            s.resolve_output(sdr, fmt).1,
+            PixelFormat::Yuv420p,
+            "{fmt:?}"
+        );
     }
     // An explicit 8-bit output narrows a 12-bit source all the way.
-    let eight = OutputSpec::single_file(vec![Rung::new(640, 360)]).with_bit_depth(BitDepth::EightBit);
-    assert_eq!(eight.resolve_output(sdr, PixelFormat::Yuv420p12le).1, PixelFormat::Yuv420p);
+    let eight =
+        OutputSpec::single_file(vec![Rung::new(640, 360)]).with_bit_depth(BitDepth::EightBit);
+    assert_eq!(
+        eight.resolve_output(sdr, PixelFormat::Yuv420p12le).1,
+        PixelFormat::Yuv420p
+    );
     // Passthrough of a 12-bit HDR source still lands on the 10-bit ceiling.
-    let pt = OutputSpec::single_file(vec![Rung::new(640, 360)]).with_color(ColorPolicy::Passthrough);
-    let (color, pix) = pt.resolve_output(hdr_metadata(TransferFn::St2084), PixelFormat::Yuv444p12le);
+    let pt =
+        OutputSpec::single_file(vec![Rung::new(640, 360)]).with_color(ColorPolicy::Passthrough);
+    let (color, pix) =
+        pt.resolve_output(hdr_metadata(TransferFn::St2084), PixelFormat::Yuv444p12le);
     assert_eq!(color.transfer, TransferFn::St2084);
     assert_eq!(pix, PixelFormat::Yuv420p10le);
 }
@@ -802,10 +1031,19 @@ fn every_codec_output_caps_is_what_every_codec_meets() {
     use codec::encode::EncoderBackend::{Av1, H26x, Nvenc};
     use codec::encode::OutputCaps;
     let over = |set: &[codec::encode::EncoderBackend]| -> Vec<CodecOutputCaps> {
-        OUTPUT_CODECS.iter().map(|&c| CodecOutputCaps::over(c, set)).collect()
+        OUTPUT_CODECS
+            .iter()
+            .map(|&c| CodecOutputCaps::over(c, set))
+            .collect()
     };
-    let sdr8 = OutputCaps { max_bit_depth: 8, hdr: false };
-    let hdr10 = OutputCaps { max_bit_depth: 10, hdr: true };
+    let sdr8 = OutputCaps {
+        max_bit_depth: 8,
+        hdr: false,
+    };
+    let hdr10 = OutputCaps {
+        max_bit_depth: 10,
+        hdr: true,
+    };
     assert_eq!(every_codec_output_caps(&over(&[H26x])), sdr8);
     assert_eq!(every_codec_output_caps(&over(&[Nvenc])), sdr8);
     assert_eq!(every_codec_output_caps(&over(&[Nvenc, Av1, H26x])), hdr10);
@@ -826,7 +1064,10 @@ fn a_ten_bit_or_hdr_source_is_checked_against_the_codecs_encoders() {
     use codec::encode::EncoderBackend::{Av1, H26x, Nvenc};
     use codec::frame::ColorMetadata;
     let spec = |codec: VideoCodecPolicy, color: ColorPolicy, depth: BitDepth| {
-        OutputSpec::single_file(vec![Rung::new(640, 360)]).with_video_codec(codec).with_color(color).with_bit_depth(depth)
+        OutputSpec::single_file(vec![Rung::new(640, 360)])
+            .with_video_codec(codec)
+            .with_color(color)
+            .with_bit_depth(depth)
     };
     let sdr = ColorMetadata::default();
     let pq = hdr_metadata(TransferFn::St2084);
@@ -840,32 +1081,88 @@ fn a_ten_bit_or_hdr_source_is_checked_against_the_codecs_encoders() {
         .expect_err("NVENC H.264 is 8-bit")
         .to_string();
     assert!(err.starts_with("h264 at 10 bits (color=TonemapToSdr, bit_depth=Auto) cannot be encoded: this build encodes h264 with nvenc (8-bit SDR)."), "{err}");
-    assert!(err.contains("h264 at 10 bits needs the software tier (build with `h26x-fallback`)"), "{err}");
+    assert!(
+        err.contains("h264 at 10 bits needs the software tier (build with `h26x-fallback`)"),
+        "{err}"
+    );
     assert!(err.ends_with("; the source is Yuv420p10le and bit_depth=Auto keeps its 10 bits: `--pixel-format 8bit` encodes it at 8 bits"), "{err}");
     // An 8-bit source, a forced 8-bit output, or a 10-bit H.264 encoder: fine.
-    assert!(auto(VideoCodecPolicy::H264).check_source_against(sdr, eight, &[Nvenc], None).is_ok());
-    assert!(spec(VideoCodecPolicy::H264, ColorPolicy::TonemapToSdr, BitDepth::EightBit).check_source_against(sdr, ten, &[Nvenc], None).is_ok());
-    assert!(auto(VideoCodecPolicy::H264).check_source_against(sdr, ten, &[Nvenc, H26x], None).is_ok());
-    assert!(auto(VideoCodecPolicy::H264).check_source_against(sdr, ten, &[Nvenc], Some(H26x)).is_ok());
-    assert!(auto(VideoCodecPolicy::H265).check_source_against(sdr, ten, &[Nvenc], None).is_ok());
+    assert!(
+        auto(VideoCodecPolicy::H264)
+            .check_source_against(sdr, eight, &[Nvenc], None)
+            .is_ok()
+    );
+    assert!(
+        spec(
+            VideoCodecPolicy::H264,
+            ColorPolicy::TonemapToSdr,
+            BitDepth::EightBit
+        )
+        .check_source_against(sdr, ten, &[Nvenc], None)
+        .is_ok()
+    );
+    assert!(
+        auto(VideoCodecPolicy::H264)
+            .check_source_against(sdr, ten, &[Nvenc, H26x], None)
+            .is_ok()
+    );
+    assert!(
+        auto(VideoCodecPolicy::H264)
+            .check_source_against(sdr, ten, &[Nvenc], Some(H26x))
+            .is_ok()
+    );
+    assert!(
+        auto(VideoCodecPolicy::H265)
+            .check_source_against(sdr, ten, &[Nvenc], None)
+            .is_ok()
+    );
     // 10-bit SDR AV1 on the software tier alone: its encoder is 10-bit.
-    assert!(auto(VideoCodecPolicy::Av1).check_source_against(sdr, ten, &[Av1], None).is_ok());
+    assert!(
+        auto(VideoCodecPolicy::Av1)
+            .check_source_against(sdr, ten, &[Av1], None)
+            .is_ok()
+    );
 
     // An HDR source: tonemapped by default (8-bit SDR out, any encoder), kept
     // by passthrough — which needs 10 bits and HDR from the encoder.
-    assert!(auto(VideoCodecPolicy::H264).check_source_against(pq, ten, &[Nvenc], None).is_ok());
-    let pass = spec(VideoCodecPolicy::H264, ColorPolicy::Passthrough, BitDepth::Auto);
-    let err = pass.check_source_against(pq, ten, &[Nvenc], None).expect_err("NVENC H.264 is 8-bit SDR").to_string();
+    assert!(
+        auto(VideoCodecPolicy::H264)
+            .check_source_against(pq, ten, &[Nvenc], None)
+            .is_ok()
+    );
+    let pass = spec(
+        VideoCodecPolicy::H264,
+        ColorPolicy::Passthrough,
+        BitDepth::Auto,
+    );
+    let err = pass
+        .check_source_against(pq, ten, &[Nvenc], None)
+        .expect_err("NVENC H.264 is 8-bit SDR")
+        .to_string();
     assert!(err.ends_with("; the source is Yuv420p10le HDR (St2084) and color=Passthrough keeps it: `--color sdr` tonemaps it to 8-bit SDR"), "{err}");
     assert!(pass.check_source_against(pq, ten, &[H26x], None).is_ok());
     // HDR AV1 kept from the source: the software AV1 encoder signals it.
-    let pass_av1 = spec(VideoCodecPolicy::Av1, ColorPolicy::Passthrough, BitDepth::Auto);
+    let pass_av1 = spec(
+        VideoCodecPolicy::Av1,
+        ColorPolicy::Passthrough,
+        BitDepth::Auto,
+    );
     assert!(pass_av1.check_source_against(pq, ten, &[Av1], None).is_ok());
     // HDR kept at a forced 8 bits is still HDR: refused with HDR by an
     // encoder that signals none.
-    let pass8 = spec(VideoCodecPolicy::H264, ColorPolicy::Passthrough, BitDepth::EightBit);
-    let err = pass8.check_source_against(pq, ten, &[Nvenc], None).expect_err("NVENC H.264 signals no HDR").to_string();
-    assert!(err.starts_with("h264 with HDR") && err.ends_with("`--color sdr` tonemaps it to SDR"), "{err}");
+    let pass8 = spec(
+        VideoCodecPolicy::H264,
+        ColorPolicy::Passthrough,
+        BitDepth::EightBit,
+    );
+    let err = pass8
+        .check_source_against(pq, ten, &[Nvenc], None)
+        .expect_err("NVENC H.264 signals no HDR")
+        .to_string();
+    assert!(
+        err.starts_with("h264 with HDR") && err.ends_with("`--color sdr` tonemaps it to SDR"),
+        "{err}"
+    );
 }
 
 /// A rung's rate request that cannot be coded is refused by `validate`,
@@ -878,40 +1175,89 @@ fn a_ten_bit_or_hdr_source_is_checked_against_the_codecs_encoders() {
 fn an_av1_bitrate_rung_validates_and_what_it_cannot_code_is_refused() {
     use codec::encode::tuning::{EncodeOverrides, RateMode};
     let av1 = |o: EncodeOverrides| {
-        OutputSpec::single_file(vec![Rung::new(1280, 720).with_quality(Quality::default().with_overrides(o))])
+        OutputSpec::single_file(vec![
+            Rung::new(1280, 720).with_quality(Quality::default().with_overrides(o)),
+        ])
     };
-    let rate = EncodeOverrides { bitrate: Some(2_000_000), ..Default::default() };
-    av1(rate).validate().unwrap_or_else(|e| panic!("an AV1 average rate validates: {e:#}"));
-    let buffered = av1(EncodeOverrides { buffer_ms: Some(500), ..rate });
+    let rate = EncodeOverrides {
+        bitrate: Some(2_000_000),
+        ..Default::default()
+    };
+    av1(rate)
+        .validate()
+        .unwrap_or_else(|e| panic!("an AV1 average rate validates: {e:#}"));
+    let buffered = av1(EncodeOverrides {
+        buffer_ms: Some(500),
+        ..rate
+    });
     let msg = format!("{:#}", buffered.validate().expect_err("no buffer model"));
-    assert!(msg.contains("software AV1") && msg.contains("buffer=500ms"), "{msg}");
+    assert!(
+        msg.contains("software AV1") && msg.contains("buffer=500ms"),
+        "{msg}"
+    );
     let crf = OutputSpec::single_file(vec![
-        Rung::new(1280, 720).with_quality(Quality { crf: Some(30), ..Quality::default() }.with_overrides(rate)),
+        Rung::new(1280, 720).with_quality(
+            Quality {
+                crf: Some(30),
+                ..Quality::default()
+            }
+            .with_overrides(rate),
+        ),
     ]);
     assert!(format!("{:#}", crf.validate().expect_err("crf and rate")).contains("crf=30"));
-    let cbr = av1(EncodeOverrides { rate_mode: Some(RateMode::Constant), ..rate });
-    assert!(cbr.validate().is_ok(), "a constant AV1 rate is the cards' to code; the pool decides");
+    let cbr = av1(EncodeOverrides {
+        rate_mode: Some(RateMode::Constant),
+        ..rate
+    });
+    assert!(
+        cbr.validate().is_ok(),
+        "a constant AV1 rate is the cards' to code; the pool decides"
+    );
 }
 
 #[test]
 fn impossible_rate_requests_are_refused_by_validate() {
     use codec::encode::tuning::{EncodeOverrides, RungPolicy};
-    let rate = |bps: u32| EncodeOverrides { bitrate: Some(bps), ..Default::default() };
-    let rung = |o: EncodeOverrides| Rung::new(1280, 720).with_quality(Quality::default().with_overrides(o));
-    let h264 = |rungs: Vec<Rung>| OutputSpec::single_file(rungs).with_video_codec(VideoCodecPolicy::H264);
+    let rate = |bps: u32| EncodeOverrides {
+        bitrate: Some(bps),
+        ..Default::default()
+    };
+    let rung = |o: EncodeOverrides| {
+        Rung::new(1280, 720).with_quality(Quality::default().with_overrides(o))
+    };
+    let h264 =
+        |rungs: Vec<Rung>| OutputSpec::single_file(rungs).with_video_codec(VideoCodecPolicy::H264);
     let refused = |spec: OutputSpec, words: &[&str]| {
         let msg = format!("{:#}", spec.validate().expect_err("must refuse"));
-        assert!(words.iter().all(|w| msg.contains(w)), "{words:?} not all in: {msg}");
+        assert!(
+            words.iter().all(|w| msg.contains(w)),
+            "{words:?} not all in: {msg}"
+        );
     };
 
     // A CRF and a rate on one rung.
-    let crf = Rung::new(1280, 720).with_quality(Quality { crf: Some(28), ..Quality::default() }.with_overrides(rate(3_000_000)));
-    refused(h264(vec![crf]), &["rung '720p'", "crf=28", "bitrate=3000000"]);
+    let crf = Rung::new(1280, 720).with_quality(
+        Quality {
+            crf: Some(28),
+            ..Quality::default()
+        }
+        .with_overrides(rate(3_000_000)),
+    );
+    refused(
+        h264(vec![crf]),
+        &["rung '720p'", "crf=28", "bitrate=3000000"],
+    );
     // A rate under constant-QP chunk seams.
-    refused(h264(vec![rung(rate(3_000_000))]).chunk_seam_mode(ChunkSeamMode::ParallelConstQp), &["constqp"]);
+    refused(
+        h264(vec![rung(rate(3_000_000))]).chunk_seam_mode(ChunkSeamMode::ParallelConstQp),
+        &["constqp"],
+    );
     // A buffer with no rate, from the policy.
     let buffer_only = RungPolicy::parse("any:buffer=1s").unwrap();
-    refused(h264(vec![Rung::new(1280, 720)]).with_rung_policy(buffer_only), &["rung '720p'", "buffer=1000ms"]);
+    refused(
+        h264(vec![Rung::new(1280, 720)]).with_rung_policy(buffer_only),
+        &["rung '720p'", "buffer=1000ms"],
+    );
     // A rate and a buffer on AV1, from the policy: the software AV1 encoder
     // codes the rate, not the buffer.
     let av1 = OutputSpec::single_file(vec![Rung::new(1280, 720)])
@@ -921,14 +1267,25 @@ fn impossible_rate_requests_are_refused_by_validate() {
     // What stands: a rate on H.264 / H.265, with or without a buffer; HLS
     // ignores the seam mode; no rate at all is the spec as it always was.
     assert!(h264(vec![rung(rate(3_000_000))]).validate().is_ok());
-    let buffered = EncodeOverrides { buffer_ms: Some(1000), ..rate(3_000_000) };
-    assert!(OutputSpec::hls(vec![rung(buffered)], 4.0).with_video_codec(VideoCodecPolicy::H265).validate().is_ok());
+    let buffered = EncodeOverrides {
+        buffer_ms: Some(1000),
+        ..rate(3_000_000)
+    };
+    assert!(
+        OutputSpec::hls(vec![rung(buffered)], 4.0)
+            .with_video_codec(VideoCodecPolicy::H265)
+            .validate()
+            .is_ok()
+    );
     let hls_constqp = OutputSpec::hls(vec![rung(rate(3_000_000))], 4.0)
         .with_video_codec(VideoCodecPolicy::H264)
         .chunk_seam_mode(ChunkSeamMode::ParallelConstQp);
     assert!(hls_constqp.validate().is_ok());
     assert_eq!(h264(vec![Rung::new(1280, 720)]).bitrate_rung(), None);
-    assert_eq!(h264(vec![Rung::new(640, 360), rung(rate(3_000_000))]).bitrate_rung(), Some(("720p".into(), 3_000_000)));
+    assert_eq!(
+        h264(vec![Rung::new(640, 360), rung(rate(3_000_000))]).bitrate_rung(),
+        Some(("720p".into(), 3_000_000))
+    );
 }
 
 /// Each new codec goes in the files that carry it and nowhere else, by name:
@@ -952,21 +1309,51 @@ fn every_codec_goes_in_the_files_that_carry_it() {
     for codec in codecs {
         let own = OutputSpec::single_file(rungs()).with_video_codec(codec);
         assert_eq!(own.container, codec.default_container(), "{codec:?}");
-        assert!(own.validate().is_ok(), "{codec:?} in its own file: {:?}", own.validate().err());
+        assert!(
+            own.validate().is_ok(),
+            "{codec:?} in its own file: {:?}",
+            own.validate().err()
+        );
         for c in [Container::Mp4, Container::Mov, Container::WebM] {
-            let s = OutputSpec::single_file(rungs()).with_video_codec(codec).with_container(c);
-            assert_eq!(s.validate().is_ok(), codec.fits(c), "{codec:?} in {c:?}: {:?}", s.validate().err());
+            let s = OutputSpec::single_file(rungs())
+                .with_video_codec(codec)
+                .with_container(c);
+            assert_eq!(
+                s.validate().is_ok(),
+                codec.fits(c),
+                "{codec:?} in {c:?}: {:?}",
+                s.validate().err()
+            );
         }
         let hls = OutputSpec::hls(rungs(), 4.0).with_video_codec(codec);
-        assert_eq!(hls.validate().is_ok(), codec.hls_ready(), "{codec:?} as HLS");
+        assert_eq!(
+            hls.validate().is_ok(),
+            codec.hls_ready(),
+            "{codec:?} as HLS"
+        );
         assert_eq!(hls.container, Container::Cmaf, "HLS stays CMAF");
     }
-    let err = OutputSpec::single_file(rungs()).with_video_codec(prores).with_container(Container::Mp4).validate();
+    let err = OutputSpec::single_file(rungs())
+        .with_video_codec(prores)
+        .with_container(Container::Mp4)
+        .validate();
     assert!(format!("{:#}", err.unwrap_err()).contains("container=mov"));
-    let err = OutputSpec::hls(rungs(), 4.0).with_video_codec(VideoCodecPolicy::Vp8).validate();
+    let err = OutputSpec::hls(rungs(), 4.0)
+        .with_video_codec(VideoCodecPolicy::Vp8)
+        .validate();
     assert!(format!("{:#}", err.unwrap_err()).contains("no CMAF binding"));
-    assert_eq!(OutputSpec::single_file(rungs()).with_video_codec(prores).file_extension(), "mov");
-    assert_eq!(OutputSpec::single_file(rungs()).with_video_codec(VideoCodecPolicy::Vp8).file_extension(), "webm");
+    assert_eq!(
+        OutputSpec::single_file(rungs())
+            .with_video_codec(prores)
+            .file_extension(),
+        "mov"
+    );
+    assert_eq!(
+        OutputSpec::single_file(rungs())
+            .with_video_codec(VideoCodecPolicy::Vp8)
+            .file_extension(),
+        "webm"
+    );
 }
 
 /// What the new codecs' encoders cannot do is refused before a frame is
@@ -978,58 +1365,134 @@ fn every_codec_goes_in_the_files_that_carry_it() {
 #[test]
 fn what_the_new_encoders_cannot_do_is_refused_by_name() {
     use codec::encode::tuning::{EncodeOverrides, RateMode};
-    let one = |codec: VideoCodecPolicy| OutputSpec::single_file(vec![Rung::new(640, 360)]).with_video_codec(codec);
+    let one = |codec: VideoCodecPolicy| {
+        OutputSpec::single_file(vec![Rung::new(640, 360)]).with_video_codec(codec)
+    };
     let refused = |s: OutputSpec, needle: &str| {
         let e = format!("{:#}", s.validate().expect_err(needle));
         assert!(e.contains(needle), "{needle:?} not in: {e}");
     };
-    for codec in [VideoCodecPolicy::Vp8, VideoCodecPolicy::Mpeg2, VideoCodecPolicy::Mpeg4] {
+    for codec in [
+        VideoCodecPolicy::Vp8,
+        VideoCodecPolicy::Mpeg2,
+        VideoCodecPolicy::Mpeg4,
+    ] {
         refused(one(codec).with_bit_depth(BitDepth::TenBit), "10 bits");
         refused(one(codec).hdr10(), "10 bits");
-        assert!(one(codec).with_bit_depth(BitDepth::EightBit).validate().is_ok());
+        assert!(
+            one(codec)
+                .with_bit_depth(BitDepth::EightBit)
+                .validate()
+                .is_ok()
+        );
     }
     // VP9 codes profile 2 (10-bit) and writes no HDR transfer.
-    assert!(one(VideoCodecPolicy::Vp9).with_bit_depth(BitDepth::TenBit).validate().is_ok());
-    assert!(one(VideoCodecPolicy::Vp9).with_bit_depth(BitDepth::EightBit).validate().is_ok());
+    assert!(
+        one(VideoCodecPolicy::Vp9)
+            .with_bit_depth(BitDepth::TenBit)
+            .validate()
+            .is_ok()
+    );
+    assert!(
+        one(VideoCodecPolicy::Vp9)
+            .with_bit_depth(BitDepth::EightBit)
+            .validate()
+            .is_ok()
+    );
     refused(one(VideoCodecPolicy::Vp9).hdr10(), "HDR");
     let prores = VideoCodecPolicy::ProRes(ProresProfile::P4444);
-    assert!(one(prores).hdr10().validate().is_ok(), "ProRes is 10-bit with HDR");
-    assert!(one(prores).with_bit_depth(BitDepth::TenBit).validate().is_ok());
+    assert!(
+        one(prores).hdr10().validate().is_ok(),
+        "ProRes is 10-bit with HDR"
+    );
+    assert!(
+        one(prores)
+            .with_bit_depth(BitDepth::TenBit)
+            .validate()
+            .is_ok()
+    );
 
     let rate = |codec, o: EncodeOverrides| {
-        let q = Quality { overrides: o, ..Default::default() };
+        let q = Quality {
+            overrides: o,
+            ..Default::default()
+        };
         OutputSpec::single_file(vec![Rung::new(640, 360).with_quality(q)]).with_video_codec(codec)
     };
-    let bitrate = EncodeOverrides { bitrate: Some(2_000_000), ..Default::default() };
-    assert!(rate(VideoCodecPolicy::Vp9, bitrate).validate().is_ok(), "VP9 codes an average rate");
+    let bitrate = EncodeOverrides {
+        bitrate: Some(2_000_000),
+        ..Default::default()
+    };
+    assert!(
+        rate(VideoCodecPolicy::Vp9, bitrate).validate().is_ok(),
+        "VP9 codes an average rate"
+    );
     // A constant-rate VP9 is QSV's: refused here by a build without it; a
     // build with it leaves the call to the pool (`multigpu::check_rate_pool`).
-    let vp9_cbr = rate(VideoCodecPolicy::Vp9, EncodeOverrides { rate_mode: Some(RateMode::Constant), ..bitrate });
+    let vp9_cbr = rate(
+        VideoCodecPolicy::Vp9,
+        EncodeOverrides {
+            rate_mode: Some(RateMode::Constant),
+            ..bitrate
+        },
+    );
     if codec::encode::compiled_encode_backends().contains(&codec::encode::EncoderBackend::Qsv) {
-        assert!(vp9_cbr.validate().is_ok(), "QSV codes VP9 at a constant rate");
+        assert!(
+            vp9_cbr.validate().is_ok(),
+            "QSV codes VP9 at a constant rate"
+        );
     } else {
         refused(vp9_cbr, "constant rate");
     }
     refused(rate(VideoCodecPolicy::Vp8, bitrate), "fixed quantiser");
     refused(rate(prores, bitrate), "profile");
-    assert!(rate(VideoCodecPolicy::Mpeg2, bitrate).validate().is_ok(), "MPEG-2 codes an average rate");
-    assert!(rate(VideoCodecPolicy::Mpeg4, bitrate).validate().is_ok(), "MPEG-4 codes an average rate");
-    let cbr = EncodeOverrides { rate_mode: Some(RateMode::Constant), ..bitrate };
+    assert!(
+        rate(VideoCodecPolicy::Mpeg2, bitrate).validate().is_ok(),
+        "MPEG-2 codes an average rate"
+    );
+    assert!(
+        rate(VideoCodecPolicy::Mpeg4, bitrate).validate().is_ok(),
+        "MPEG-4 codes an average rate"
+    );
+    let cbr = EncodeOverrides {
+        rate_mode: Some(RateMode::Constant),
+        ..bitrate
+    };
     refused(rate(VideoCodecPolicy::Mpeg2, cbr), "constant rate");
-    let buffered = EncodeOverrides { buffer_ms: Some(1000), ..bitrate };
+    let buffered = EncodeOverrides {
+        buffer_ms: Some(1000),
+        ..bitrate
+    };
     refused(rate(VideoCodecPolicy::Mpeg4, buffered), "buffer");
-    let b = EncodeOverrides { bframes: Some(2), ..Default::default() };
+    let b = EncodeOverrides {
+        bframes: Some(2),
+        ..Default::default()
+    };
     refused(rate(VideoCodecPolicy::Vp9, b), "B frames");
     refused(rate(prores, b), "intra-only");
     assert!(rate(VideoCodecPolicy::Mpeg2, b).validate().is_ok());
     assert!(rate(VideoCodecPolicy::Mpeg4, b).validate().is_ok());
-    let crf = Quality { crf: Some(20), ..Default::default() };
-    refused(OutputSpec::single_file(vec![Rung::new(640, 360).with_quality(crf)]).with_video_codec(prores), "crf");
+    let crf = Quality {
+        crf: Some(20),
+        ..Default::default()
+    };
     refused(
-        OutputSpec::single_file(vec![Rung::new(4096, 2160)]).with_video_codec(VideoCodecPolicy::Mpeg2),
+        OutputSpec::single_file(vec![Rung::new(640, 360).with_quality(crf)])
+            .with_video_codec(prores),
+        "crf",
+    );
+    refused(
+        OutputSpec::single_file(vec![Rung::new(4096, 2160)])
+            .with_video_codec(VideoCodecPolicy::Mpeg2),
         "4095x2800",
     );
-    refused(one(VideoCodecPolicy::Vp9).with_audio(AudioCodecPolicy::ForceAac), "Opus");
-    let keep = OutputSpec { metadata_keep: container::metadata::Keep::ALL, ..one(VideoCodecPolicy::Vp9) };
+    refused(
+        one(VideoCodecPolicy::Vp9).with_audio(AudioCodecPolicy::ForceAac),
+        "Opus",
+    );
+    let keep = OutputSpec {
+        metadata_keep: container::metadata::Keep::ALL,
+        ..one(VideoCodecPolicy::Vp9)
+    };
     refused(keep, "metadata-keep");
 }

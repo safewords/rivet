@@ -230,7 +230,11 @@ pub fn parse_aac_asc(asc: &[u8]) -> Option<ParsedAsc> {
         None
     };
     let channels = channels_for(leading_chan_cfg, pce.as_ref());
-    let extension = if leading_aot == 2 { backward_compatible_extension(&mut br) } else { SyncExtension::Absent };
+    let extension = if leading_aot == 2 {
+        backward_compatible_extension(&mut br)
+    } else {
+        SyncExtension::Absent
+    };
     let (sbr_sample_rate, ps_present) = match extension {
         SyncExtension::Sbr { rate, ps } => (Some(rate), ps),
         _ => (None, false),
@@ -945,14 +949,27 @@ mod tests {
     #[test]
     fn parse_backward_compatible_sbr_and_ps() {
         // 00010 0111 0010 000 | 01010110111 00101 1 0100 | 10101001000 1
-        let fields: [(u32, u32); 10] =
-            [(2, 5), (7, 4), (2, 4), (0, 3), (0x2B7, 11), (5, 5), (1, 1), (4, 4), (0x548, 11), (1, 1)];
+        let fields: [(u32, u32); 10] = [
+            (2, 5),
+            (7, 4),
+            (2, 4),
+            (0, 3),
+            (0x2B7, 11),
+            (5, 5),
+            (1, 1),
+            (4, 4),
+            (0x548, 11),
+            (1, 1),
+        ];
         let mut bw = BitWriter::new();
         for (v, n) in fields {
             bw.bits(v, n);
         }
         let p = parse_aac_asc(&bw.into_bytes()).expect("parse");
-        assert_eq!((p.aot, p.sample_rate, p.sbr_sample_rate), (2, 22_050, Some(44_100)));
+        assert_eq!(
+            (p.aot, p.sample_rate, p.sbr_sample_rate),
+            (2, 22_050, Some(44_100))
+        );
         assert!(p.sbr_present && p.ps_present);
         assert_eq!(p.signaling, AscSignaling::ExplicitPs);
         // Without the PS extension: SBR alone.
@@ -961,7 +978,10 @@ mod tests {
             bw.bits(*v, *n);
         }
         let p = parse_aac_asc(&bw.into_bytes()).expect("parse");
-        assert_eq!((p.signaling, p.ps_present), (AscSignaling::ExplicitSbr, false));
+        assert_eq!(
+            (p.signaling, p.ps_present),
+            (AscSignaling::ExplicitSbr, false)
+        );
     }
 
     /// HE-AAC implicit signaling: a plain AAC-LC ASC at low core rate
@@ -1115,7 +1135,11 @@ mod tests {
     #[test]
     fn parse_the_iso_23001_8_channel_configurations() {
         use Speaker::*;
-        let asc = |cfg: u16| ((2u16 << 11) | (3 << 7) | (cfg << 3)).to_be_bytes().to_vec();
+        let asc = |cfg: u16| {
+            ((2u16 << 11) | (3 << 7) | (cfg << 3))
+                .to_be_bytes()
+                .to_vec()
+        };
         for (cfg, channels) in [(11u8, 7u16), (12, 8), (13, 24), (14, 8)] {
             let p = parse_aac_asc(&asc(cfg.into())).expect("parse");
             assert_eq!(p.channel_configuration, cfg);
@@ -1137,15 +1161,28 @@ mod tests {
     #[test]
     fn pce_speaker_order_reads_the_element_lists() {
         use Speaker::*;
-        assert_eq!(pce_speaker_order(&pce_7_1()), Some(vec![C, L, R, Ls, Rs, Rls, Rrs, Lfe]));
+        assert_eq!(
+            pce_speaker_order(&pce_7_1()),
+            Some(vec![C, L, R, Ls, Rs, Rls, Rrs, Lfe])
+        );
         let mut five_one = pce_7_1();
         five_one.side.clear();
-        assert_eq!(pce_speaker_order(&five_one), Some(vec![C, L, R, Ls, Rs, Lfe]));
+        assert_eq!(
+            pce_speaker_order(&five_one),
+            Some(vec![C, L, R, Ls, Rs, Lfe])
+        );
         let mut two_lfe = pce_7_1();
         two_lfe.lfe = vec![0, 1];
-        assert_eq!(pce_speaker_order(&two_lfe), None, "a second LFE is not guessed at");
+        assert_eq!(
+            pce_speaker_order(&two_lfe),
+            None,
+            "a second LFE is not guessed at"
+        );
         let mut side_single = pce_7_1();
-        side_single.side = vec![PceElement { is_cpe: false, tag: 1 }];
+        side_single.side = vec![PceElement {
+            is_cpe: false,
+            tag: 1,
+        }];
         assert_eq!(pce_speaker_order(&side_single), None);
     }
 

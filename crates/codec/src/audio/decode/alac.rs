@@ -23,7 +23,10 @@ impl AlacDecoder {
     /// `extra_data` is the magic cookie, in any of the wrappings
     /// [`AlacConfig::parse`] takes; it is required.
     pub fn new(extra_data: Option<&[u8]>) -> Result<Self, AudioError> {
-        Ok(Self { inner: lossless::alac::Decoder::new(extra_data)?, first_pts_us: None })
+        Ok(Self {
+            inner: lossless::alac::Decoder::new(extra_data)?,
+            first_pts_us: None,
+        })
     }
 
     pub fn config(&self) -> &AlacConfig {
@@ -90,8 +93,10 @@ impl AudioDecoder for AlacDecoder {
     /// slots.
     fn layout(&self) -> Option<ChannelLayout> {
         let channels = self.inner.config().num_channels;
-        let labels: Vec<ChannelLabel> =
-            lossless::alac::layout(channels)?.iter().map(|&s| label(s)).collect::<Option<_>>()?;
+        let labels: Vec<ChannelLabel> = lossless::alac::layout(channels)?
+            .iter()
+            .map(|&s| label(s))
+            .collect::<Option<_>>()?;
         ChannelLayout::new(labels).ok()
     }
 }
@@ -106,15 +111,43 @@ mod tests {
     /// come back as `None`.
     #[test]
     fn the_layout_is_named_for_every_count_alac_names() {
-        for (channels, name) in [(1u8, "mono"), (2, "stereo"), (3, "3.0"), (4, "4.0"), (5, "5.0"), (6, "5.1"), (7, "6.1")] {
-            let mut enc =
-                create_encoder(AudioEncoderConfig::new(AudioCodec::Alac { bits_per_sample: 16 }, 48_000, channels, 0)).unwrap();
-            let pcm: Vec<f32> = (0..4096 * usize::from(channels)).map(|i| ((i % 97) as f32 - 48.0) / 128.0).collect();
-            let mut packets = enc.encode(&AudioFrame { samples: pcm, sample_rate: 48_000, channels, pts: 0 }).unwrap();
+        for (channels, name) in [
+            (1u8, "mono"),
+            (2, "stereo"),
+            (3, "3.0"),
+            (4, "4.0"),
+            (5, "5.0"),
+            (6, "5.1"),
+            (7, "6.1"),
+        ] {
+            let mut enc = create_encoder(AudioEncoderConfig::new(
+                AudioCodec::Alac {
+                    bits_per_sample: 16,
+                },
+                48_000,
+                channels,
+                0,
+            ))
+            .unwrap();
+            let pcm: Vec<f32> = (0..4096 * usize::from(channels))
+                .map(|i| ((i % 97) as f32 - 48.0) / 128.0)
+                .collect();
+            let mut packets = enc
+                .encode(&AudioFrame {
+                    samples: pcm,
+                    sample_rate: 48_000,
+                    channels,
+                    pts: 0,
+                })
+                .unwrap();
             packets.extend(enc.flush().unwrap());
             let mut dec = AlacDecoder::new(Some(&enc.extra_data())).unwrap();
             dec.decode(&packets[0].data, 0).unwrap();
-            assert_eq!(dec.layout(), Some(ChannelLayout::named(name)), "{channels} channels");
+            assert_eq!(
+                dec.layout(),
+                Some(ChannelLayout::named(name)),
+                "{channels} channels"
+            );
         }
     }
 }

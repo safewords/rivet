@@ -40,8 +40,8 @@ mod tests;
 
 pub use caps::{
     CodecOutputCaps, ENCODE_BACKENDS, OUTPUT_CODECS, encode_backend_feature, encode_backend_name,
-    encoder_backend_from_name,
-    encode_backend_serves, every_codec_output_caps, output_caps_label, output_codec_label,
+    encode_backend_serves, encoder_backend_from_name, every_codec_output_caps, output_caps_label,
+    output_codec_label,
 };
 pub use policy::*;
 pub use rung::*;
@@ -283,7 +283,12 @@ impl OutputSpec {
     /// The audio alone, as one `.mp3` file: no rungs, no video decoded.
     /// `audio` stays `Auto`, which here means MP3.
     pub fn audio_only() -> Self {
-        Self { mode: OutputMode::AudioOnly, container: Container::Mp3, muxer: Muxer::Mp3File, ..Default::default() }
+        Self {
+            mode: OutputMode::AudioOnly,
+            container: Container::Mp3,
+            muxer: Muxer::Mp3File,
+            ..Default::default()
+        }
     }
 
     /// Set the audio policy.
@@ -332,7 +337,10 @@ impl OutputSpec {
         use codec::audio::AudioCodec;
         let bits_per_sample = self.audio_bit_depth.bits().unwrap_or(24);
         match (self.audio, &self.mode) {
-            (AudioCodecPolicy::Flac, _) => AudioCodec::Flac { bits_per_sample, level: self.flac_level },
+            (AudioCodecPolicy::Flac, _) => AudioCodec::Flac {
+                bits_per_sample,
+                level: self.flac_level,
+            },
             (AudioCodecPolicy::Alac, _) => AudioCodec::Alac { bits_per_sample },
             (p, _) if p.forced_lossy().is_some() => p.forced_lossy().expect("checked"),
             (_, OutputMode::AudioOnly) if self.container == Container::Mp3 => AudioCodec::Mp3,
@@ -355,10 +363,7 @@ impl OutputSpec {
 
     /// Set the audio filter chain (`channelmap`) applied before the encoder.
     /// See [`codec::audio::filter`].
-    pub fn with_audio_filters(
-        mut self,
-        filters: Vec<codec::audio::filter::AudioFilter>,
-    ) -> Self {
+    pub fn with_audio_filters(mut self, filters: Vec<codec::audio::filter::AudioFilter>) -> Self {
         self.audio_filters = filters;
         self
     }
@@ -428,7 +433,9 @@ impl OutputSpec {
     /// `gop_seconds` at `frame_rate`, else two seconds at `frame_rate`.
     pub fn gop_frames(&self, frame_rate: f64) -> u32 {
         self.gop
-            .unwrap_or_else(|| gop_frames_for_seconds(self.gop_seconds.unwrap_or(DEFAULT_GOP_SECONDS), frame_rate))
+            .unwrap_or_else(|| {
+                gop_frames_for_seconds(self.gop_seconds.unwrap_or(DEFAULT_GOP_SECONDS), frame_rate)
+            })
             .max(1)
     }
 
@@ -438,10 +445,10 @@ impl OutputSpec {
     /// unchanged — the default two seconds stays the default.
     pub fn with_gop_seconds_resolved(&self, frame_rate: f64) -> OutputSpec {
         let mut resolved = self.clone();
-        if let Some(seconds) = resolved.gop_seconds.take() {
-            if resolved.gop.is_none() {
-                resolved.gop = Some(gop_frames_for_seconds(seconds, frame_rate));
-            }
+        if let Some(seconds) = resolved.gop_seconds.take()
+            && resolved.gop.is_none()
+        {
+            resolved.gop = Some(gop_frames_for_seconds(seconds, frame_rate));
         }
         resolved
     }
@@ -456,14 +463,20 @@ impl OutputSpec {
     pub fn with_rung_policy_resolved(&self) -> OutputSpec {
         use codec::encode::tuning::RungContext;
         let mut resolved = self.clone();
-        let policy_is_empty = self.rung_policy.rules.is_empty() && self.rung_policy.global.is_empty();
+        let policy_is_empty =
+            self.rung_policy.rules.is_empty() && self.rung_policy.global.is_empty();
         if policy_is_empty && self.gop.is_none() {
             return resolved;
         }
         let rung_count = self.rungs.len();
         for (index, rung) in resolved.rungs.iter_mut().enumerate() {
             if !policy_is_empty {
-                let ctx = RungContext { width: rung.width, height: rung.height, index, rung_count };
+                let ctx = RungContext {
+                    width: rung.width,
+                    height: rung.height,
+                    index,
+                    rung_count,
+                };
                 let mut from_policy = self.rung_policy.resolve(&ctx);
                 // `WxH@standard`: no spec-wide rate reaches this rung (its
                 // own, set on the rung, still wins through the merge).
@@ -578,12 +591,31 @@ impl OutputSpec {
     /// its output size, its label follows, and rungs that came out the same
     /// as an earlier one are gone. Also returns what became of each requested
     /// rung, in request order. See [`crate::fit::fit_rungs`].
-    pub fn with_rungs_fitted(&self, source: crate::fit::SourceShape) -> (OutputSpec, Vec<crate::fit::FittedRung>) {
+    pub fn with_rungs_fitted(
+        &self,
+        source: crate::fit::SourceShape,
+    ) -> (OutputSpec, Vec<crate::fit::FittedRung>) {
         // A codec that codes odd sizes keeps an odd source's (see crate::fit).
-        let align = if codec::encode::codes_odd_sizes(self.video_codec.codec()) { 1 } else { 2 };
-        let (rungs, report) =
-            crate::fit::fit_rungs_aligned(&self.rungs, source, self.fit, self.orientation, self.upscale, align);
-        (OutputSpec { rungs, ..self.clone() }, report)
+        let align = if codec::encode::codes_odd_sizes(self.video_codec.codec()) {
+            1
+        } else {
+            2
+        };
+        let (rungs, report) = crate::fit::fit_rungs_aligned(
+            &self.rungs,
+            source,
+            self.fit,
+            self.orientation,
+            self.upscale,
+            align,
+        );
+        (
+            OutputSpec {
+                rungs,
+                ..self.clone()
+            },
+            report,
+        )
     }
 
     /// Set the per-frame video filter chain (crop / pad / flip / rotate /
@@ -680,7 +712,13 @@ impl OutputSpec {
                     // smpte170m-tagged H.264 source out with BT.709 pixels and
                     // a smpte170m tag. Only the matrix is converted: range,
                     // primaries and transfer stay what the source said.
-                    (ColorMetadata { matrix_coefficients: 1, ..source_color }, PixelFormat::Yuv420p)
+                    (
+                        ColorMetadata {
+                            matrix_coefficients: 1,
+                            ..source_color
+                        },
+                        PixelFormat::Yuv420p,
+                    )
                 } else {
                     (source_color, source_pixel_format)
                 }
@@ -782,17 +820,26 @@ impl OutputSpec {
     /// [`Self::validate`] with the backend pinned by name passed in, rather
     /// than read from the environment, so the rule is testable without
     /// touching process state.
-    pub(crate) fn validate_with_pin(&self, pinned: Option<codec::encode::EncoderBackend>) -> Result<()> {
+    pub(crate) fn validate_with_pin(
+        &self,
+        pinned: Option<codec::encode::EncoderBackend>,
+    ) -> Result<()> {
         self.check_audio()?;
-        if let Some(seconds) = self.gop_seconds {
-            if !seconds.is_finite() || seconds <= 0.0 {
-                bail!("gop in seconds must be a positive number of seconds (got {seconds})");
-            }
+        if let Some(seconds) = self.gop_seconds
+            && (!seconds.is_finite() || seconds <= 0.0)
+        {
+            bail!("gop in seconds must be a positive number of seconds (got {seconds})");
         }
-        if matches!(self.container, Container::WebM | Container::Ogg) && !self.metadata_keep.is_empty() {
+        if matches!(self.container, Container::WebM | Container::Ogg)
+            && !self.metadata_keep.is_empty()
+        {
             bail!(
                 "metadata-keep is not available for {} output: rivet writes source metadata into MP4, QuickTime, FLAC and MP3 files",
-                if self.container == Container::Ogg { "Ogg" } else { "WebM" }
+                if self.container == Container::Ogg {
+                    "Ogg"
+                } else {
+                    "WebM"
+                }
             );
         }
         if matches!(self.mode, OutputMode::Hls { .. }) && !self.metadata_keep.is_empty() {
@@ -806,10 +853,15 @@ impl OutputSpec {
                 Container::Flac => Muxer::FlacFile,
                 Container::M4a => Muxer::M4aFile,
                 Container::Ogg => Muxer::OggFile,
-                other => bail!("AudioOnly mode writes an .mp3, a .flac, an .m4a or an .ogg, not {other:?}"),
+                other => bail!(
+                    "AudioOnly mode writes an .mp3, a .flac, an .m4a or an .ogg, not {other:?}"
+                ),
             };
             if self.muxer != muxer {
-                bail!("AudioOnly mode in Container::{:?} requires Muxer::{muxer:?}", self.container);
+                bail!(
+                    "AudioOnly mode in Container::{:?} requires Muxer::{muxer:?}",
+                    self.container
+                );
             }
             // No video is decoded or encoded, so nothing else applies.
             return Ok(());
@@ -819,7 +871,12 @@ impl OutputSpec {
         }
         for r in &self.rungs {
             if r.width == 0 || r.height == 0 {
-                bail!("rung '{}' has a zero dimension ({}x{})", r.label, r.width, r.height);
+                bail!(
+                    "rung '{}' has a zero dimension ({}x{})",
+                    r.label,
+                    r.width,
+                    r.height
+                );
             }
             if r.width % 2 != 0 || r.height % 2 != 0 {
                 bail!(
@@ -844,7 +901,10 @@ impl OutputSpec {
                     );
                 };
                 if self.muxer != muxer {
-                    bail!("SingleFile mode in Container::{:?} requires Muxer::{muxer:?}", self.container);
+                    bail!(
+                        "SingleFile mode in Container::{:?} requires Muxer::{muxer:?}",
+                        self.container
+                    );
                 }
                 if !codec.fits(self.container) {
                     bail!(
@@ -853,14 +913,20 @@ impl OutputSpec {
                         self.container.file_label(),
                         match codec {
                             VideoCodecPolicy::ProRes(_) => {
-                                "ProRes is a QuickTime codec — write a .mov (container=mov)".to_string()
+                                "ProRes is a QuickTime codec — write a .mov (container=mov)"
+                                    .to_string()
                             }
                             VideoCodecPolicy::Vp8 | VideoCodecPolicy::Vp9 => {
-                                "VP8 / VP9 go in a WebM (container=webm) or an MP4 (container=mp4)".to_string()
+                                "VP8 / VP9 go in a WebM (container=webm) or an MP4 (container=mp4)"
+                                    .to_string()
                             }
                             _ => format!(
                                 "write an MP4 (container=mp4){}",
-                                if codec.fits(Container::Mov) { " or a QuickTime movie (container=mov)" } else { "" }
+                                if codec.fits(Container::Mov) {
+                                    " or a QuickTime movie (container=mov)"
+                                } else {
+                                    ""
+                                }
                             ),
                         }
                     );
@@ -911,10 +977,12 @@ impl OutputSpec {
         /// Whether this build has an encoder that codes VP9 at a constant
         /// rate: QSV (`qsv` feature).
         fn vp9_constant_rate_compiled() -> bool {
-            codec::encode::compiled_encode_backends().into_iter().any(|b| {
-                codec::encode::hardware_encodes(b, codec::frame::VideoCodec::Vp9)
-                    && codec::encode::backend_codes_constant_rate(b)
-            })
+            codec::encode::compiled_encode_backends()
+                .into_iter()
+                .any(|b| {
+                    codec::encode::hardware_encodes(b, codec::frame::VideoCodec::Vp9)
+                        && codec::encode::backend_codes_constant_rate(b)
+                })
         }
         let codec = self.video_codec;
         let name = codec.as_str();
@@ -927,11 +995,19 @@ impl OutputSpec {
         };
         for r in &self.rungs {
             if r.width > max_w || r.height > max_h {
-                bail!("rung '{}' is {}x{}; {name} codes at most {max_w}x{max_h}", r.label, r.width, r.height);
+                bail!(
+                    "rung '{}' is {}x{}; {name} codes at most {max_w}x{max_h}",
+                    r.label,
+                    r.width,
+                    r.height
+                );
             }
         }
         let quantiser_only = matches!(codec, VideoCodecPolicy::Vp8 | VideoCodecPolicy::ProRes(_));
-        let average_only = matches!(codec, VideoCodecPolicy::Mpeg2 | VideoCodecPolicy::Mpeg4 | VideoCodecPolicy::Vp9);
+        let average_only = matches!(
+            codec,
+            VideoCodecPolicy::Mpeg2 | VideoCodecPolicy::Mpeg4 | VideoCodecPolicy::Vp9
+        );
         // Each rung as it will be encoded: the rung policy's rules and global
         // set merged under the rung's own overrides.
         let resolved = self.with_rung_policy_resolved();
@@ -959,10 +1035,16 @@ impl OutputSpec {
                 let constant = mode == Some(codec::encode::tuning::RateMode::Constant);
                 let vp9 = matches!(codec, VideoCodecPolicy::Vp9) && vp9_constant_rate_compiled();
                 if average_only && constant && !vp9 {
-                    bail!("rung '{}' asks for a constant rate (rate=cbr); the {name} encoder codes an average rate", r.label);
+                    bail!(
+                        "rung '{}' asks for a constant rate (rate=cbr); the {name} encoder codes an average rate",
+                        r.label
+                    );
                 }
                 if average_only && buffer.is_some() && !(vp9 && constant) {
-                    bail!("rung '{}' declares a coded picture buffer; the {name} encoder has no buffer model", r.label);
+                    bail!(
+                        "rung '{}' declares a coded picture buffer; the {name} encoder has no buffer model",
+                        r.label
+                    );
                 }
             }
         }
@@ -974,24 +1056,37 @@ impl OutputSpec {
                 r.label
             );
         }
-        let bframes =
-            resolved.rungs.iter().find_map(|r| r.quality.overrides.bframes.filter(|b| *b > 0).map(|b| (r, b)));
+        let bframes = resolved.rungs.iter().find_map(|r| {
+            r.quality
+                .overrides
+                .bframes
+                .filter(|b| *b > 0)
+                .map(|b| (r, b))
+        });
         if let Some((r, b)) = bframes {
             match codec {
-                VideoCodecPolicy::Vp8 | VideoCodecPolicy::Vp9 | VideoCodecPolicy::ProRes(_) => bail!(
-                    "rung '{}' asks for {b} B frames; {name} {}",
-                    r.label,
-                    if matches!(codec, VideoCodecPolicy::ProRes(_)) {
-                        "is intra-only: every frame is a key frame"
-                    } else {
-                        "has no B frames (its encoder predicts from the previous frame)"
-                    }
-                ),
+                VideoCodecPolicy::Vp8 | VideoCodecPolicy::Vp9 | VideoCodecPolicy::ProRes(_) => {
+                    bail!(
+                        "rung '{}' asks for {b} B frames; {name} {}",
+                        r.label,
+                        if matches!(codec, VideoCodecPolicy::ProRes(_)) {
+                            "is intra-only: every frame is a key frame"
+                        } else {
+                            "has no B frames (its encoder predicts from the previous frame)"
+                        }
+                    )
+                }
                 VideoCodecPolicy::Mpeg2 if b > 7 => {
-                    bail!("rung '{}' asks for {b} B frames; MPEG-2 codes at most 7 between references", r.label)
+                    bail!(
+                        "rung '{}' asks for {b} B frames; MPEG-2 codes at most 7 between references",
+                        r.label
+                    )
                 }
                 VideoCodecPolicy::Mpeg4 if b > 8 => {
-                    bail!("rung '{}' asks for {b} B frames; MPEG-4 Part 2 codes at most 8 between references", r.label)
+                    bail!(
+                        "rung '{}' asks for {b} B frames; MPEG-4 Part 2 codes at most 8 between references",
+                        r.label
+                    )
                 }
                 _ => {}
             }
@@ -1019,7 +1114,10 @@ impl OutputSpec {
                 bail!("an audio bitrate was given but the audio policy is `drop`");
             }
             if self.audio_channels != AudioChannels::Source {
-                bail!("audio-channels={} was given but the audio policy is `drop`", self.audio_channels.as_str());
+                bail!(
+                    "audio-channels={} was given but the audio policy is `drop`",
+                    self.audio_channels.as_str()
+                );
             }
             if audio_only {
                 bail!("audio-only output with audio=drop has nothing to write");
@@ -1047,7 +1145,11 @@ impl OutputSpec {
                     (AudioCodecPolicy::ForceVorbis, _, _) => format!(
                         "audio=vorbis goes in a WebM file (container=webm) or an audio-only .ogg \
                          (audio-container=ogg); {} has no Vorbis mapping",
-                        if hls { "an HLS (CMAF) package".to_string() } else { self.container.file_label().to_string() }
+                        if hls {
+                            "an HLS (CMAF) package".to_string()
+                        } else {
+                            self.container.file_label().to_string()
+                        }
                     ),
                     (_, _, Container::WebM) => format!(
                         "a WebM file carries Opus or Vorbis audio, and audio={name} asks for another codec: use \
@@ -1057,20 +1159,26 @@ impl OutputSpec {
                         "an Ogg file holds Opus or Vorbis, not what audio={name} makes: use audio=opus or vorbis, \
                          or audio-container=mp4 for an .m4a"
                     ),
-                    (_, _, Container::Mp3) => format!(
-                        "audio-only output is an .mp3 file, which holds MP3 only: use audio=mp3 (or auto, which \
-                         means MP3 there), or audio-container=mp4 for an .m4a (or ogg for Opus and Vorbis)"
-                    ),
+                    (_, _, Container::Mp3) => "audio-only output is an .mp3 file, which holds MP3 only: use audio=mp3 (or auto, which \
+                         means MP3 there), or audio-container=mp4 for an .m4a (or ogg for Opus and Vorbis)".to_string(),
                     (_, _, Container::Flac) => format!(
                         "a native FLAC file holds FLAC only, not what audio={name} makes; use audio-container=mp4"
                     ),
-                    _ => format!("{} cannot hold what audio={name} makes", self.container.file_label()),
+                    _ => format!(
+                        "{} cannot hold what audio={name} makes",
+                        self.container.file_label()
+                    ),
                 }
             );
         }
         let target = self.audio_encode_codec();
         let mp3 = target == AudioCodec::Mp3;
-        if mp3 && matches!(self.audio_channels, AudioChannels::Surround51 | AudioChannels::Surround71) {
+        if mp3
+            && matches!(
+                self.audio_channels,
+                AudioChannels::Surround51 | AudioChannels::Surround71
+            )
+        {
             bail!(
                 "audio-channels={} with MP3 output: MP3 carries two channels at most (a surround \
                  source is downmixed to stereo). Use audio=opus for surround",
@@ -1079,7 +1187,9 @@ impl OutputSpec {
         }
         // The widest layout each other codec carries, against the one asked for.
         let max_channels = match target {
-            AudioCodec::HeAacV2 => Some((2, "two channels (a surround source is downmixed to stereo)")),
+            AudioCodec::HeAacV2 => {
+                Some((2, "two channels (a surround source is downmixed to stereo)"))
+            }
             AudioCodec::Ac3 | AudioCodec::Eac3 | AudioCodec::Dts => {
                 Some((6, "5.1 at most (a 7.1 source is downmixed to 5.1)"))
             }
@@ -1097,11 +1207,16 @@ impl OutputSpec {
             );
         }
         if target == AudioCodec::HeAacV2 && self.audio_channels == AudioChannels::Mono {
-            bail!("audio-channels=mono with HE-AAC v2: parametric stereo codes a stereo image; use audio=he-aac for mono");
+            bail!(
+                "audio-channels=mono with HE-AAC v2: parametric stereo codes a stereo image; use audio=he-aac for mono"
+            );
         }
         if let Some(q) = self.audio_quality {
             if target != AudioCodec::Vorbis {
-                bail!("audio-quality applies to Vorbis output (audio=vorbis); {} takes audio-bitrate", target.name());
+                bail!(
+                    "audio-quality applies to Vorbis output (audio=vorbis); {} takes audio-bitrate",
+                    target.name()
+                );
             }
             if !(-1.0..=10.0).contains(&q) {
                 bail!("audio-quality {q} is outside Vorbis's -1..=10");
@@ -1109,9 +1224,14 @@ impl OutputSpec {
         }
         if self.audio_stereo_fallback {
             if !hls {
-                bail!("audio-stereo-fallback is for HLS output (a second audio rendition in the group)");
+                bail!(
+                    "audio-stereo-fallback is for HLS output (a second audio rendition in the group)"
+                );
             }
-            if matches!(self.audio_channels, AudioChannels::Mono | AudioChannels::Stereo) {
+            if matches!(
+                self.audio_channels,
+                AudioChannels::Mono | AudioChannels::Stereo
+            ) {
                 bail!(
                     "audio-stereo-fallback with audio-channels={}: the audio is not surround, so there \
                      is nothing to fall back from",
@@ -1137,15 +1257,18 @@ impl OutputSpec {
         // `constqp` constant-QPs the chunks of the multi-GPU single-file path.
         // Refused whichever path the job ends up on: the request itself says
         // two different things.
-        let constant_qp =
-            matches!(self.mode, OutputMode::SingleFile) && self.chunk_seam_mode == ChunkSeamMode::ParallelConstQp;
+        let constant_qp = matches!(self.mode, OutputMode::SingleFile)
+            && self.chunk_seam_mode == ChunkSeamMode::ParallelConstQp;
         // A constant-rate rung with no rate of its own is judged with the
         // default it will be given; the frame rate is not known yet, and only
         // the rate's presence matters here.
         for r in &self.with_constant_rates_resolved(30.0).rungs {
-            if let Some(why) =
-                codec::encode::h26x_sw::rate_refusal(codec, &r.quality.overrides, r.quality.crf, constant_qp)
-            {
+            if let Some(why) = codec::encode::h26x_sw::rate_refusal(
+                codec,
+                &r.quality.overrides,
+                r.quality.crf,
+                constant_qp,
+            ) {
                 bail!("rung '{}': {why}", r.label);
             }
         }
@@ -1164,23 +1287,30 @@ impl OutputSpec {
     /// The first rung, with the rung policy resolved, coded to an **average**
     /// bitrate (a bitrate rung that is not `rate=cbr`): its label and rate.
     pub fn average_rate_rung(&self) -> Option<(String, u32)> {
-        self.with_rung_policy_resolved().rungs.into_iter().find_map(|r| {
-            let o = r.quality.overrides;
-            (o.rate_mode != Some(codec::encode::tuning::RateMode::Constant))
-                .then_some(o.bitrate)
-                .flatten()
-                .map(|bps| (r.label, bps))
-        })
+        self.with_rung_policy_resolved()
+            .rungs
+            .into_iter()
+            .find_map(|r| {
+                let o = r.quality.overrides;
+                (o.rate_mode != Some(codec::encode::tuning::RateMode::Constant))
+                    .then_some(o.bitrate)
+                    .flatten()
+                    .map(|bps| (r.label, bps))
+            })
     }
 
     /// The first rung, with the rung policy resolved, coded at a **constant**
     /// rate (`rate=cbr`): its label and rate, `None` for the rate when it has
     /// none of its own yet (see [`Self::with_constant_rates_resolved`]).
     pub fn constant_rate_rung(&self) -> Option<(String, Option<u32>)> {
-        self.with_rung_policy_resolved().rungs.into_iter().find_map(|r| {
-            let o = r.quality.overrides;
-            (o.rate_mode == Some(codec::encode::tuning::RateMode::Constant)).then_some((r.label, o.bitrate))
-        })
+        self.with_rung_policy_resolved()
+            .rungs
+            .into_iter()
+            .find_map(|r| {
+                let o = r.quality.overrides;
+                (o.rate_mode == Some(codec::encode::tuning::RateMode::Constant))
+                    .then_some((r.label, o.bitrate))
+            })
     }
 
     /// The spec with the rung policy resolved (see
@@ -1197,7 +1327,9 @@ impl OutputSpec {
     /// same reason: it needs the output frame rate.
     pub fn with_constant_rates_resolved(&self, frame_rate: f64) -> OutputSpec {
         use codec::encode::tuning::{RateMode, default_cbr_bitrate};
-        let mut resolved = self.with_gop_seconds_resolved(frame_rate).with_rung_policy_resolved();
+        let mut resolved = self
+            .with_gop_seconds_resolved(frame_rate)
+            .with_rung_policy_resolved();
         let codec = self.video_codec.codec();
         for rung in &mut resolved.rungs {
             let short_side = rung.short_side();
@@ -1235,7 +1367,10 @@ impl OutputSpec {
     /// which is built with or without its `-fallback` feature. `validate`
     /// passes the pin from the environment; taking it as an argument keeps the
     /// rule testable without touching process state.
-    pub(crate) fn check_encoder_caps(&self, pinned: Option<codec::encode::EncoderBackend>) -> Result<()> {
+    pub(crate) fn check_encoder_caps(
+        &self,
+        pinned: Option<codec::encode::EncoderBackend>,
+    ) -> Result<()> {
         caps::check_output_caps(
             self.color,
             self.bit_depth,
@@ -1253,7 +1388,11 @@ impl OutputSpec {
     /// not see that: a 10-bit source asked for H.264 on an NVENC-only build
     /// passed it, started decoding, and failed building the encoder. The
     /// backend pinned by name counts as `validate` counts it.
-    pub(crate) fn check_source(&self, source_color: ColorMetadata, source_pixel_format: PixelFormat) -> Result<()> {
+    pub(crate) fn check_source(
+        &self,
+        source_color: ColorMetadata,
+        source_pixel_format: PixelFormat,
+    ) -> Result<()> {
         self.check_source_against(
             source_color,
             source_pixel_format,
@@ -1394,7 +1533,11 @@ fn check_audio_bitrate(target: codec::audio::AudioCodec, lossless: bool, bps: u3
     use codec::audio::AudioCodec;
     use codec::audio::encode::{aac, ac3, dts, opus};
     let range = |name: &str, lo: u32, hi: u32| -> Result<()> {
-        if (lo..=hi).contains(&bps) { Ok(()) } else { bail!("audio bitrate {bps} bps is outside {name}'s range ({lo}..={hi})") }
+        if (lo..=hi).contains(&bps) {
+            Ok(())
+        } else {
+            bail!("audio bitrate {bps} bps is outside {name}'s range ({lo}..={hi})")
+        }
     };
     match target {
         // Refused by `check_lossless_audio`.
@@ -1405,13 +1548,19 @@ fn check_audio_bitrate(target: codec::audio::AudioCodec, lossless: bool, bps: u3
             } else {
                 bail!(
                     "audio bitrate {bps} bps is not an MP3 bitrate: MP3 output is constant bitrate, one of {}",
-                    codec::audio::MP3_BITRATES.map(|b| format!("{}k", b / 1000)).join(", ")
+                    codec::audio::MP3_BITRATES
+                        .map(|b| format!("{}k", b / 1000))
+                        .join(", ")
                 )
             }
         }
         // The widest AAC band: 8 kb/s for mono, and the 13818-7 decoder
         // buffer's ceiling for 7.1 at 48 kHz.
-        AudioCodec::Aac => range("AAC", aac::bitrate_range(48_000, 1).0, aac::bitrate_range(48_000, 8).1),
+        AudioCodec::Aac => range(
+            "AAC",
+            aac::bitrate_range(48_000, 1).0,
+            aac::bitrate_range(48_000, 8).1,
+        ),
         AudioCodec::HeAac => range(
             "HE-AAC",
             aac::he_aac_bitrate_range(aac::Profile::HeAac, 1).0,
@@ -1427,7 +1576,9 @@ fn check_audio_bitrate(target: codec::audio::AudioCodec, lossless: bool, bps: u3
             } else if target == AudioCodec::Ac3 {
                 bail!(
                     "audio bitrate {bps} bps is not an AC-3 bitrate (A/52 Table 5.18): one of {}",
-                    ac3::AC3_BITRATES.map(|b| format!("{}k", b / 1000)).join(", ")
+                    ac3::AC3_BITRATES
+                        .map(|b| format!("{}k", b / 1000))
+                        .join(", ")
                 )
             } else {
                 bail!("audio bitrate {bps} bps is not an E-AC-3 bitrate: 32k..6144k, in whole kb/s")
@@ -1439,11 +1590,19 @@ fn check_audio_bitrate(target: codec::audio::AudioCodec, lossless: bool, bps: u3
             } else {
                 bail!(
                     "audio bitrate {bps} bps is not a DTS bitrate (ETSI TS 102 114 Table 5-7): one of {}",
-                    dts::DTS_BITRATES.map(|b| if b % 1000 == 0 { format!("{}k", b / 1000) } else { format!("{}k", f64::from(b) / 1000.0) }).join(", ")
+                    dts::DTS_BITRATES
+                        .map(|b| if b % 1000 == 0 {
+                            format!("{}k", b / 1000)
+                        } else {
+                            format!("{}k", f64::from(b) / 1000.0)
+                        })
+                        .join(", ")
                 )
             }
         }
-        AudioCodec::Vorbis => bail!("audio-bitrate does not apply to Vorbis, which is variable-rate: set audio-quality (-1..=10)"),
+        AudioCodec::Vorbis => bail!(
+            "audio-bitrate does not apply to Vorbis, which is variable-rate: set audio-quality (-1..=10)"
+        ),
         // 6 to 510 kb/s per stream; the widest layout (7.1, five streams).
         AudioCodec::Opus => range("Opus", opus::bitrate_range(1).0, opus::bitrate_range(8).1),
         AudioCodec::Flac { .. } | AudioCodec::Alac { .. } => Ok(()),

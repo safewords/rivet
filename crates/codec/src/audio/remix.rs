@@ -45,7 +45,9 @@ pub fn remix_matrix(from: &ChannelLayout, to: &ChannelLayout) -> Vec<f32> {
         // at −3 dB each.
         let stereo = ChannelLayout::named("stereo");
         let s = route_all(from, &stereo);
-        (0..from.len()).map(|i| HALF_POWER * (s[i] + s[from.len() + i])).collect()
+        (0..from.len())
+            .map(|i| HALF_POWER * (s[i] + s[from.len() + i]))
+            .collect()
     } else {
         route_all(from, to)
     };
@@ -156,13 +158,22 @@ impl Remixer {
         }
         let frames = frame.samples.len() / inn;
         let mut samples = vec![0.0f32; frames * out];
-        for (src, dst) in frame.samples.chunks_exact(inn).zip(samples.chunks_exact_mut(out)) {
+        for (src, dst) in frame
+            .samples
+            .chunks_exact(inn)
+            .zip(samples.chunks_exact_mut(out))
+        {
             for (o, d) in dst.iter_mut().enumerate() {
                 let row = &self.matrix[o * inn..(o + 1) * inn];
                 *d = row.iter().zip(src).map(|(c, s)| c * s).sum();
             }
         }
-        Ok(AudioFrame { samples, sample_rate: frame.sample_rate, channels: out as u8, pts: frame.pts })
+        Ok(AudioFrame {
+            samples,
+            sample_rate: frame.sample_rate,
+            channels: out as u8,
+            pts: frame.pts,
+        })
     }
 }
 
@@ -178,10 +189,16 @@ const OPUS_LAYOUTS: [&str; 8] = ["mono", "stereo", "3.0", "quad", "5.0", "5.1", 
 /// as 5.0 with its back centre in both surrounds: the layout changes shape,
 /// no content is made up, and the LFE is never folded away.
 pub fn opus_layout(source: &ChannelLayout) -> Option<ChannelLayout> {
-    OPUS_LAYOUTS.iter().map(|n| ChannelLayout::named(n)).find(|candidate| {
-        candidate.len() >= source.len()
-            && source.labels().iter().all(|&l| carries(candidate, source, l))
-    })
+    OPUS_LAYOUTS
+        .iter()
+        .map(|n| ChannelLayout::named(n))
+        .find(|candidate| {
+            candidate.len() >= source.len()
+                && source
+                    .labels()
+                    .iter()
+                    .all(|&l| carries(candidate, source, l))
+        })
 }
 
 /// Whether `to` has a place for `from`'s speaker `label` without a downmix.
@@ -209,10 +226,16 @@ const AAC_LAYOUTS: [&str; 7] = ["mono", "stereo", "3.0", "4.0", "5.0", "5.1", "7
 /// rest silent. Quad goes out as 5.0 (a silent centre), 2.1 as 5.1, 6.1 as
 /// 7.1 with its back centre in both back channels.
 pub fn aac_layout(source: &ChannelLayout) -> Option<ChannelLayout> {
-    AAC_LAYOUTS.iter().map(|n| ChannelLayout::named(n)).find(|candidate| {
-        candidate.len() >= source.len()
-            && source.labels().iter().all(|&l| carries(candidate, source, l))
-    })
+    AAC_LAYOUTS
+        .iter()
+        .map(|n| ChannelLayout::named(n))
+        .find(|candidate| {
+            candidate.len() >= source.len()
+                && source
+                    .labels()
+                    .iter()
+                    .all(|&l| carries(candidate, source, l))
+        })
 }
 
 /// The layout MP3 carries `source` in: mono and stereo as they are,
@@ -220,7 +243,11 @@ pub fn aac_layout(source: &ChannelLayout) -> Option<ChannelLayout> {
 /// most).
 pub fn mp3_layout(source: &ChannelLayout) -> ChannelLayout {
     let mono = ChannelLayout::named("mono");
-    if *source == mono { mono } else { ChannelLayout::named("stereo") }
+    if *source == mono {
+        mono
+    } else {
+        ChannelLayout::named("stereo")
+    }
 }
 
 /// The channel arrangements of AC-3 / E-AC-3 (A/52 `acmod` 1/0 to 3/2, each
@@ -228,8 +255,19 @@ pub fn mp3_layout(source: &ChannelLayout) -> ChannelLayout {
 /// same arrangements), as named layouts in the pipeline's order and from
 /// the narrowest: `3.0(back)` is 2/1, `4.0` 3/1, `quad(side)` 2/2,
 /// `5.1(side)` 3/2 with the LFE.
-const SURROUND_CORE_LAYOUTS: [&str; 11] =
-    ["mono", "stereo", "2.1", "3.0", "3.0(back)", "3.1", "4.0", "quad(side)", "4.1", "5.0(side)", "5.1(side)"];
+const SURROUND_CORE_LAYOUTS: [&str; 11] = [
+    "mono",
+    "stereo",
+    "2.1",
+    "3.0",
+    "3.0(back)",
+    "3.1",
+    "4.0",
+    "quad(side)",
+    "4.1",
+    "5.0(side)",
+    "5.1(side)",
+];
 
 /// The layout AC-3, E-AC-3 and DTS carry `source` in, found as for Opus
 /// ([`opus_layout`]): the source's own when an arrangement has it, else the
@@ -242,7 +280,11 @@ pub fn surround_core_layout(source: &ChannelLayout) -> ChannelLayout {
         .iter()
         .map(|n| ChannelLayout::named(n))
         .find(|candidate| {
-            candidate.len() >= source.len() && source.labels().iter().all(|&l| carries(candidate, source, l))
+            candidate.len() >= source.len()
+                && source
+                    .labels()
+                    .iter()
+                    .all(|&l| carries(candidate, source, l))
         })
         .unwrap_or_else(|| ChannelLayout::named("5.1(side)"))
 }
@@ -255,7 +297,16 @@ pub fn eac3_layout(source: &ChannelLayout) -> ChannelLayout {
     let core = surround_core_layout(source);
     let seven_one = ChannelLayout::named("7.1");
     let downmixed = !source.labels().iter().all(|&l| carries(&core, source, l));
-    if downmixed && source.labels().iter().all(|&l| carries(&seven_one, source, l)) { seven_one } else { core }
+    if downmixed
+        && source
+            .labels()
+            .iter()
+            .all(|&l| carries(&seven_one, source, l))
+    {
+        seven_one
+    } else {
+        core
+    }
 }
 
 /// The layout Vorbis carries `source` in: Vorbis I §4.3.9 defines the same
@@ -284,7 +335,13 @@ mod tests {
     }
 
     /// Coefficient taking input `i` to output `o`.
-    fn coef(m: &[f32], from: &ChannelLayout, to: &ChannelLayout, i: ChannelLabel, o: ChannelLabel) -> f32 {
+    fn coef(
+        m: &[f32],
+        from: &ChannelLayout,
+        to: &ChannelLayout,
+        i: ChannelLabel,
+        o: ChannelLabel,
+    ) -> f32 {
         m[to.index_of(o).unwrap() * from.len() + from.index_of(i).unwrap()]
     }
 
@@ -363,7 +420,10 @@ mod tests {
         assert!(close(coef(&m, &from, &to, BL, BL), 1.0 / n));
         assert!(close(coef(&m, &from, &to, SL, BL), HALF_POWER / n));
         assert!(close(coef(&m, &from, &to, FL, FL), 1.0 / n));
-        assert!(close(coef(&m, &from, &to, LFE, LFE), 1.0 / n), "kept when the output has one");
+        assert!(
+            close(coef(&m, &from, &to, LFE, LFE), 1.0 / n),
+            "kept when the output has one"
+        );
     }
 
     #[test]
@@ -382,13 +442,26 @@ mod tests {
     fn remixing_a_frame_moves_the_samples() {
         let r = Remixer::new(layout("5.1"), layout("stereo"));
         // One frame: only the centre at full scale.
-        let frame = AudioFrame { samples: vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0], sample_rate: 48_000, channels: 6, pts: 7 };
+        let frame = AudioFrame {
+            samples: vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+            sample_rate: 48_000,
+            channels: 6,
+            pts: 7,
+        };
         let out = r.apply(&frame).unwrap();
         assert_eq!((out.channels, out.pts, out.samples.len()), (2, 7, 2));
         let c = HALF_POWER / (1.0 + 2.0 * HALF_POWER);
         assert!(close(out.samples[0], c) && close(out.samples[1], c));
-        let stereo = AudioFrame { samples: vec![0.1, 0.2], sample_rate: 48_000, channels: 2, pts: 0 };
-        assert!(r.apply(&stereo).is_err(), "a frame of the wrong width is refused");
+        let stereo = AudioFrame {
+            samples: vec![0.1, 0.2],
+            sample_rate: 48_000,
+            channels: 2,
+            pts: 0,
+        };
+        assert!(
+            r.apply(&stereo).is_err(),
+            "a frame of the wrong width is refused"
+        );
         assert!(Remixer::new(layout("stereo"), layout("stereo")).is_identity());
     }
 
@@ -418,8 +491,13 @@ mod tests {
             // −3 dB split, never folding one into another's slot.
             let m = remix_matrix(&layout(src), &got);
             for (i, _) in layout(src).labels().iter().enumerate() {
-                let column: f32 = (0..got.len()).map(|o| m[o * layout(src).len() + i].powi(2)).sum();
-                assert!(close(column, 1.0), "{src}: input {i} keeps its power ({column})");
+                let column: f32 = (0..got.len())
+                    .map(|o| m[o * layout(src).len() + i].powi(2))
+                    .sum();
+                assert!(
+                    close(column, 1.0),
+                    "{src}: input {i} keeps its power ({column})"
+                );
             }
         }
     }

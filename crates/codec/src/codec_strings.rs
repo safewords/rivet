@@ -177,9 +177,9 @@ mod tests {
     #[test]
     fn avc_codec_string_baseline_constrained() {
         let sps = H264SpsInfo {
-            profile_idc: 66, // Baseline = 0x42
+            profile_idc: 66,            // Baseline = 0x42
             constraint_set_flags: 0xC0, // constraint_set0+1
-            level_idc: 30, // 0x1E
+            level_idc: 30,              // 0x1E
             ..Default::default()
         };
         assert_eq!(avc_codec_string("avc1", &sps), "avc1.42C01E");
@@ -205,16 +205,17 @@ mod tests {
     fn hevc_codec_string_main10_high_tier_no_constraints() {
         let sps = HevcSpsInfo {
             general_profile_space: 0,
-            profile_idc: 2, // Main 10
+            profile_idc: 2,                           // Main 10
             profile_compatibility_flags: 0x2000_0000, // flags[2] → reversed = 0x4
-            tier_flag: true, // High tier
-            level_idc: 120, // L4.0
-            general_constraint_flags: 0, // all zero → no trailing .XX
+            tier_flag: true,                          // High tier
+            level_idc: 120,                           // L4.0
+            general_constraint_flags: 0,              // all zero → no trailing .XX
             ..Default::default()
         };
         assert_eq!(hevc_codec_string("hvc1", &sps), "hvc1.2.4.H120");
     }
 
+    #[allow(clippy::too_many_arguments)] // one argument per sequence-header field
     fn synth_seq_header(
         seq_profile: u8,
         seq_level_idx_0: u8,

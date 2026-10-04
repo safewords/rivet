@@ -97,7 +97,11 @@ pub(super) async fn run(
     let report = |status, frames: u64, bytes: u64| {
         sink.on_rung(RungProgress {
             status,
-            percent: if status == RungStatus::Completed { 100.0 } else { 0.0 },
+            percent: if status == RungStatus::Completed {
+                100.0
+            } else {
+                0.0
+            },
             frames_done: frames,
             frames_total: None,
             bytes_out: bytes,
@@ -108,18 +112,27 @@ pub(super) async fn run(
     if let Some(e) = src.edit
         && e.delay > 0
     {
-        tracing::info!(delay = e.delay, "audio-only output: the source's late start has no picture to wait for; dropped");
+        tracing::info!(
+            delay = e.delay,
+            "audio-only output: the source's late start has no picture to wait for; dropped"
+        );
     }
-    let edit = src.edit.map(|e| container::edit::AudioEdit { delay: 0, ..e });
+    let edit = src
+        .edit
+        .map(|e| container::edit::AudioEdit { delay: 0, ..e });
     let prepared = prepare_audio(Some(&src.track), edit, &src.gaps, AudioRequest::of(spec))
         .context("preparing audio")?
         .filter(|a| a.has_samples())
-        .with_context(|| format!("the {source_codec} track came out empty; there is no audio to write"))?;
+        .with_context(|| {
+            format!("the {source_codec} track came out empty; there is no audio to write")
+        })?;
     let codec = prepared.info.codec.to_ascii_lowercase();
     let bytes = match spec.container {
         Container::Mp3 => write_mp3(&prepared)?,
         Container::Flac if codec == "flac" => {
-            if !prepared.edit.is_identity() && prepared.edit.duration != Some(total_ticks(&prepared)) {
+            if !prepared.edit.is_identity()
+                && prepared.edit.duration != Some(total_ticks(&prepared))
+            {
                 // A native stream has no edit list; a copy cut to a source's
                 // edit plays to its frame edges.
                 tracing::info!(edit = ?prepared.edit, "a native FLAC file has no edit list; it plays whole frames");
@@ -127,10 +140,14 @@ pub(super) async fn run(
             container::mux::write_native_flac(&prepared.info.codec_private, &prepared.samples)
                 .context("writing the .flac")?
         }
-        Container::M4a => container::mux::write_audio_mp4(&prepared.info, &prepared.samples, prepared.edit)
-            .with_context(|| format!("writing {codec} to an .m4a"))?,
-        Container::Ogg => container::ogg::write_audio(&prepared.info, &prepared.samples, prepared.edit)
-            .with_context(|| format!("writing {codec} to an Ogg file"))?,
+        Container::M4a => {
+            container::mux::write_audio_mp4(&prepared.info, &prepared.samples, prepared.edit)
+                .with_context(|| format!("writing {codec} to an .m4a"))?
+        }
+        Container::Ogg => {
+            container::ogg::write_audio(&prepared.info, &prepared.samples, prepared.edit)
+                .with_context(|| format!("writing {codec} to an Ogg file"))?
+        }
         other => bail!(
             "a {other:?} audio-only output cannot hold the audio as it came out: {} ({})",
             prepared.info.codec,
@@ -149,7 +166,10 @@ pub(super) async fn run(
     super::keep_metadata(&input, spec, &mut rungs)?;
     let nbytes = rungs[0].bytes;
     report(RungStatus::Completed, packets, nbytes);
-    sink.on_event(JobEvent::Finished { rungs_completed: 1, rungs_failed: 0 });
+    sink.on_event(JobEvent::Finished {
+        rungs_completed: 1,
+        rungs_failed: 0,
+    });
     tracing::info!(handling = %prepared.handling, bytes = nbytes, "audio-only output written");
     Ok(JobOutput {
         rungs,
@@ -173,12 +193,18 @@ fn total_ticks(a: &PreparedAudio) -> u64 {
 /// The `.mp3` file: the frames behind an `Info` frame.
 fn write_mp3(prepared: &PreparedAudio) -> Result<Vec<u8>> {
     if !prepared.info.codec.eq_ignore_ascii_case("mp3") {
-        bail!("an .mp3 file holds MP3, and the audio came out as {} ({})", prepared.info.codec, prepared.handling);
+        bail!(
+            "an .mp3 file holds MP3, and the audio came out as {} ({})",
+            prepared.info.codec,
+            prepared.handling
+        );
     }
     // This job's encode: the encoder's own tag frame, which knows its delay
     // and padding exactly (and names `rivetmp3`).
     if let Some(header) = &prepared.file_header {
-        let mut out = Vec::with_capacity(header.len() + prepared.samples.iter().map(|(f, _)| f.len()).sum::<usize>());
+        let mut out = Vec::with_capacity(
+            header.len() + prepared.samples.iter().map(|(f, _)| f.len()).sum::<usize>(),
+        );
         out.extend_from_slice(header);
         for (f, _) in &prepared.samples {
             out.extend_from_slice(f);
@@ -189,9 +215,16 @@ fn write_mp3(prepared: &PreparedAudio) -> Result<Vec<u8>> {
     // source's presentation), under its encoder's name. A source that stated
     // none gets none.
     let gapless = prepared.encoder.as_ref().and_then(|_| {
-        let delay = prepared.edit.media_time.checked_sub(u64::from(codec::audio::MP3_DECODER_DELAY))?;
-        Some(Gapless { encoder_delay: delay as u32, samples: prepared.edit.duration? })
+        let delay = prepared
+            .edit
+            .media_time
+            .checked_sub(u64::from(codec::audio::MP3_DECODER_DELAY))?;
+        Some(Gapless {
+            encoder_delay: delay as u32,
+            samples: prepared.edit.duration?,
+        })
     });
     let frames: Vec<Vec<u8>> = prepared.samples.iter().map(|(f, _)| f.clone()).collect();
-    container::mp3::write_file(&frames, gapless, prepared.encoder.as_deref()).context("writing the .mp3")
+    container::mp3::write_file(&frames, gapless, prepared.encoder.as_deref())
+        .context("writing the .mp3")
 }

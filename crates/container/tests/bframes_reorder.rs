@@ -131,8 +131,7 @@ fn mp4_refuses_two_samples_with_one_timestamp() {
     }
     let err = m
         .finalize()
-        .err()
-        .expect("a duplicated pts has no display rank");
+        .expect_err("a duplicated pts has no display rank");
     assert!(
         format!("{err:#}").contains("appears on two samples"),
         "{err:#}"
@@ -227,6 +226,6 @@ fn cmaf_refuses_a_segment_whose_sync_sample_is_not_its_earliest() {
     m.add_packet(av1_first_packet(), 1000, true, 1).unwrap();
     m.add_packet(av1_packet(0), 1000, false, 0).unwrap();
     m.add_packet(av1_packet(2), 1000, false, 2).unwrap();
-    let err = m.flush_segment().err().expect("refused");
+    let err = m.flush_segment().expect_err("refused");
     assert!(format!("{err:#}").contains("earliest-presented"), "{err:#}");
 }

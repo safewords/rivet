@@ -123,7 +123,8 @@ fn moof_video_one_keyframe_sample_round_trip() {
         duration: 1500,
         size: 4096,
         flags: SampleFlags::keyframe(),
-    composition_offset: 0,}];
+        composition_offset: 0,
+    }];
     let mut moof = build_moof_video(1, 1, 0, &samples);
     moof.patch_default_no_gap();
 
@@ -159,17 +160,20 @@ fn moof_video_three_samples_records_per_sample_dur_and_size() {
             duration: 1500,
             size: 4096,
             flags: SampleFlags::keyframe(),
-        composition_offset: 0,},
+            composition_offset: 0,
+        },
         CmafSample {
             duration: 1500,
             size: 1024,
             flags: SampleFlags::delta_frame(),
-        composition_offset: 0,},
+            composition_offset: 0,
+        },
         CmafSample {
             duration: 1500,
             size: 1024,
             flags: SampleFlags::delta_frame(),
-        composition_offset: 0,},
+            composition_offset: 0,
+        },
     ];
     let mut moof = build_moof_video(2, 1, 6000, &samples);
     moof.patch_default_no_gap();
@@ -207,12 +211,14 @@ fn moof_audio_does_not_emit_first_sample_flags() {
             duration: 1024,
             size: 256,
             flags: SampleFlags::keyframe(),
-        composition_offset: 0,},
+            composition_offset: 0,
+        },
         CmafSample {
             duration: 1024,
             size: 256,
             flags: SampleFlags::keyframe(),
-        composition_offset: 0,},
+            composition_offset: 0,
+        },
     ];
     let mut moof = build_moof_audio(1, 2, 0, &samples);
     moof.patch_default_no_gap();
@@ -247,7 +253,8 @@ fn moof_data_offset_patch_is_at_correct_position() {
         duration: 1500,
         size: 1234,
         flags: SampleFlags::keyframe(),
-    composition_offset: 0,}];
+        composition_offset: 0,
+    }];
     let mut moof = build_moof_video(1, 1, 0, &samples);
     moof.patch_data_offset(0xDEAD_BEEF);
     let read_back = read_be_u32(&moof.bytes, moof.data_offset_pos);
@@ -470,8 +477,14 @@ fn cmaf_h264_init_segment_is_avc1_with_inline_params() {
 
     let has = |buf: &[u8], pat: &[u8; 4]| buf.windows(4).any(|w| w == pat);
     let init = std::fs::read(dir.path().join("init.mp4")).unwrap();
-    assert!(has(&init, b"avc1"), "H.264 CMAF init must use the avc1 sample entry");
-    assert!(!has(&init, b"avc3"), "a single encoder's fixed sets are out of band");
+    assert!(
+        has(&init, b"avc1"),
+        "H.264 CMAF init must use the avc1 sample entry"
+    );
+    assert!(
+        !has(&init, b"avc3"),
+        "a single encoder's fixed sets are out of band"
+    );
     assert!(has(&init, b"avcC"), "init must carry the avcC config box");
     assert!(!has(&init, b"av01"), "must NOT contain an av01 box");
     let seg = std::fs::read(&info.path).unwrap();
@@ -501,8 +514,14 @@ fn cmaf_h265_init_segment_is_hvc1() {
     let _ = muxer.finalize().unwrap();
     let has = |buf: &[u8], pat: &[u8; 4]| buf.windows(4).any(|w| w == pat);
     let init = std::fs::read(dir.path().join("init.mp4")).unwrap();
-    assert!(has(&init, b"hvc1"), "H.265 CMAF init must use the hvc1 sample entry");
-    assert!(!has(&init, b"hev1"), "Apple's HLS authoring specification asks for hvc1");
+    assert!(
+        has(&init, b"hvc1"),
+        "H.265 CMAF init must use the hvc1 sample entry"
+    );
+    assert!(
+        !has(&init, b"hev1"),
+        "Apple's HLS authoring specification asks for hvc1"
+    );
     assert!(has(&init, b"hvcC"), "init must carry the hvcC config box");
     assert!(info.path.exists());
 }
@@ -515,14 +534,8 @@ fn cmaf_video_muxer_options_default_matches_legacy_new() {
     // unmodified.
     let dir_a = tempfile::tempdir().unwrap();
     let dir_b = tempfile::tempdir().unwrap();
-    let mut ma = CmafVideoMuxer::new(
-        dir_a.path(),
-        1280,
-        720,
-        30000,
-        ColorMetadata::default(),
-    )
-    .unwrap();
+    let mut ma =
+        CmafVideoMuxer::new(dir_a.path(), 1280, 720, 30000, ColorMetadata::default()).unwrap();
     let mut mb = CmafVideoMuxer::new_with_options(
         dir_b.path(),
         1280,
@@ -694,14 +707,8 @@ fn cmaf_video_muxer_two_writers_share_output_dir_with_distinct_indices() {
     // finalize, all 4 segment files plus init.mp4 exist.
     let dir = tempfile::tempdir().unwrap();
 
-    let mut primary = CmafVideoMuxer::new(
-        dir.path(),
-        1280,
-        720,
-        30000,
-        ColorMetadata::default(),
-    )
-    .unwrap();
+    let mut primary =
+        CmafVideoMuxer::new(dir.path(), 1280, 720, 30000, ColorMetadata::default()).unwrap();
     let mut helper = CmafVideoMuxer::new_with_options(
         dir.path(),
         1280,
@@ -833,15 +840,30 @@ fn cmaf_audio_muxer_places_its_edit_in_tfdt_and_the_init_elst() {
     };
     // The identity edit is the plain init, byte for byte; so is a delay alone
     // (the tfdt carries it, not an elst).
-    assert_eq!(build_init_segment_audio_with_edit(&info, &TrackEdit::default()), build_init_segment_audio(&info));
     assert_eq!(
-        build_init_segment_audio_with_edit(&info, &TrackEdit { delay: 5, ..TrackEdit::default() }),
+        build_init_segment_audio_with_edit(&info, &TrackEdit::default()),
+        build_init_segment_audio(&info)
+    );
+    assert_eq!(
+        build_init_segment_audio_with_edit(
+            &info,
+            &TrackEdit {
+                delay: 5,
+                ..TrackEdit::default()
+            }
+        ),
         build_init_segment_audio(&info)
     );
 
     let dir = tempfile::tempdir().unwrap();
     let mut muxer = CmafAudioMuxer::new(dir.path(), info.clone()).unwrap();
-    muxer.set_edit(TrackEdit { delay: 24_000, media_time: 1024, duration: None }).unwrap();
+    muxer
+        .set_edit(TrackEdit {
+            delay: 24_000,
+            media_time: 1024,
+            duration: None,
+        })
+        .unwrap();
     for _ in 0..5 {
         muxer.add_packet(vec![0xDE; 256], 1024).unwrap();
     }
@@ -865,7 +887,10 @@ fn cmaf_audio_muxer_places_its_edit_in_tfdt_and_the_init_elst() {
     let elst = find_box(&edts[8..], b"elst").expect("elst");
     let entries = crate::demux::mp4::edit_list::parse_elst(&elst[8..]).unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!((entries[0].media_time, entries[0].segment_duration), (1024, 0));
+    assert_eq!(
+        (entries[0].media_time, entries[0].segment_duration),
+        (1024, 0)
+    );
 }
 
 #[test]

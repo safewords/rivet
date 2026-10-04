@@ -31,7 +31,10 @@ use crate::nal_mux::{NalMuxCodec, ParamSetLedger};
 /// every parameter set in the segments is one the config box holds, `avc3` /
 /// `hev1` when one is not. `None` for an entry with no parameter sets to
 /// settle (`av01`). The file is rewritten only when the entry changes.
-pub fn settle_video_sample_entry(init_path: &Path, segments: &[PathBuf]) -> Result<Option<[u8; 4]>> {
+pub fn settle_video_sample_entry(
+    init_path: &Path,
+    segments: &[PathBuf],
+) -> Result<Option<[u8; 4]>> {
     let mut init = std::fs::read(init_path)
         .with_context(|| format!("reading init segment {}", init_path.display()))?;
     let Some(entry) = video_sample_entry(&init) else {
@@ -60,11 +63,18 @@ pub fn settle_video_sample_entry(init_path: &Path, segments: &[PathBuf]) -> Resu
     }
     let mut fixed = true;
     'segments: for path in segments {
-        let seg = std::fs::read(path).with_context(|| format!("reading segment {}", path.display()))?;
-        for mdat in child_boxes(&seg, 0, seg.len()).filter(|b| &seg[b.start + 4..b.start + 8] == b"mdat") {
-            let nals = LengthPrefixed { data: &seg[mdat.body..mdat.end], size: record.length_size };
+        let seg =
+            std::fs::read(path).with_context(|| format!("reading segment {}", path.display()))?;
+        for mdat in
+            child_boxes(&seg, 0, seg.len()).filter(|b| &seg[b.start + 4..b.start + 8] == b"mdat")
+        {
+            let nals = LengthPrefixed {
+                data: &seg[mdat.body..mdat.end],
+                size: record.length_size,
+            };
             for nal in nals {
-                let nal = nal.with_context(|| format!("walking the NAL units of {}", path.display()))?;
+                let nal =
+                    nal.with_context(|| format!("walking the NAL units of {}", path.display()))?;
                 if !ledger.describes(nal) {
                     fixed = false;
                     break 'segments;
@@ -122,7 +132,11 @@ fn child_boxes(buf: &[u8], from: usize, to: usize) -> impl Iterator<Item = BoxAt
         if size < header || pos + size > to {
             return None;
         }
-        let b = BoxAt { start: pos, body: pos + header, end: pos + size };
+        let b = BoxAt {
+            start: pos,
+            body: pos + header,
+            end: pos + size,
+        };
         pos += size;
         Some(b)
     })
@@ -130,9 +144,14 @@ fn child_boxes(buf: &[u8], from: usize, to: usize) -> impl Iterator<Item = BoxAt
 
 /// The one visual sample entry of `moov/trak/mdia/minf/stbl/stsd`.
 fn video_sample_entry(init: &[u8]) -> Option<BoxAt> {
-    let mut at = BoxAt { start: 0, body: 0, end: init.len() };
+    let mut at = BoxAt {
+        start: 0,
+        body: 0,
+        end: init.len(),
+    };
     for kind in [b"moov", b"trak", b"mdia", b"minf", b"stbl", b"stsd"] {
-        at = child_boxes(init, at.body, at.end).find(|b| &init[b.start + 4..b.start + 8] == kind)?;
+        at =
+            child_boxes(init, at.body, at.end).find(|b| &init[b.start + 4..b.start + 8] == kind)?;
     }
     // stsd: version/flags (4) + entry_count (4), then the entries.
     child_boxes(init, at.body + 8, at.end).next()
@@ -155,7 +174,9 @@ fn parse_config(body: &[u8], codec: NalMuxCodec) -> Result<ConfigRecord> {
     let byte = |at: usize| body.get(at).copied().context("config record truncated");
     let mut take_nal = |at: &mut usize| -> Result<()> {
         let len = u16::from_be_bytes([byte(*at)?, byte(*at + 1)?]) as usize;
-        let nal = body.get(*at + 2..*at + 2 + len).context("config record truncated")?;
+        let nal = body
+            .get(*at + 2..*at + 2 + len)
+            .context("config record truncated")?;
         sets.push(nal.to_vec());
         *at += 2 + len;
         Ok(())
@@ -191,7 +212,11 @@ fn parse_config(body: &[u8], codec: NalMuxCodec) -> Result<ConfigRecord> {
             length_size
         }
     };
-    Ok(ConfigRecord { length_size, sets, array_headers })
+    Ok(ConfigRecord {
+        length_size,
+        sets,
+        array_headers,
+    })
 }
 
 /// The NAL units of a length-prefixed buffer — a sample, or a whole `mdat`,
@@ -215,7 +240,9 @@ impl<'a> Iterator for LengthPrefixed<'a> {
         let len = prefix.iter().fold(0usize, |n, &b| n << 8 | b as usize);
         let Some(nal) = self.data.get(self.size..self.size + len) else {
             self.data = &[];
-            return Some(Err(anyhow::anyhow!("NAL unit of {len} bytes overruns the mdat")));
+            return Some(Err(anyhow::anyhow!(
+                "NAL unit of {len} bytes overruns the mdat"
+            )));
         };
         self.data = &self.data[self.size + len..];
         Some(Ok(nal))
@@ -271,11 +298,15 @@ mod tests {
             .unwrap()
         };
         let mut primary = open(1, true);
-        primary.add_packet(au(&[&SPS, &PPS, &IDR]), 1000, true, 0).unwrap();
+        primary
+            .add_packet(au(&[&SPS, &PPS, &IDR]), 1000, true, 0)
+            .unwrap();
         let a = primary.flush_segment().unwrap().unwrap();
         primary.finalize().unwrap();
         let mut helper = open(2, false);
-        helper.add_packet(au(&[&SPS, helper_pps, &IDR]), 1000, true, 1).unwrap();
+        helper
+            .add_packet(au(&[&SPS, helper_pps, &IDR]), 1000, true, 1)
+            .unwrap();
         let b = helper.flush_segment().unwrap().unwrap();
         helper.finalize().unwrap();
         (dir, vec![a.path, b.path])
@@ -287,7 +318,10 @@ mod tests {
         let init = dir.path().join("init.mp4");
         assert_eq!(&entry_fourcc(&init), b"avc1", "the muxer writes avc1");
         let before = std::fs::read(&init).unwrap();
-        assert_eq!(settle_video_sample_entry(&init, &segments).unwrap(), Some(*b"avc1"));
+        assert_eq!(
+            settle_video_sample_entry(&init, &segments).unwrap(),
+            Some(*b"avc1")
+        );
         assert_eq!(std::fs::read(&init).unwrap(), before, "nothing to rewrite");
     }
 
@@ -296,11 +330,21 @@ mod tests {
         let (dir, segments) = two_encoder_rendition(&PPS_CHANGED);
         let init = dir.path().join("init.mp4");
         let size = std::fs::metadata(&init).unwrap().len();
-        assert_eq!(settle_video_sample_entry(&init, &segments).unwrap(), Some(*b"avc3"));
+        assert_eq!(
+            settle_video_sample_entry(&init, &segments).unwrap(),
+            Some(*b"avc3")
+        );
         assert_eq!(&entry_fourcc(&init), b"avc3");
-        assert_eq!(std::fs::metadata(&init).unwrap().len(), size, "only the fourcc changes");
+        assert_eq!(
+            std::fs::metadata(&init).unwrap().len(),
+            size,
+            "only the fourcc changes"
+        );
         // The first segment alone agrees with the init segment.
-        assert_eq!(settle_video_sample_entry(&init, &segments[..1]).unwrap(), Some(*b"avc1"));
+        assert_eq!(
+            settle_video_sample_entry(&init, &segments[..1]).unwrap(),
+            Some(*b"avc1")
+        );
     }
 
     #[test]
@@ -320,7 +364,8 @@ mod tests {
         let sps = [0x42u8, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03];
         let pps = [0x44u8, 0x01, 0xc1];
         let idr = [0x26u8, 0x01, 0xaf];
-        m.add_packet(au(&[&vps, &sps, &pps, &idr]), 1000, true, 0).unwrap();
+        m.add_packet(au(&[&vps, &sps, &pps, &idr]), 1000, true, 0)
+            .unwrap();
         let seg = m.flush_segment().unwrap().unwrap();
         m.finalize().unwrap();
         let init = dir.path().join("init.mp4");
@@ -332,7 +377,10 @@ mod tests {
                 .unwrap();
             let rec = parse_config(&bytes[c.start + 8..c.end], NalMuxCodec::H265).unwrap();
             assert_eq!(rec.sets.len(), 3, "VPS, SPS and PPS arrays");
-            rec.array_headers.iter().map(|&at| bytes[c.start + 8 + at] >> 7).collect::<Vec<_>>()
+            rec.array_headers
+                .iter()
+                .map(|&at| bytes[c.start + 8 + at] >> 7)
+                .collect::<Vec<_>>()
         };
         assert_eq!(&entry_fourcc(&init), b"hvc1");
         assert_eq!(completeness(&init), vec![1, 1, 1]);
@@ -344,20 +392,31 @@ mod tests {
         let other_path = dir.path().join("other.m4s");
         std::fs::write(&other_path, other).unwrap();
         let segs = vec![seg.path.clone(), other_path];
-        assert_eq!(settle_video_sample_entry(&init, &segs).unwrap(), Some(*b"hev1"));
+        assert_eq!(
+            settle_video_sample_entry(&init, &segs).unwrap(),
+            Some(*b"hev1")
+        );
         assert_eq!(completeness(&init), vec![0, 0, 0]);
         // Settling on the agreeing segment alone restores hvc1.
-        assert_eq!(settle_video_sample_entry(&init, &segs[..1]).unwrap(), Some(*b"hvc1"));
+        assert_eq!(
+            settle_video_sample_entry(&init, &segs[..1]).unwrap(),
+            Some(*b"hvc1")
+        );
         assert_eq!(completeness(&init), vec![1, 1, 1]);
     }
 
     #[test]
     fn av1_has_nothing_to_settle() {
         let dir = tempfile::tempdir().unwrap();
-        let mut m = CmafVideoMuxer::new(dir.path(), 64, 64, 30000, ColorMetadata::default()).unwrap();
-        m.add_packet(vec![(1 << 3) | (1 << 1), 0x01, 0xAA], 1000, true, 0).unwrap();
+        let mut m =
+            CmafVideoMuxer::new(dir.path(), 64, 64, 30000, ColorMetadata::default()).unwrap();
+        m.add_packet(vec![(1 << 3) | (1 << 1), 0x01, 0xAA], 1000, true, 0)
+            .unwrap();
         let seg = m.flush_segment().unwrap().unwrap();
         m.finalize().unwrap();
-        assert_eq!(settle_video_sample_entry(&dir.path().join("init.mp4"), &[seg.path]).unwrap(), None);
+        assert_eq!(
+            settle_video_sample_entry(&dir.path().join("init.mp4"), &[seg.path]).unwrap(),
+            None
+        );
     }
 }

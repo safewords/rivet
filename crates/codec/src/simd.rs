@@ -75,7 +75,10 @@ pub fn picture_threads() -> usize {
     static N: OnceLock<usize> = OnceLock::new();
     crate::threads::cap(*N.get_or_init(|| {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
-        match std::env::var("RIVET_PIPE_THREADS").ok().and_then(|v| v.trim().parse::<usize>().ok()) {
+        match std::env::var("RIVET_PIPE_THREADS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+        {
             Some(n) if n >= 1 => n.min(cores),
             _ => cores,
         }

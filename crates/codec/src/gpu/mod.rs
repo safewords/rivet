@@ -55,7 +55,11 @@ fn usable_by_this_process(devices: Vec<GpuDevice>) -> Vec<GpuDevice> {
         match sysfs::render_node_of(&device.host_pci_address) {
             Some(node) => {
                 let path = format!("/dev/dri/renderD{node}");
-                let openable = std::fs::OpenOptions::new().read(true).write(true).open(&path).is_ok();
+                let openable = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&path)
+                    .is_ok();
                 if openable {
                     ranked.push((node, device));
                 } else {

@@ -223,7 +223,7 @@ fn a_marked_discontinuity_is_a_break_where_the_clock_only_steps_on() {
 /// with a 2 s step in both streams.
 fn unmarked_splice() -> Vec<u8> {
     let mut ts = fixture!("robust_splice.ts").to_vec();
-    for p in ts.chunks_exact_mut(TS_PACKET) {
+    for p in ts.as_chunks_mut::<TS_PACKET>().0 {
         if p[3] & 0x20 != 0 && p[4] > 0 {
             p[5] &= !0x80;
         }
@@ -234,7 +234,7 @@ fn unmarked_splice() -> Vec<u8> {
 /// The PTS of every audio PES (PID 0x101) from TS packet `from` on moved by
 /// `by` ticks.
 fn move_audio_pts(ts: &mut [u8], from: usize, by: i64) {
-    for p in ts.chunks_exact_mut(TS_PACKET).skip(from) {
+    for p in ts.as_chunks_mut::<TS_PACKET>().0.iter_mut().skip(from) {
         let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
         if pid != 0x101 || p[1] & 0x40 == 0 {
             continue;

@@ -104,7 +104,8 @@ struct AdapterObj {
 // the created device.
 #[repr(C)]
 struct ReleaseVtbl {
-    query_interface: unsafe extern "system" fn(*mut c_void, *const Guid, *mut *mut c_void) -> Hresult,
+    query_interface:
+        unsafe extern "system" fn(*mut c_void, *const Guid, *mut *mut c_void) -> Hresult,
     add_ref: *const c_void,
     release: unsafe extern "system" fn(*mut c_void) -> u32,
 }
@@ -277,7 +278,11 @@ pub fn create_amd_d3d11_device(vendor_index: u32) -> Result<AmdD3d11Device> {
         if hr != S_OK || device.is_null() {
             bail!("D3D11CreateDevice on AMD adapter {vendor_index} failed (hr=0x{hr:08x})");
         }
-        let dev = AmdD3d11Device { device, _dxgi: dxgi, _d3d11: d3d11 };
+        let dev = AmdD3d11Device {
+            device,
+            _dxgi: dxgi,
+            _d3d11: d3d11,
+        };
         if std::env::var("AMF_DEC_NO_MT").is_err() {
             enable_multithread_protection(device)?;
         }

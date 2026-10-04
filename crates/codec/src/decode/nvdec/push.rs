@@ -11,9 +11,9 @@
 
 use anyhow::Result;
 
+use super::eager::NvdecDecoder;
 use crate::decode::Decoder;
 use crate::frame::{StreamInfo, VideoFrame};
-use super::eager::NvdecDecoder;
 
 // ─── Push-mode wrapper ─────────────────────────────────────────────
 //

@@ -121,7 +121,8 @@ fn every_frame_comes_back_in_order_through_the_threaded_drain() {
     let mut dec = Av1Decoder::new(stream_info()).expect("the AV1 decoder should construct");
     let mut decoded = Vec::new();
     for pkt in &packets {
-        dec.push_sample(&pkt.data).expect("the decoder accepts a packet");
+        dec.push_sample(&pkt.data)
+            .expect("the decoder accepts a packet");
         while let Some(frame) = dec.decode_next().expect("decode") {
             decoded.push(read_index(&frame));
         }

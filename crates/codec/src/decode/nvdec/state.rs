@@ -7,15 +7,13 @@ use std::os::raw::c_int;
 use std::ptr;
 use std::sync::{Arc, Mutex};
 
-use crate::frame::ColorSpace;
 use super::NvdecError;
 use super::ffi::{
-    CUcontext, CUvideodecoder,
-    FnCuCtxPopCurrent, FnCuCtxPushCurrent,
-    FnCuMemcpy2D,
-    FnCuvidCreateDecoder, FnCuvidDecodePicture, FnCuvidGetDecoderCaps,
-    FnCuvidMapVideoFrame, FnCuvidUnmapVideoFrame,
+    CUcontext, CUvideodecoder, FnCuCtxPopCurrent, FnCuCtxPushCurrent, FnCuMemcpy2D,
+    FnCuvidCreateDecoder, FnCuvidDecodePicture, FnCuvidGetDecoderCaps, FnCuvidMapVideoFrame,
+    FnCuvidUnmapVideoFrame,
 };
+use crate::frame::ColorSpace;
 
 // ─── Decoded frame collector ───────────────────────────────────────
 #[derive(Clone)]

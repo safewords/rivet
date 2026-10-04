@@ -125,14 +125,21 @@ pub(super) fn plan_for(codec: VideoCodec) -> CodecPlan {
         VideoCodec::Av1 => AV1_PLAN,
         VideoCodec::H264 => AVC_PLAN,
         VideoCodec::H265 => HEVC_PLAN,
-        codec => unreachable!("{} is refused by the constructor (refuse_unencoded_codec)", codec.label()),
+        codec => unreachable!(
+            "{} is refused by the constructor (refuse_unencoded_codec)",
+            codec.label()
+        ),
     }
 }
 
 /// `keyframe_interval == 0` means "the caller left it unset", not "every
 /// frame an IDR": use the same 240-frame default as the other backends.
 pub(super) fn effective_keyframe_interval(keyframe_interval: u32) -> u32 {
-    if keyframe_interval == 0 { 240 } else { keyframe_interval }
+    if keyframe_interval == 0 {
+        240
+    } else {
+        keyframe_interval
+    }
 }
 
 // ─── Session container ────────────────────────────────────────────
@@ -242,13 +249,18 @@ impl AmfEncoder {
                 VideoCodec::Av1 => apply_av1_properties(encoder, &config),
                 VideoCodec::H264 => apply_avc_properties(encoder, &config),
                 VideoCodec::H265 => apply_hevc_properties(encoder, &config),
-                codec => unreachable!("{} is refused by the constructor (refuse_unencoded_codec)", codec.label()),
+                codec => unreachable!(
+                    "{} is refused by the constructor (refuse_unencoded_codec)",
+                    codec.label()
+                ),
             };
             let summary = match applied {
                 Ok(s) => s,
                 Err(e) => {
                     let _ = (encoder_vt.ps.release)(encoder);
-                    return Err(e.context(format!("configuring the AMF {:?} encoder", config.codec)));
+                    return Err(
+                        e.context(format!("configuring the AMF {:?} encoder", config.codec))
+                    );
                 }
             };
 
@@ -264,7 +276,12 @@ impl AmfEncoder {
             );
 
             // 6. Init on the dispatched input format.
-            let rc = (encoder_vt.init)(encoder, surface_fmt, config.width as i32, config.height as i32);
+            let rc = (encoder_vt.init)(
+                encoder,
+                surface_fmt,
+                config.width as i32,
+                config.height as i32,
+            );
             if rc != AMF_OK {
                 release_component(encoder);
                 bail!(

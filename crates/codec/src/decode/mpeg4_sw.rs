@@ -22,7 +22,10 @@ use crate::frame::{PixelFormat, StreamInfo, VideoFrame};
 /// 14496-2 §6.2.5.2 is that syntax, so this decoder reads it — and only this
 /// one, since no hardware tier is handed `h263`.
 pub fn supports(codec_lower: &str) -> bool {
-    matches!(codec_lower, "mpeg4" | "mp4v" | "mpeg4part2" | "xvid" | "divx" | "h263")
+    matches!(
+        codec_lower,
+        "mpeg4" | "mp4v" | "mpeg4part2" | "xvid" | "divx" | "h263"
+    )
 }
 
 /// An MPEG-4 Part 2 decoder behind rivet's [`Decoder`] trait.
@@ -39,7 +42,12 @@ impl Mpeg4Decoder {
         if !supports(&codec) {
             bail!("the MPEG-4 Part 2 decoder decodes MPEG-4 Visual, not '{codec}'");
         }
-        Ok(Self { inner: mpeg4::Decoder::new(), info, ready: VecDeque::new(), next_pts: 0 })
+        Ok(Self {
+            inner: mpeg4::Decoder::new(),
+            info,
+            ready: VecDeque::new(),
+            next_pts: 0,
+        })
     }
 
     fn take(&mut self, frames: Vec<mpeg4::Frame>) {
@@ -157,7 +165,10 @@ mod tests {
         dec.finish().unwrap();
         for pts in 0..4 {
             let f = dec.decode_next().unwrap().expect("a frame");
-            assert_eq!((f.width, f.height, f.format, f.pts), (w, h, PixelFormat::Yuv420p, pts));
+            assert_eq!(
+                (f.width, f.height, f.format, f.pts),
+                (w, h, PixelFormat::Yuv420p, pts)
+            );
             assert_eq!(f.data.len(), (w * h * 3 / 2) as usize);
         }
         assert!(dec.decode_next().unwrap().is_none());

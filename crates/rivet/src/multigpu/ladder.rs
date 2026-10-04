@@ -64,9 +64,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use tokio::sync::{Notify, mpsc, watch};
 use tokio::task::JoinSet;
 
-
-use crate::decode_pump::DecodeRange;
 use super::speed::{self, DeviceKey, SpeedBoard};
+use crate::decode_pump::DecodeRange;
 use crate::encoder_worker::{EncoderSessionPool, EncoderWorkerConfig, RungCodecInvariant};
 use crate::frame_queue::{SegmentChunk, SegmentChunkQueue};
 use crate::gpu_pool::GpuLease;
@@ -252,7 +251,11 @@ impl<T: Send + 'static> Ladder<T> {
 
     /// Everything the workers recorded for rung `idx`, leaving it empty.
     pub fn take_contributions(&self, idx: usize) -> Vec<T> {
-        std::mem::take(&mut *self.contributions[idx].lock().unwrap_or_else(|p| p.into_inner()))
+        std::mem::take(
+            &mut *self.contributions[idx]
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        )
     }
 
     /// Release the setup guard seeded into `active_workers`, once every scaler
@@ -302,9 +305,18 @@ impl<T: Send + 'static> Ladder<T> {
 /// ask spins up a worker pool sized to the whole machine (32 threads on this
 /// box) to encode nothing. So software is checked from the feature flags,
 /// and the encoder is built once per unit of work, as it would be anyway.
-pub(super) fn preflight_encoder(params: &MultiGpuParams<'_>, width: u32, height: u32) -> Result<()> {
+pub(super) fn preflight_encoder(
+    params: &MultiGpuParams<'_>,
+    width: u32,
+    height: u32,
+) -> Result<()> {
     if params.gpu_pool.capacity() == 0 {
-        return Err(super::gpu_policy::empty_pool_error(&params.host, params.encode, params.codec, params.output_pixel_format));
+        return Err(super::gpu_policy::empty_pool_error(
+            &params.host,
+            params.encode,
+            params.codec,
+            params.output_pixel_format,
+        ));
     }
     if params.gpu_pool.is_software() {
         if !super::gpu_policy::software_reaches_output(params.codec, params.output_pixel_format) {
@@ -386,7 +398,11 @@ pub(super) struct DecodePlan {
 /// on the decode-capable card expected to be fastest
 /// ([`speed::fastest_of`]) — not the first one detected, which on devbox is
 /// the slow A380.
-pub(super) fn plan_decode(params: &MultiGpuParams<'_>, shape: LadderShape, capacity: usize) -> DecodePlan {
+pub(super) fn plan_decode(
+    params: &MultiGpuParams<'_>,
+    shape: LadderShape,
+    capacity: usize,
+) -> DecodePlan {
     let decode_gpus = params.decode_capable_gpus();
     let role = decode_role(&params.header.codec);
     // The slots a split decode runs on: each decode-capable card once. With
@@ -401,7 +417,10 @@ pub(super) fn plan_decode(params: &MultiGpuParams<'_>, shape: LadderShape, capac
     } else if decode_gpus.is_empty() {
         vec![None; capacity.max(1)]
     } else {
-        decode_peers(&role, &decode_gpus).into_iter().map(Some).collect()
+        decode_peers(&role, &decode_gpus)
+            .into_iter()
+            .map(Some)
+            .collect()
     };
     let want = match params.decode {
         crate::spec::DecodePolicy::Auto if slots.len() > 1 => slots.len() * RANGES_PER_CARD,
@@ -426,14 +445,20 @@ pub(super) fn plan_decode(params: &MultiGpuParams<'_>, shape: LadderShape, capac
             }
             None => decode_gpus.first().copied(),
         };
-        DecodePlan { ranges: vec![DecodeRange::whole_source()], devices: vec![device] }
+        DecodePlan {
+            ranges: vec![DecodeRange::whole_source()],
+            devices: vec![device],
+        }
     };
     // A temporal filter (hqdn3d) makes each frame depend on the ones before
     // it, and a range starts with no history: split, the frames at every
     // range start would differ from a whole decode. One stream, one pump.
     // A frame-rate cap drops frames, so a sample's index no longer counts the
     // output frames before it and a range's first segment cannot be placed.
-    if want > 1 && crate::decode_pump::decimation(params.header.info.frame_rate, Some(params.frame_rate)).is_some() {
+    if want > 1
+        && crate::decode_pump::decimation(params.header.info.frame_rate, Some(params.frame_rate))
+            .is_some()
+    {
         return whole(Some("the output frame rate is capped below the source's"));
     }
     if want > 1 && params.filters.is_stateful() {
@@ -455,9 +480,9 @@ pub(super) fn plan_decode(params: &MultiGpuParams<'_>, shape: LadderShape, capac
     // cards, several on one card when N exceeds them; the default runs one
     // worker per card and lets each pull ranges.
     let devices: Vec<Option<u32>> = match params.decode {
-        crate::spec::DecodePolicy::Ranges(n) => {
-            (0..n.min(ranges.len()).max(1)).map(|i| params.range_decode_gpu_for(i, &decode_gpus)).collect()
-        }
+        crate::spec::DecodePolicy::Ranges(n) => (0..n.min(ranges.len()).max(1))
+            .map(|i| params.range_decode_gpu_for(i, &decode_gpus))
+            .collect(),
         _ => slots.into_iter().take(ranges.len()).collect(),
     };
     DecodePlan { ranges, devices }
@@ -492,9 +517,15 @@ fn decode_peers(role: &str, gpus: &[u32]) -> Vec<u32> {
 }
 
 fn peers_at(board: &SpeedBoard, gpus: &[u32]) -> Vec<u32> {
-    let best = (0..gpus.len()).map(|d| board.rate(d)).fold(0.0f64, f64::max);
-    let peers: Vec<u32> =
-        gpus.iter().enumerate().filter(|&(d, _)| board.rate(d) >= best * DECODE_PEER_RATIO).map(|(_, &g)| g).collect();
+    let best = (0..gpus.len())
+        .map(|d| board.rate(d))
+        .fold(0.0f64, f64::max);
+    let peers: Vec<u32> = gpus
+        .iter()
+        .enumerate()
+        .filter(|&(d, _)| board.rate(d) >= best * DECODE_PEER_RATIO)
+        .map(|(_, &g)| g)
+        .collect();
     if peers.len() < gpus.len() {
         tracing::info!(
             candidates = ?gpus,
@@ -561,7 +592,11 @@ impl RangeDispatch {
     }
 
     fn retire(&self, w: usize) {
-        self.state.lock().unwrap_or_else(|p| p.into_inner()).1.retire(w);
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .1
+            .retire(w);
     }
 }
 
@@ -624,8 +659,9 @@ pub(super) fn spawn_decode<T: Send + 'static>(
         role,
         keys,
     });
-    let rung_producers: Vec<Arc<AtomicUsize>> =
-        (0..rungs.len()).map(|_| Arc::new(AtomicUsize::new(ranges.len()))).collect();
+    let rung_producers: Vec<Arc<AtomicUsize>> = (0..rungs.len())
+        .map(|_| Arc::new(AtomicUsize::new(ranges.len())))
+        .collect();
     let scaler_template: Vec<crate::rung_scaler::RungScalerConfig> = rungs
         .iter()
         .enumerate()
@@ -679,9 +715,13 @@ pub(super) fn spawn_decode<T: Send + 'static>(
                         frames_per_chunk: shape.frames_per_chunk,
                         concurrent: workers,
                     };
-                    match run_range(&job, &clips, &scalers, &queues, &producers, &active, &rung_done, &rt) {
+                    match run_range(
+                        &job, &clips, &scalers, &queues, &producers, &active, &rung_done, &rt,
+                    ) {
                         Ok(n) => decoded += n,
-                        Err(e) => break Err(e.context(format!("decode range {range_idx} on {device:?}"))),
+                        Err(e) => {
+                            break Err(e.context(format!("decode range {range_idx} on {device:?}")));
+                        }
                     }
                     let elapsed = started.elapsed().as_secs_f64();
                     dispatch.finished(w, range_idx, elapsed);
@@ -771,7 +811,9 @@ fn run_range(
         // see it idle while its queue is still being fed.
         active[idx].fetch_add(1, Ordering::AcqRel);
         handles.push(rt.spawn_blocking(move || {
-            let result = crate::rung_scaler::run_rung_scaler_blocking_shared(cfg, rx, queue, rt_scaler, producers);
+            let result = crate::rung_scaler::run_rung_scaler_blocking_shared(
+                cfg, rx, queue, rt_scaler, producers,
+            );
             if active[idx].fetch_sub(1, Ordering::AcqRel) == 1 {
                 rung_done[idx].notify_one();
             }
@@ -792,7 +834,10 @@ fn run_range(
     });
     let mut scaler_error = None;
     for handle in handles {
-        let joined = rt.block_on(handle).map_err(|e| anyhow!("scaler join error: {e}")).and_then(|r| r);
+        let joined = rt
+            .block_on(handle)
+            .map_err(|e| anyhow!("scaler join error: {e}"))
+            .and_then(|r| r);
         if let Err(e) = joined
             && scaler_error.is_none()
         {
@@ -825,7 +870,10 @@ fn rung_worker_config(
         height: rung.height,
         frame_rate: ctx.frame_rate,
         quality: rung.quality.crf.unwrap_or(codec::encode::AUTO_FROM_TARGET),
-        speed_preset: rung.quality.speed_preset.unwrap_or(codec::encode::AUTO_FROM_TARGET),
+        speed_preset: rung
+            .quality
+            .speed_preset
+            .unwrap_or(codec::encode::AUTO_FROM_TARGET),
         target: rung.quality.target,
         tier: rung.quality.tier,
         // A software lease is a share of the CPU: its thread budget goes to
@@ -836,7 +884,11 @@ fn rung_worker_config(
         threads: lease.threads(),
         gpu_index: lease.gpu_index(),
         gpu_vendor: lease.vendor(),
-        backend: if lease.is_software() { codec::encode::software_backend_for(ctx.codec) } else { None },
+        backend: if lease.is_software() {
+            codec::encode::software_backend_for(ctx.codec)
+        } else {
+            None
+        },
         output_color_metadata: ctx.output_color_metadata,
         output_pixel_format: ctx.output_pixel_format,
         constant_qp: ctx.constant_qp,
@@ -898,7 +950,15 @@ where
         bytes_encoded: &AtomicU64,
         progress_tx: &mpsc::Sender<u64>,
     ) -> Result<UnitOutcome<T>> {
-        self(cfg, chunk, init_written, sessions, frames_encoded, bytes_encoded, progress_tx)
+        self(
+            cfg,
+            chunk,
+            init_written,
+            sessions,
+            frames_encoded,
+            bytes_encoded,
+            progress_tx,
+        )
     }
 }
 
@@ -948,10 +1008,16 @@ impl EncodeGate {
             role,
             keys,
             remaining: rungs.iter().map(|_| AtomicU64::new(total_frames)).collect(),
-            pixels: rungs.iter().map(|r| f64::from(r.width) * f64::from(r.height)).collect(),
+            pixels: rungs
+                .iter()
+                .map(|r| f64::from(r.width) * f64::from(r.height))
+                .collect(),
             frames_per_chunk: u64::from(frames_per_chunk.max(1)),
             serves: Mutex::new(
-                serves.iter().map(|s| (0..rungs.len()).map(|r| s.contains(&r)).collect()).collect(),
+                serves
+                    .iter()
+                    .map(|s| (0..rungs.len()).map(|r| s.contains(&r)).collect())
+                    .collect(),
             ),
         }
     }
@@ -976,25 +1042,38 @@ impl EncodeGate {
         }
         let serves = self.serves.lock().unwrap_or_else(|p| p.into_inner());
         let board = self.board.lock().unwrap_or_else(|p| p.into_inner());
-        board.should_take(slot, units, remaining.max(units), self.now(), |o| serves[o][rung])
+        board.should_take(slot, units, remaining.max(units), self.now(), |o| {
+            serves[o][rung]
+        })
     }
 
     /// Worker `slot` took `chunk` of `rung`; returns its weight in work units.
     fn took(&self, slot: usize, rung: usize, chunk: &SegmentChunk) -> f64 {
         let left = &self.remaining[rung];
         let mut now = left.load(Ordering::Acquire);
-        while let Err(seen) =
-            left.compare_exchange_weak(now, now.saturating_sub(chunk.keep as u64), Ordering::AcqRel, Ordering::Acquire)
-        {
+        while let Err(seen) = left.compare_exchange_weak(
+            now,
+            now.saturating_sub(chunk.keep as u64),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
             now = seen;
         }
         let units = chunk.frames.len().max(1) as f64 * self.pixels[rung];
-        self.board.lock().unwrap_or_else(|p| p.into_inner()).start(slot, units, self.now());
+        self.board
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .start(slot, units, self.now());
         units
     }
 
     fn done(&self, slot: usize, units: f64, elapsed: f64) {
-        if let Some(rate) = self.board.lock().unwrap_or_else(|p| p.into_inner()).finish(slot, units, elapsed) {
+        if let Some(rate) = self
+            .board
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .finish(slot, units, elapsed)
+        {
             speed::record_rate(&self.role, self.keys[slot], rate);
             // Whatever the codec: what a serial job asks for when it picks a
             // card (`serial_target`).
@@ -1006,12 +1085,18 @@ impl EncodeGate {
     /// them, and will not take that rung again.
     fn refused(&self, slot: usize, rung: usize, keep: usize) {
         self.remaining[rung].fetch_add(keep as u64, Ordering::AcqRel);
-        self.board.lock().unwrap_or_else(|p| p.into_inner()).abandon(slot);
+        self.board
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .abandon(slot);
         self.serves.lock().unwrap_or_else(|p| p.into_inner())[slot][rung] = false;
     }
 
     fn retire(&self, slot: usize) {
-        self.board.lock().unwrap_or_else(|p| p.into_inner()).retire(slot);
+        self.board
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retire(slot);
     }
 }
 
@@ -1036,7 +1121,12 @@ pub(super) async fn spawn_workers<T: Send + 'static>(
             None if slot == 0 => {
                 // The pool is empty, and the pool's builder already decided
                 // that software was not an answer here — say why, by name.
-                return Err(super::gpu_policy::empty_pool_error(&params.host, params.encode, params.codec, params.output_pixel_format));
+                return Err(super::gpu_policy::empty_pool_error(
+                    &params.host,
+                    params.encode,
+                    params.codec,
+                    params.output_pixel_format,
+                ));
             }
             None => break,
         }
@@ -1048,19 +1138,27 @@ pub(super) async fn spawn_workers<T: Send + 'static>(
     let serves_by_slot: Vec<Vec<usize>> = (0..workers)
         .map(|slot| {
             if params.encode.pins_rungs() {
-                (0..rungs.len()).filter(|idx| idx % workers == slot).collect()
+                (0..rungs.len())
+                    .filter(|idx| idx % workers == slot)
+                    .collect()
             } else {
                 (0..rungs.len()).collect()
             }
         })
         .collect();
     for (idx, count) in ladder.serving_workers.iter().enumerate() {
-        count.store(serves_by_slot.iter().filter(|s| s.contains(&idx)).count(), Ordering::Release);
+        count.store(
+            serves_by_slot.iter().filter(|s| s.contains(&idx)).count(),
+            Ordering::Release,
+        );
     }
     let gate = (workers > 1).then(|| {
         Arc::new(EncodeGate::new(
             params.codec,
-            leases.iter().map(|l| DeviceKey::of_gpu(l.gpu_index())).collect(),
+            leases
+                .iter()
+                .map(|l| DeviceKey::of_gpu(l.gpu_index()))
+                .collect(),
             rungs,
             &serves_by_slot,
             params.total_input_frames,
@@ -1164,7 +1262,15 @@ fn spawn_ladder_worker<T: Send + 'static>(
     let configs: Vec<EncoderWorkerConfig> = rungs
         .iter()
         .enumerate()
-        .map(|(idx, rung)| rung_worker_config(ctx, idx, rung, &lease, Arc::clone(&ladder.rung_invariants[idx])))
+        .map(|(idx, rung)| {
+            rung_worker_config(
+                ctx,
+                idx,
+                rung,
+                &lease,
+                Arc::clone(&ladder.rung_invariants[idx]),
+            )
+        })
         .collect();
 
     let body = async move {
@@ -1210,7 +1316,9 @@ fn spawn_ladder_worker<T: Send + 'static>(
 
                 let Some((rung_idx, _)) = best else {
                     // Nothing anywhere. Finished only if nothing can arrive.
-                    if serves.iter().all(|&idx| ladder.queues[idx].is_closed() && ladder.queues[idx].depth() == 0) {
+                    if serves.iter().all(|&idx| {
+                        ladder.queues[idx].is_closed() && ladder.queues[idx].depth() == 0
+                    }) {
                         break;
                     }
                     std::thread::sleep(IDLE_POLL);
@@ -1286,7 +1394,8 @@ fn spawn_ladder_worker<T: Send + 'static>(
                         if let Some(gate) = &gate {
                             gate.refused(slot, rung_idx, keep);
                         }
-                        let last_server = ladder.serving_workers[rung_idx].fetch_sub(1, Ordering::AcqRel) == 1;
+                        let last_server =
+                            ladder.serving_workers[rung_idx].fetch_sub(1, Ordering::AcqRel) == 1;
                         ladder.worker_done_with(rung_idx);
                         if last_server {
                             return Err(anyhow!(
@@ -1385,7 +1494,11 @@ pub(super) async fn drain<R>(mut run: Running<R>) -> Result<Vec<Option<R>>> {
         return Err(stop(&mut run, super::Cancelled.into()).await);
     }
 
-    while pumps_remaining > 0 || scalers_remaining > 0 || workers_remaining > 0 || finalizers_remaining > 0 {
+    while pumps_remaining > 0
+        || scalers_remaining > 0
+        || workers_remaining > 0
+        || finalizers_remaining > 0
+    {
         let outcome: Result<()> = tokio::select! {
             biased;
             changed = watch_cancel(&mut cancel) => match changed {
@@ -1471,7 +1584,10 @@ async fn stop<R>(run: &mut Running<R>, why: anyhow::Error) -> anyhow::Error {
     // first. (devbox: a two-chunk H.265 file failed with only the coverage
     // message.)
     match worker_failure {
-        Some(cause) if !why.is::<super::Cancelled>() && !format!("{why:#}").starts_with("ladder worker") => {
+        Some(cause)
+            if !why.is::<super::Cancelled>()
+                && !format!("{why:#}").starts_with("ladder worker") =>
+        {
             anyhow!("{cause} (and then: {why:#})")
         }
         _ => why,
@@ -1488,7 +1604,11 @@ mod tests {
     fn pumps_share_the_filter_threads() {
         assert_eq!(pump_share(32, 1), 0);
         assert_eq!(pump_share(32, 2), 16);
-        assert_eq!(pump_share(16, 3), 5, "a job's half of 32 cores among three pumps");
+        assert_eq!(
+            pump_share(16, 3),
+            5,
+            "a job's half of 32 cores among three pumps"
+        );
         assert_eq!(pump_share(4, 16), 1);
     }
     use codec::frame::{ColorSpace, PixelFormat, VideoFrame};
@@ -1498,14 +1618,30 @@ mod tests {
         let mut data = vec![idx as u8; 16 * 16];
         data.extend(vec![128u8; 8 * 8]);
         data.extend(vec![128u8; 8 * 8]);
-        VideoFrame::new(Bytes::from(data), 16, 16, PixelFormat::Yuv420p, ColorSpace::Bt709, idx)
+        VideoFrame::new(
+            Bytes::from(data),
+            16,
+            16,
+            PixelFormat::Yuv420p,
+            ColorSpace::Bt709,
+            idx,
+        )
     }
 
     fn chunk(idx: usize) -> SegmentChunk {
-        SegmentChunk { segment_idx: idx, frames: vec![frame(0), frame(1)], lead_in: 0, keep: 2, is_final: false }
+        SegmentChunk {
+            segment_idx: idx,
+            frames: vec![frame(0), frame(1)],
+            lead_in: 0,
+            keep: 2,
+            is_final: false,
+        }
     }
 
-    const SHAPE: LadderShape = LadderShape { frames_per_chunk: 2, overlap: 0 };
+    const SHAPE: LadderShape = LadderShape {
+        frames_per_chunk: 2,
+        overlap: 0,
+    };
 
     fn two_rungs() -> Vec<Rung> {
         vec![Rung::new(64, 64), Rung::new(32, 32)]
@@ -1531,7 +1667,10 @@ mod tests {
             tokio::spawn(async move { l.wait_rung_finished(0).await })
         };
         tokio::time::sleep(Duration::from_millis(20)).await;
-        assert!(!waiter.is_finished(), "finalizer must wait while the rung is open");
+        assert!(
+            !waiter.is_finished(),
+            "finalizer must wait while the rung is open"
+        );
 
         ladder.abort.abort();
 
@@ -1569,7 +1708,10 @@ mod tests {
             cancel: Some(rx),
         };
         let err = drain(run).await.expect_err("must not complete");
-        assert!(err.is::<super::super::Cancelled>(), "root cause must be Cancelled, got {err:#}");
+        assert!(
+            err.is::<super::super::Cancelled>(),
+            "root cause must be Cancelled, got {err:#}"
+        );
         assert!(ladder.is_aborted(), "cancel must abort the ladder");
     }
 
@@ -1612,7 +1754,10 @@ mod tests {
             .unwrap()
             .expect_err("must not complete");
         assert!(err.is::<super::super::Cancelled>(), "got {err:#}");
-        assert!(worker_saw_abort.load(Ordering::Acquire), "the worker must have been joined after the abort");
+        assert!(
+            worker_saw_abort.load(Ordering::Acquire),
+            "the worker must have been joined after the abort"
+        );
     }
 
     /// The first failure aborts the ladder too, so the other parts of the run
@@ -1665,7 +1810,9 @@ mod tests {
     }
 
     /// An encode unit that answers every chunk the same way.
-    fn unit(answer: impl Fn(SegmentChunk) -> Result<UnitOutcome<()>> + Send + Sync + 'static) -> Arc<dyn EncodeUnit<()>> {
+    fn unit(
+        answer: impl Fn(SegmentChunk) -> Result<UnitOutcome<()>> + Send + Sync + 'static,
+    ) -> Arc<dyn EncodeUnit<()>> {
         Arc::new(
             move |_cfg: &EncoderWorkerConfig,
                   chunk: SegmentChunk,
@@ -1681,7 +1828,10 @@ mod tests {
     /// the run's handle over it — the shape of a real ladder once the pumps
     /// and scalers are out of the picture. The pool comes back so the test
     /// can check the lease was returned.
-    fn one_worker_run(ladder: &Arc<Ladder<()>>, unit: Arc<dyn EncodeUnit<()>>) -> (Running<()>, Arc<GpuPool>) {
+    fn one_worker_run(
+        ladder: &Arc<Ladder<()>>,
+        unit: Arc<dyn EncodeUnit<()>>,
+    ) -> (Running<()>, Arc<GpuPool>) {
         let pool = Arc::new(GpuPool::software(1, 1));
         let lease = pool.try_claim().expect("one slot");
         // What `spawn_workers` records: this one worker serves both rungs.
@@ -1689,7 +1839,17 @@ mod tests {
             count.store(1, Ordering::Release);
         }
         let mut workers: JoinSet<(usize, Result<()>)> = JoinSet::new();
-        spawn_ladder_worker(&ctx(), 0, &two_rungs(), vec![0, 1], lease, Arc::clone(ladder), unit, None, &mut workers);
+        spawn_ladder_worker(
+            &ctx(),
+            0,
+            &two_rungs(),
+            vec![0, 1],
+            lease,
+            Arc::clone(ladder),
+            unit,
+            None,
+            &mut workers,
+        );
         ladder.release_setup_guard();
         let (ftx, finalizer_rx) = mpsc::channel::<(usize, Result<Option<()>>)>(2);
         drop(ftx);
@@ -1716,14 +1876,19 @@ mod tests {
             || async {
                 let ladder: Arc<Ladder<()>> = Arc::new(Ladder::new(&two_rungs(), 2));
                 assert!(ladder.queues[0].push(chunk(0)).await);
-                let (run, pool) =
-                    one_worker_run(&ladder, unit(|_| Err(anyhow!("creating encoder for chunk: the driver said no"))));
+                let (run, pool) = one_worker_run(
+                    &ladder,
+                    unit(|_| Err(anyhow!("creating encoder for chunk: the driver said no"))),
+                );
                 let err = drain(run).await.expect_err("must fail");
                 let msg = format!("{err:#}");
                 assert!(msg.contains("ladder worker 0 failed"), "{msg}");
                 assert!(msg.contains("the driver said no"), "{msg}");
                 assert!(ladder.is_aborted());
-                assert!(pool.try_claim().is_some(), "the failed worker's lease must be back in the pool");
+                assert!(
+                    pool.try_claim().is_some(),
+                    "the failed worker's lease must be back in the pool"
+                );
             },
         );
     }
@@ -1732,28 +1897,37 @@ mod tests {
     /// finalizer's complaint about the chunk it never delivered arrives first.
     #[test]
     fn a_workers_failure_is_reported_ahead_of_the_hole_it_left() {
-        within(Duration::from_secs(10), "a failed run did not stop", || async {
-            let ladder: Arc<Ladder<()>> = Arc::new(Ladder::new(&two_rungs(), 2));
-            let mut workers: JoinSet<(usize, Result<()>)> = JoinSet::new();
-            workers.spawn(async {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                (1, Err(anyhow!("QSV said no")))
-            });
-            let (ftx, finalizer_rx) = mpsc::channel::<(usize, Result<Option<()>>)>(2);
-            ftx.send((0, Err(anyhow!("chunk coverage incomplete")))).await.unwrap();
-            let run = Running {
-                pumps: JoinSet::new(),
-                scalers: JoinSet::new(),
-                workers,
-                finalizer_rx,
-                finalizers_remaining: 2,
-                abort: Arc::clone(&ladder.abort),
-                cancel: None,
-            };
-            let msg = format!("{:#}", drain(run).await.expect_err("must fail"));
-            assert!(msg.starts_with("ladder worker 1 failed: QSV said no"), "{msg}");
-            assert!(msg.contains("chunk coverage incomplete"), "{msg}");
-        });
+        within(
+            Duration::from_secs(10),
+            "a failed run did not stop",
+            || async {
+                let ladder: Arc<Ladder<()>> = Arc::new(Ladder::new(&two_rungs(), 2));
+                let mut workers: JoinSet<(usize, Result<()>)> = JoinSet::new();
+                workers.spawn(async {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    (1, Err(anyhow!("QSV said no")))
+                });
+                let (ftx, finalizer_rx) = mpsc::channel::<(usize, Result<Option<()>>)>(2);
+                ftx.send((0, Err(anyhow!("chunk coverage incomplete"))))
+                    .await
+                    .unwrap();
+                let run = Running {
+                    pumps: JoinSet::new(),
+                    scalers: JoinSet::new(),
+                    workers,
+                    finalizer_rx,
+                    finalizers_remaining: 2,
+                    abort: Arc::clone(&ladder.abort),
+                    cancel: None,
+                };
+                let msg = format!("{:#}", drain(run).await.expect_err("must fail"));
+                assert!(
+                    msg.starts_with("ladder worker 1 failed: QSV said no"),
+                    "{msg}"
+                );
+                assert!(msg.contains("chunk coverage incomplete"), "{msg}");
+            },
+        );
     }
 
     /// The last worker able to serve a rung strikes it off: nothing will
@@ -1769,11 +1943,19 @@ mod tests {
                 assert!(ladder.queues[1].push(chunk(0)).await);
                 let (run, pool) = one_worker_run(
                     &ladder,
-                    unit(|chunk| Ok(UnitOutcome::Rejected { chunk, diff: "profile 100 vs 77".into() })),
+                    unit(|chunk| {
+                        Ok(UnitOutcome::Rejected {
+                            chunk,
+                            diff: "profile 100 vs 77".into(),
+                        })
+                    }),
                 );
                 let err = drain(run).await.expect_err("must fail");
                 let msg = format!("{err:#}");
-                assert!(msg.contains("rung 1 (32p): every ladder worker has refused it"), "{msg}");
+                assert!(
+                    msg.contains("rung 1 (32p): every ladder worker has refused it"),
+                    "{msg}"
+                );
                 assert!(msg.contains("profile 100 vs 77"), "{msg}");
                 assert!(ladder.is_aborted());
                 assert!(pool.try_claim().is_some());
@@ -1786,11 +1968,23 @@ mod tests {
     #[test]
     fn preflight_refuses_an_empty_pool_by_name() {
         let rungs = two_rungs();
-        let params = params_with_pool(&rungs, Arc::new(GpuPool::new(&[])), EncodePolicy::Family(GpuFamily::Intel), VideoCodec::H264);
-        let err = preflight_encoder(&params, 64, 64).expect_err("an empty pool has nothing to preflight");
+        let params = params_with_pool(
+            &rungs,
+            Arc::new(GpuPool::new(&[])),
+            EncodePolicy::Family(GpuFamily::Intel),
+            VideoCodec::H264,
+        );
+        let err =
+            preflight_encoder(&params, 64, 64).expect_err("an empty pool has nothing to preflight");
         let msg = format!("{err:#}");
-        assert!(msg.contains("no encoder matches `--encode family:intel` for H.264 on this host"), "{msg}");
-        assert!(msg.contains("Present: synth-0 (gpu 0, NVIDIA, encodes H.264)"), "{msg}");
+        assert!(
+            msg.contains("no encoder matches `--encode family:intel` for H.264 on this host"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("Present: synth-0 (gpu 0, NVIDIA, encodes H.264)"),
+            "{msg}"
+        );
     }
 
     /// And the lease claim says the same thing for a caller that skipped
@@ -1802,12 +1996,23 @@ mod tests {
             "claiming leases from an empty pool waited instead of refusing",
             || async {
                 let rungs = two_rungs();
-                let params =
-                    params_with_pool(&rungs, Arc::new(GpuPool::new(&[])), EncodePolicy::SingleGpu(Some(9)), VideoCodec::H265);
+                let params = params_with_pool(
+                    &rungs,
+                    Arc::new(GpuPool::new(&[])),
+                    EncodePolicy::SingleGpu(Some(9)),
+                    VideoCodec::H265,
+                );
                 let ladder: Arc<Ladder<()>> = Arc::new(Ladder::new(&rungs, 2));
-                let err = spawn_workers(&params, &ctx(), &rungs, SHAPE, &ladder, unit(|_| Ok(UnitOutcome::Done(()))))
-                    .await
-                    .expect_err("nothing to lease");
+                let err = spawn_workers(
+                    &params,
+                    &ctx(),
+                    &rungs,
+                    SHAPE,
+                    &ladder,
+                    unit(|_| Ok(UnitOutcome::Done(()))),
+                )
+                .await
+                .expect_err("nothing to lease");
                 let msg = format!("{err:#}");
                 assert!(msg.contains("no encoder matches `--encode gpu:9` for H.265 on this host: there is no gpu 9."), "{msg}");
                 // The host named is the one the params carry: the refusal
@@ -1830,13 +2035,33 @@ mod tests {
             "starting and stopping two workers on a two-slot pool did not finish",
             || async {
                 let rungs = two_rungs();
-                for (policy, expect) in [(EncodePolicy::AllGpus, vec![2usize, 2]), (EncodePolicy::PerRung, vec![1, 1])] {
-                    let params = params_with_pool(&rungs, Arc::new(GpuPool::software(2, 1)), policy, VideoCodec::H264);
+                for (policy, expect) in [
+                    (EncodePolicy::AllGpus, vec![2usize, 2]),
+                    (EncodePolicy::PerRung, vec![1, 1]),
+                ] {
+                    let params = params_with_pool(
+                        &rungs,
+                        Arc::new(GpuPool::software(2, 1)),
+                        policy,
+                        VideoCodec::H264,
+                    );
                     let ladder: Arc<Ladder<()>> = Arc::new(Ladder::new(&rungs, 2));
-                    let (mut workers, started) =
-                        spawn_workers(&params, &ctx(), &rungs, SHAPE, &ladder, unit(|_| Ok(UnitOutcome::Done(())))).await.unwrap();
+                    let (mut workers, started) = spawn_workers(
+                        &params,
+                        &ctx(),
+                        &rungs,
+                        SHAPE,
+                        &ladder,
+                        unit(|_| Ok(UnitOutcome::Done(()))),
+                    )
+                    .await
+                    .unwrap();
                     assert_eq!(started, 2, "{policy:?}");
-                    let counts: Vec<usize> = ladder.serving_workers.iter().map(|c| c.load(Ordering::Acquire)).collect();
+                    let counts: Vec<usize> = ladder
+                        .serving_workers
+                        .iter()
+                        .map(|c| c.load(Ordering::Acquire))
+                        .collect();
                     assert_eq!(counts, expect, "{policy:?}");
                     ladder.abort.abort();
                     while workers.join_next().await.is_some() {}
@@ -1850,8 +2075,14 @@ mod tests {
     /// An H.264 MP4 of `frames` test-pattern pictures, an IDR every `gop`.
     fn synth_source(frames: u64, gop: u32) -> Bytes {
         use crate::synth;
-        let cfg = synth::H264 { gop, ..synth::H264::new(64, 48, 25) };
-        let coded = synth::encode_h264(&cfg, (0..frames).map(|t| synth::test_pattern(64, 48, t, h26x::ChromaFormat::Yuv420)));
+        let cfg = synth::H264 {
+            gop,
+            ..synth::H264::new(64, 48, 25)
+        };
+        let coded = synth::encode_h264(
+            &cfg,
+            (0..frames).map(|t| synth::test_pattern(64, 48, t, h26x::ChromaFormat::Yuv420)),
+        );
         Bytes::from(synth::mp4(&coded, 64, 48, 25, None, None))
     }
 
@@ -1861,53 +2092,75 @@ mod tests {
 
     /// Run the decode of `plan` and collect every chunk every rung's queue
     /// receives. `None` when this build has no H.264 decoder to run.
-    fn decode_through_ladder(input: &Bytes, plan: DecodePlan, shape: LadderShape) -> Option<Vec<Handed>> {
-        let header = container::streaming::demux_streaming(input).ok()?.header().clone();
+    fn decode_through_ladder(
+        input: &Bytes,
+        plan: DecodePlan,
+        shape: LadderShape,
+    ) -> Option<Vec<Handed>> {
+        let header = container::streaming::demux_streaming(input)
+            .ok()?
+            .header()
+            .clone();
         let input = input.clone();
-        within(Duration::from_secs(60), "a ranged decode through the ladder did not finish", move || async move {
-            let rungs = two_rungs();
-            let mut params =
-                params_with_pool(&rungs, Arc::new(GpuPool::software(1, 1)), EncodePolicy::AllGpus, VideoCodec::H264);
-            params.input = input;
-            params.total_input_frames = header.info.total_frames;
-            params.header = header;
-            params.frame_rate = 25.0;
-            let ladder: Ladder<()> = Ladder::new(&rungs, shape.frames_per_chunk);
-            let mut decode = spawn_decode(&params, plan, &rungs, shape, &ladder);
-            let queues = ladder.queues.clone();
-            let consumer = tokio::spawn(async move {
-                let mut handed: Vec<Handed> = vec![Vec::new(); queues.len()];
-                loop {
-                    let mut idle = true;
-                    for (r, q) in queues.iter().enumerate() {
-                        while let Some(c) = q.try_pop() {
-                            idle = false;
-                            let frames = c.frames.iter().map(|f| (f.pts, f.data.clone())).collect();
-                            handed[r].push((c.segment_idx, c.lead_in, c.keep, c.is_final, frames));
+        within(
+            Duration::from_secs(60),
+            "a ranged decode through the ladder did not finish",
+            move || async move {
+                let rungs = two_rungs();
+                let mut params = params_with_pool(
+                    &rungs,
+                    Arc::new(GpuPool::software(1, 1)),
+                    EncodePolicy::AllGpus,
+                    VideoCodec::H264,
+                );
+                params.input = input;
+                params.total_input_frames = header.info.total_frames;
+                params.header = header;
+                params.frame_rate = 25.0;
+                let ladder: Ladder<()> = Ladder::new(&rungs, shape.frames_per_chunk);
+                let mut decode = spawn_decode(&params, plan, &rungs, shape, &ladder);
+                let queues = ladder.queues.clone();
+                let consumer = tokio::spawn(async move {
+                    let mut handed: Vec<Handed> = vec![Vec::new(); queues.len()];
+                    loop {
+                        let mut idle = true;
+                        for (r, q) in queues.iter().enumerate() {
+                            while let Some(c) = q.try_pop() {
+                                idle = false;
+                                let frames =
+                                    c.frames.iter().map(|f| (f.pts, f.data.clone())).collect();
+                                handed[r].push((
+                                    c.segment_idx,
+                                    c.lead_in,
+                                    c.keep,
+                                    c.is_final,
+                                    frames,
+                                ));
+                            }
+                        }
+                        if idle && queues.iter().all(|q| q.is_closed() && q.depth() == 0) {
+                            break;
+                        }
+                        if idle {
+                            tokio::time::sleep(Duration::from_millis(1)).await;
                         }
                     }
-                    if idle && queues.iter().all(|q| q.is_closed() && q.depth() == 0) {
-                        break;
+                    for h in &mut handed {
+                        h.sort_by_key(|c| c.0);
                     }
-                    if idle {
-                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    handed
+                });
+                while let Some(done) = decode.join_next().await {
+                    if let Err(e) = done.expect("decode worker join") {
+                        eprintln!("SKIP: no H.264 decoder in this build ({e:#})");
+                        ladder.abort.abort();
+                        let _ = consumer.await;
+                        return None;
                     }
                 }
-                for h in &mut handed {
-                    h.sort_by_key(|c| c.0);
-                }
-                handed
-            });
-            while let Some(done) = decode.join_next().await {
-                if let Err(e) = done.expect("decode worker join") {
-                    eprintln!("SKIP: no H.264 decoder in this build ({e:#})");
-                    ladder.abort.abort();
-                    let _ = consumer.await;
-                    return None;
-                }
-            }
-            Some(consumer.await.expect("consumer"))
-        })
+                Some(consumer.await.expect("consumer"))
+            },
+        )
     }
 
     /// Equal, or a readable account of the first difference.
@@ -1915,21 +2168,37 @@ mod tests {
     fn assert_same(split: &[Handed], whole: &[Handed]) {
         let shape = |h: &[Handed]| -> Vec<Vec<(usize, usize, usize, bool, Vec<u64>)>> {
             h.iter()
-                .map(|r| r.iter().map(|c| (c.0, c.1, c.2, c.3, c.4.iter().map(|f| f.0).collect())).collect())
+                .map(|r| {
+                    r.iter()
+                        .map(|c| (c.0, c.1, c.2, c.3, c.4.iter().map(|f| f.0).collect()))
+                        .collect()
+                })
                 .collect()
         };
-        assert_eq!(shape(split), shape(whole), "chunks (segment, lead-in, keep, final, pts) differ");
+        assert_eq!(
+            shape(split),
+            shape(whole),
+            "chunks (segment, lead-in, keep, final, pts) differ"
+        );
         for (r, (a, b)) in split.iter().zip(whole).enumerate() {
             for (ca, cb) in a.iter().zip(b) {
                 for (i, (fa, fb)) in ca.4.iter().zip(&cb.4).enumerate() {
-                    assert!(fa.1 == fb.1, "rung {r} chunk {} frame {i} (pts {}): pixels differ", ca.0, fa.0);
+                    assert!(
+                        fa.1 == fb.1,
+                        "rung {r} chunk {} frame {i} (pts {}): pixels differ",
+                        ca.0,
+                        fa.0
+                    );
                 }
             }
         }
     }
 
     fn whole_plan() -> DecodePlan {
-        DecodePlan { ranges: vec![DecodeRange::whole_source()], devices: vec![None] }
+        DecodePlan {
+            ranges: vec![DecodeRange::whole_source()],
+            devices: vec![None],
+        }
     }
 
     /// Cut fine and pulled by three workers at once, the source reaches the
@@ -1939,11 +2208,25 @@ mod tests {
     #[test]
     fn many_ranges_on_several_workers_hand_over_the_whole_decode() {
         let input = synth_source(120, 10);
-        let shape = LadderShape { frames_per_chunk: 10, overlap: 0 };
-        let ranges = crate::decode_pump::plan_decode_ranges(&input, "h264", 10, 8, 0).expect("splits");
+        let shape = LadderShape {
+            frames_per_chunk: 10,
+            overlap: 0,
+        };
+        let ranges =
+            crate::decode_pump::plan_decode_ranges(&input, "h264", 10, 8, 0).expect("splits");
         assert!(ranges.len() >= 6, "{ranges:?}");
-        let Some(whole) = decode_through_ladder(&input, whole_plan(), shape) else { return };
-        let split = decode_through_ladder(&input, DecodePlan { ranges, devices: vec![None; 3] }, shape).expect("ran whole");
+        let Some(whole) = decode_through_ladder(&input, whole_plan(), shape) else {
+            return;
+        };
+        let split = decode_through_ladder(
+            &input,
+            DecodePlan {
+                ranges,
+                devices: vec![None; 3],
+            },
+            shape,
+        )
+        .expect("ran whole");
         assert_eq!(whole[0].len(), 12);
         assert_same(&split, &whole);
     }
@@ -1955,16 +2238,33 @@ mod tests {
     #[test]
     fn ranges_carry_the_lead_in_a_whole_decode_gives_their_first_chunk() {
         let input = synth_source(160, 10);
-        let shape = LadderShape { frames_per_chunk: 20, overlap: 10 };
-        let ranges = crate::decode_pump::plan_decode_ranges(&input, "h264", 20, 8, 10).expect("splits");
+        let shape = LadderShape {
+            frames_per_chunk: 20,
+            overlap: 10,
+        };
+        let ranges =
+            crate::decode_pump::plan_decode_ranges(&input, "h264", 20, 8, 10).expect("splits");
         assert!(ranges.len() >= 4, "{ranges:?}");
         for r in &ranges[1..] {
             assert_eq!(r.lead_in, 10, "{r:?}");
             assert_eq!(r.decode_from_sample, r.start_sample - 10, "{r:?}");
         }
-        let Some(whole) = decode_through_ladder(&input, whole_plan(), shape) else { return };
-        let split = decode_through_ladder(&input, DecodePlan { ranges, devices: vec![None; 2] }, shape).expect("ran whole");
-        assert!(whole[0][1..].iter().all(|c| c.1 == 10), "a whole decode leads every chunk after the first in");
+        let Some(whole) = decode_through_ladder(&input, whole_plan(), shape) else {
+            return;
+        };
+        let split = decode_through_ladder(
+            &input,
+            DecodePlan {
+                ranges,
+                devices: vec![None; 2],
+            },
+            shape,
+        )
+        .expect("ran whole");
+        assert!(
+            whole[0][1..].iter().all(|c| c.1 == 10),
+            "a whole decode leads every chunk after the first in"
+        );
         assert_same(&split, &whole);
     }
 
@@ -1974,7 +2274,10 @@ mod tests {
     fn a_much_slower_card_does_not_decode_in_a_split() {
         let a380_a750 = SpeedBoard::new(speed::normalise_priors(vec![0.43, 1.0], vec![None, None]));
         assert_eq!(peers_at(&a380_a750, &[0, 1]), vec![1]);
-        let alike = SpeedBoard::new(speed::normalise_priors(vec![1.0, 0.9, 1.0], vec![None, None, None]));
+        let alike = SpeedBoard::new(speed::normalise_priors(
+            vec![1.0, 0.9, 1.0],
+            vec![None, None, None],
+        ));
         assert_eq!(peers_at(&alike, &[0, 1, 2]), vec![0, 1, 2]);
     }
 
@@ -1984,10 +2287,18 @@ mod tests {
     fn the_default_plan_cuts_several_ranges_per_card() {
         let input = synth_source(400, 10);
         let rungs = two_rungs();
-        let mut params = params_with_pool(&rungs, Arc::new(GpuPool::software(2, 1)), EncodePolicy::AllGpus, VideoCodec::H264);
+        let mut params = params_with_pool(
+            &rungs,
+            Arc::new(GpuPool::software(2, 1)),
+            EncodePolicy::AllGpus,
+            VideoCodec::H264,
+        );
         params.input = input;
         params.total_input_frames = 400;
-        let shape = LadderShape { frames_per_chunk: 10, overlap: 0 };
+        let shape = LadderShape {
+            frames_per_chunk: 10,
+            overlap: 0,
+        };
         params.decode = crate::spec::DecodePolicy::Ranges(3);
         let plan = plan_decode(&params, shape, 2);
         assert_eq!(plan.ranges.len(), 3, "{plan:?}");

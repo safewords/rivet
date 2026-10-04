@@ -74,7 +74,10 @@ pub fn share(parallelism: usize, jobs: usize) -> usize {
 /// The threads one job's encoder gets: the machine shared by the jobs
 /// running now, or by the [reserved](reserve_jobs) count when that is more.
 pub fn per_job() -> usize {
-    share(parallelism(), sharing_jobs(running_jobs(), RESERVED.load(Ordering::SeqCst)))
+    share(
+        parallelism(),
+        sharing_jobs(running_jobs(), RESERVED.load(Ordering::SeqCst)),
+    )
 }
 
 #[cfg(test)]
@@ -103,9 +106,21 @@ mod tests {
         // is the machine over the jobs running when it asks, recomputed as
         // they start and end.
         let reserved = 0;
-        assert_eq!(share(32, sharing_jobs(1, reserved)), 32, "a job alone has the machine");
-        assert_eq!(share(32, sharing_jobs(4, reserved)), 8, "four at once: a quarter each");
-        assert_eq!(share(32, sharing_jobs(2, reserved)), 16, "two of them ended: half each");
+        assert_eq!(
+            share(32, sharing_jobs(1, reserved)),
+            32,
+            "a job alone has the machine"
+        );
+        assert_eq!(
+            share(32, sharing_jobs(4, reserved)),
+            8,
+            "four at once: a quarter each"
+        );
+        assert_eq!(
+            share(32, sharing_jobs(2, reserved)),
+            16,
+            "two of them ended: half each"
+        );
         assert_eq!(share(32, sharing_jobs(64, reserved)), 1, "never below one");
         // However many run, those asking together fit the machine.
         for running in 1..=32 {

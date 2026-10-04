@@ -102,7 +102,7 @@ pub(super) struct NvEncLockBitstream {
     pub(super) reserved1: [u32; 219], // offset 132
     pub(super) reserved2: [*mut c_void; 63], // offset 1008
     pub(super) reserved_internal: [u32; 8], // offset 1512
-                    // total size: 1544 bytes
+                               // total size: 1544 bytes
 }
 
 /// `NV_ENC_PIC_PARAMS` — SDK 13.0 layout

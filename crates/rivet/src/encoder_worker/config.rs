@@ -1,11 +1,11 @@
 //! Worker configuration + output types.
 
+use super::RungCodecInvariant;
+use codec::frame::{ColorMetadata, PixelFormat, VideoCodec};
+use container::cmaf::SegmentInfo;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
-use codec::frame::{ColorMetadata, PixelFormat, VideoCodec};
-use container::cmaf::SegmentInfo;
-use super::RungCodecInvariant;
 
 #[derive(Clone)]
 pub struct EncoderWorkerConfig {

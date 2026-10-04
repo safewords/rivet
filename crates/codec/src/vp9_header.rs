@@ -125,7 +125,11 @@ fn color_config(b: &mut Bits, profile: u8) -> Option<ColorConfig> {
         }
         (0, 0)
     };
-    Some(ColorConfig { bit_depth, subsampling, rgb })
+    Some(ColorConfig {
+        bit_depth,
+        subsampling,
+        rgb,
+    })
 }
 
 /// `frame_size()` (§6.2.3): `frame_width_minus_1`, `frame_height_minus_1`.
@@ -139,7 +143,10 @@ fn frame_size(b: &mut Bits) -> Option<FrameSize> {
 /// are not a VP9 frame header (wrong `frame_marker`, a key or intra-only
 /// frame without the sync code, too short).
 pub fn peek(frame: &[u8]) -> Option<FrameHeader> {
-    let mut b = Bits { data: frame, pos: 0 };
+    let mut b = Bits {
+        data: frame,
+        pos: 0,
+    };
     if b.f(2)? != 2 {
         return None; // frame_marker
     }
@@ -176,7 +183,11 @@ pub fn peek(frame: &[u8]) -> Option<FrameHeader> {
             let color = if profile > 0 {
                 color_config(&mut b, profile)?
             } else {
-                ColorConfig { bit_depth: 8, subsampling: (1, 1), rgb: false }
+                ColorConfig {
+                    bit_depth: 8,
+                    subsampling: (1, 1),
+                    rgb: false,
+                }
             };
             let refresh = b.f(8)? as u8;
             let size = frame_size(&mut b)?;
@@ -234,7 +245,17 @@ pub fn peek(frame: &[u8]) -> Option<FrameHeader> {
         }
     }
     let segmentation = b.f(1)? == 1;
-    Some(FrameHeader::Coded(CodedFrame { profile, key, intra_only, show, refresh, size, error_resilient, segmentation, color }))
+    Some(FrameHeader::Coded(CodedFrame {
+        profile,
+        key,
+        intra_only,
+        show,
+        refresh,
+        size,
+        error_resilient,
+        segmentation,
+        color,
+    }))
 }
 
 /// `render_size()` (§6.2.4), read and discarded.
@@ -250,17 +271,22 @@ fn render_size(b: &mut Bits) -> Option<()> {
 /// random-access point (§B.3: the frames of a superframe decode in order).
 pub fn packet_is_keyframe(packet: &[u8]) -> bool {
     let frames = vp9::superframe::split(packet);
-    matches!(frames.first().and_then(|f| peek(f)), Some(FrameHeader::Coded(CodedFrame { key: true, .. })))
+    matches!(
+        frames.first().and_then(|f| peek(f)),
+        Some(FrameHeader::Coded(CodedFrame { key: true, .. }))
+    )
 }
 
 /// Whether a packet shows a picture: some frame in it has `show_frame = 1`
 /// or is a `show_existing_frame`.
 pub fn packet_shows(packet: &[u8]) -> bool {
-    vp9::superframe::split(packet).iter().any(|f| match peek(f) {
-        Some(FrameHeader::ShowExisting { .. }) => true,
-        Some(FrameHeader::Coded(c)) => c.show,
-        None => false,
-    })
+    vp9::superframe::split(packet)
+        .iter()
+        .any(|f| match peek(f) {
+            Some(FrameHeader::ShowExisting { .. }) => true,
+            Some(FrameHeader::Coded(c)) => c.show,
+            None => false,
+        })
 }
 
 /// The sizes of the eight reference slots, followed frame by frame, so an
@@ -276,7 +302,9 @@ impl RefSizes {
     /// `show_existing_frame` (which decodes nothing) or a size taken from a
     /// slot nothing has filled yet.
     pub fn apply(&mut self, header: &FrameHeader) -> Option<(u32, u32)> {
-        let FrameHeader::Coded(c) = header else { return None };
+        let FrameHeader::Coded(c) = header else {
+            return None;
+        };
         let size = match c.size {
             FrameSize::Explicit { width, height } => Some((width, height)),
             FrameSize::FromRef { slot } => self.slots[usize::from(slot)],
@@ -309,13 +337,23 @@ mod tests {
         let frame = vp9::Frame::new(w, h, 8, vp9::ChromaFormat::Yuv420);
         let key = enc.encode(&frame).expect("encode");
         let inter = enc.encode(&frame).expect("encode");
-        let FrameHeader::Coded(k) = peek(&key).expect("key header") else { panic!("not coded") };
+        let FrameHeader::Coded(k) = peek(&key).expect("key header") else {
+            panic!("not coded")
+        };
         assert!(k.key && k.show && !k.intra_only);
         assert_eq!(k.refresh, 0xFF);
-        assert_eq!(k.size, FrameSize::Explicit { width: w, height: h });
+        assert_eq!(
+            k.size,
+            FrameSize::Explicit {
+                width: w,
+                height: h
+            }
+        );
         assert!(packet_is_keyframe(&key) && packet_shows(&key));
 
-        let FrameHeader::Coded(p) = peek(&inter).expect("inter header") else { panic!("not coded") };
+        let FrameHeader::Coded(p) = peek(&inter).expect("inter header") else {
+            panic!("not coded")
+        };
         assert!(!p.key && p.show);
         assert!(!packet_is_keyframe(&inter));
         let mut refs = RefSizes::default();
@@ -334,7 +372,7 @@ mod tests {
             let mut n = 0usize;
             for &(v, len) in bits {
                 for i in (0..len).rev() {
-                    if n % 8 == 0 {
+                    if n.is_multiple_of(8) {
                         out.push(0);
                     }
                     if (v >> i) & 1 == 1 {
@@ -354,6 +392,7 @@ mod tests {
         // + sharpness, delta_enabled = 1, delta_update = 1 with one ref delta
         // (su(6)) updated, base_q_idx, one delta_q coded (su(4)), and
         // segmentation_enabled = 1.
+        #[rustfmt::skip]
         let key = pack(&[
             (2, 2), (0, 1), (0, 1), (0, 1), (0, 1), (1, 1), (0, 1), (SYNC_CODE, 24), (2, 3), (0, 1), (351, 16), (287, 16),
             (0, 1), (0, 2), (0, 2), (0, 9), (1, 1), (1, 1), (1, 1), (0b1000001, 7), (0, 1), (0, 1), (0, 1), (0, 1),
@@ -367,14 +406,22 @@ mod tests {
                 intra_only: false,
                 show: true,
                 refresh: 0xFF,
-                size: FrameSize::Explicit { width: 352, height: 288 },
+                size: FrameSize::Explicit {
+                    width: 352,
+                    height: 288
+                },
                 error_resilient: false,
                 segmentation: true,
-                color: Some(ColorConfig { bit_depth: 8, subsampling: (1, 1), rgb: false }),
+                color: Some(ColorConfig {
+                    bit_depth: 8,
+                    subsampling: (1, 1),
+                    rgb: false
+                }),
             }))
         );
         // Hidden inter frame: show_frame 0, intra_only 0, reset_frame_context,
         // refresh 0b100, three refs (idx, sign), found_ref on the second.
+        #[rustfmt::skip]
         let hidden = pack(&[
             (2, 2), (0, 1), (0, 1), (0, 1), (1, 1), (0, 1), (0, 1),
             (0, 1), (0, 2), (0b100, 8),
@@ -407,14 +454,34 @@ mod tests {
         // Profile 3: low=1, high=1, reserved_zero, then as before with a
         // 12-bit 4:4:4 colour config (ten_or_twelve_bit, cs, range, ss_x,
         // ss_y, reserved).
+        #[rustfmt::skip]
         let p3 = pack(&[
             (2, 2), (1, 1), (1, 1), (0, 1), (0, 1), (0, 1), (1, 1), (0, 1),
             (SYNC_CODE, 24), (1, 1), (2, 3), (0, 1), (0, 1), (0, 1), (0, 1),
             (63, 16), (31, 16),
         ]);
-        let Some(FrameHeader::Coded(c)) = peek(&p3) else { panic!("p3") };
-        assert_eq!((c.profile, c.key, c.size), (3, true, FrameSize::Explicit { width: 64, height: 32 }));
-        assert_eq!(c.color, Some(ColorConfig { bit_depth: 12, subsampling: (0, 0), rgb: false }));
+        let Some(FrameHeader::Coded(c)) = peek(&p3) else {
+            panic!("p3")
+        };
+        assert_eq!(
+            (c.profile, c.key, c.size),
+            (
+                3,
+                true,
+                FrameSize::Explicit {
+                    width: 64,
+                    height: 32
+                }
+            )
+        );
+        assert_eq!(
+            c.color,
+            Some(ColorConfig {
+                bit_depth: 12,
+                subsampling: (0, 0),
+                rgb: false
+            })
+        );
 
         let mut refs = RefSizes::default();
         assert_eq!(refs.apply(&peek(&key).unwrap()), Some((352, 288)));
@@ -428,6 +495,9 @@ mod tests {
         assert_eq!(peek(&[]), None);
         assert_eq!(peek(&[0x00, 0x00]), None);
         // A key frame header whose sync code is wrong.
-        assert_eq!(peek(&[0x82, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), None);
+        assert_eq!(
+            peek(&[0x82, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+            None
+        );
     }
 }

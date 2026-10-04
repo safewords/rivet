@@ -25,7 +25,9 @@ const H: u32 = 360;
 const FRAMES: u64 = 60;
 
 fn amd_present() -> bool {
-    codec::gpu::detect_gpus().iter().any(|g| g.vendor == codec::gpu::GpuVendor::Amd)
+    codec::gpu::detect_gpus()
+        .iter()
+        .any(|g| g.vendor == codec::gpu::GpuVendor::Amd)
 }
 
 struct Clip {
@@ -50,13 +52,38 @@ fn demux_label(codec: &str) -> &str {
 
 const CLIPS: &[Clip] = &[
     // No B-frames: decode order is display order, no DPB reordering.
-    Clip { name: "h264_8bit_nob", codec: "h264", ten_bit: false, bframes: 0 },
+    Clip {
+        name: "h264_8bit_nob",
+        codec: "h264",
+        ten_bit: false,
+        bframes: 0,
+    },
     // B-frames on, so display order != decode order and the decoder's
     // reordering is exercised.
-    Clip { name: "h264_8bit", codec: "h264", ten_bit: false, bframes: 3 },
-    Clip { name: "hevc_8bit", codec: "hevc", ten_bit: false, bframes: 3 },
-    Clip { name: "hevc_main10", codec: "hevc", ten_bit: true, bframes: 3 },
-    Clip { name: "av1_8bit", codec: "av1", ten_bit: false, bframes: 0 },
+    Clip {
+        name: "h264_8bit",
+        codec: "h264",
+        ten_bit: false,
+        bframes: 3,
+    },
+    Clip {
+        name: "hevc_8bit",
+        codec: "hevc",
+        ten_bit: false,
+        bframes: 3,
+    },
+    Clip {
+        name: "hevc_main10",
+        codec: "hevc",
+        ten_bit: true,
+        bframes: 3,
+    },
+    Clip {
+        name: "av1_8bit",
+        codec: "av1",
+        ten_bit: false,
+        bframes: 0,
+    },
 ];
 
 /// Frame `t` of a moving test pattern: a diagonal ramp scrolling one sample
@@ -67,7 +94,11 @@ fn pattern(t: u64, ten_bit: bool) -> VideoFrame {
     for y in 0..h {
         for x in 0..w {
             let in_box = x.wrapping_sub(t as usize * 5) % w < 80 && (140..220).contains(&y);
-            planes.push(if in_box { 235 } else { (16 + (x + 2 * y + t as usize) % 220) as u16 });
+            planes.push(if in_box {
+                235
+            } else {
+                (16 + (x + 2 * y + t as usize) % 220) as u16
+            });
         }
     }
     for c in 0..2 {
@@ -78,9 +109,18 @@ fn pattern(t: u64, ten_bit: bool) -> VideoFrame {
         }
     }
     let (data, format) = if ten_bit {
-        (planes.iter().flat_map(|v| (v << 2).to_le_bytes()).collect::<Vec<u8>>(), PixelFormat::Yuv420p10le)
+        (
+            planes
+                .iter()
+                .flat_map(|v| (v << 2).to_le_bytes())
+                .collect::<Vec<u8>>(),
+            PixelFormat::Yuv420p10le,
+        )
     } else {
-        (planes.iter().map(|&v| v as u8).collect(), PixelFormat::Yuv420p)
+        (
+            planes.iter().map(|&v| v as u8).collect(),
+            PixelFormat::Yuv420p,
+        )
     };
     VideoFrame::new(Bytes::from(data), W, H, format, ColorSpace::Bt709, t)
 }
@@ -100,11 +140,19 @@ fn make_clip(clip: &Clip) -> Vec<u8> {
         keyframe_interval: 30,
         quality: 20,
         threads: 0,
-        pixel_format: if clip.ten_bit { PixelFormat::Yuv420p10le } else { PixelFormat::Yuv420p },
-        overrides: EncodeOverrides { bframes: Some(clip.bframes), ..Default::default() },
+        pixel_format: if clip.ten_bit {
+            PixelFormat::Yuv420p10le
+        } else {
+            PixelFormat::Yuv420p
+        },
+        overrides: EncodeOverrides {
+            bframes: Some(clip.bframes),
+            ..Default::default()
+        },
         ..Default::default()
     };
-    let mut enc = select_encoder(cfg, Some(backend)).unwrap_or_else(|e| panic!("{}: the encoder: {e:#}", clip.name));
+    let mut enc = select_encoder(cfg, Some(backend))
+        .unwrap_or_else(|e| panic!("{}: the encoder: {e:#}", clip.name));
     let mut mux = container::mux::Av1Mp4Muxer::new_with_codec(W, H, 30.0, codec).expect("muxer");
     for t in 0..FRAMES {
         enc.send_frame(&pattern(t, clip.ten_bit)).expect("encode");
@@ -154,7 +202,10 @@ fn describe_diff(a: &[u8], b: &[u8], w: usize, h: usize, ten_bit: bool) -> Strin
             se += ((x - y) * (x - y)) as f64;
         }
         let mse = se / (n / 2) as f64;
-        format!("luma max|diff|={max} psnr={:.2} dB", 10.0 * (1023f64 * 1023.0 / mse.max(1e-9)).log10())
+        format!(
+            "luma max|diff|={max} psnr={:.2} dB",
+            10.0 * (1023f64 * 1023.0 / mse.max(1e-9)).log10()
+        )
     } else {
         for i in 0..n {
             let d = a[i] as i64 - b[i] as i64;
@@ -162,7 +213,10 @@ fn describe_diff(a: &[u8], b: &[u8], w: usize, h: usize, ten_bit: bool) -> Strin
             se += (d * d) as f64;
         }
         let mse = se / n as f64;
-        format!("luma max|diff|={max} psnr={:.2} dB", 10.0 * (255f64 * 255.0 / mse.max(1e-9)).log10())
+        format!(
+            "luma max|diff|={max} psnr={:.2} dB",
+            10.0 * (255f64 * 255.0 / mse.max(1e-9)).log10()
+        )
     }
 }
 
@@ -188,10 +242,18 @@ fn amf_decode_is_bit_exact_against_the_software_decoders() {
         .filter(|v| !v.is_empty())
         .map(|v| v.split(',').map(|s| s.trim().to_string()).collect());
     let mut verified = Vec::new();
-    for clip in CLIPS.iter().filter(|c| only.as_ref().is_none_or(|o| o.iter().any(|n| c.name.contains(n.as_str())))) {
+    for clip in CLIPS.iter().filter(|c| {
+        only.as_ref()
+            .is_none_or(|o| o.iter().any(|n| c.name.contains(n.as_str())))
+    }) {
         let data = make_clip(clip);
         let demuxed = container::demux::demux(&data).expect("demux");
-        assert_eq!(demuxed.codec.to_ascii_lowercase(), demux_label(clip.codec), "{}: demuxed codec", clip.name);
+        assert_eq!(
+            demuxed.codec.to_ascii_lowercase(),
+            demux_label(clip.codec),
+            "{}: demuxed codec",
+            clip.name
+        );
         let info: StreamInfo = demuxed.info.clone();
         let ten_bit = clip.ten_bit;
         let (w, h) = (info.width as usize, info.height as usize);
@@ -210,23 +272,43 @@ fn amf_decode_is_bit_exact_against_the_software_decoders() {
         // cleanly, and consistently with the probe.
         let amf = codec::decode::amf_dec::AmfDecoder::new(info.clone(), 0);
         if !caps.contains(&clip.codec) {
-            let err = amf.err().map(|e| format!("{e:#}")).unwrap_or_else(|| "(constructed!)".into());
-            eprintln!("  {}: this GPU has no AMF {} decoder; AmfDecoder::new -> {err}", clip.name, clip.codec);
-            assert!(err.contains("AMF"), "{}: refusal names AMF: {err}", clip.name);
+            let err = amf
+                .err()
+                .map(|e| format!("{e:#}"))
+                .unwrap_or_else(|| "(constructed!)".into());
+            eprintln!(
+                "  {}: this GPU has no AMF {} decoder; AmfDecoder::new -> {err}",
+                clip.name, clip.codec
+            );
+            assert!(
+                err.contains("AMF"),
+                "{}: refusal names AMF: {err}",
+                clip.name
+            );
             continue;
         }
         let amf = amf.unwrap_or_else(|e| panic!("{}: AmfDecoder::new: {e:#}", clip.name));
-        let frames =
-            run_decoder(Box::new(amf), &demuxed.samples).unwrap_or_else(|e| panic!("{}: AMF decode: {e:#}", clip.name));
+        let frames = run_decoder(Box::new(amf), &demuxed.samples)
+            .unwrap_or_else(|e| panic!("{}: AMF decode: {e:#}", clip.name));
 
         let reference = reference_frames(clip, &info, &demuxed.samples);
-        assert_eq!(reference.len() as u64, FRAMES, "{}: the software decoder's frame count", clip.name);
+        assert_eq!(
+            reference.len() as u64,
+            FRAMES,
+            "{}: the software decoder's frame count",
+            clip.name
+        );
         if frames.len() != reference.len() {
             // Which reference frames came back, in which order — tells a
             // dropped head from a lost tail from a reorder bug.
             let matches: Vec<String> = frames
                 .iter()
-                .map(|f| reference.iter().position(|r| r.data[..] == f.data[..]).map_or("?".into(), |i| i.to_string()))
+                .map(|f| {
+                    reference
+                        .iter()
+                        .position(|r| r.data[..] == f.data[..])
+                        .map_or("?".into(), |i| i.to_string())
+                })
                 .collect();
             panic!(
                 "{}: {} frames from AMF vs {} from the software decoder; AMF frames matched reference indices [{}]",
@@ -242,7 +324,11 @@ fn amf_decode_is_bit_exact_against_the_software_decoders() {
             assert_eq!(f.pts, i as u64, "{}: frame {i} pts", clip.name);
             assert_eq!(
                 f.format,
-                if ten_bit { PixelFormat::Yuv420p10le } else { PixelFormat::Yuv420p },
+                if ten_bit {
+                    PixelFormat::Yuv420p10le
+                } else {
+                    PixelFormat::Yuv420p
+                },
                 "{}: frame {i} format",
                 clip.name
             );
@@ -255,11 +341,18 @@ fn amf_decode_is_bit_exact_against_the_software_decoders() {
                 );
             }
         }
-        eprintln!("  {}: {} frames bit-exact vs the software decoder", clip.name, frames.len());
+        eprintln!(
+            "  {}: {} frames bit-exact vs the software decoder",
+            clip.name,
+            frames.len()
+        );
         verified.push(clip.name);
     }
     eprintln!("AMF decode verified bit-exact on this machine: {verified:?}");
     if only.is_none() {
-        assert!(verified.contains(&"h264_8bit") && verified.contains(&"hevc_8bit"), "{verified:?}");
+        assert!(
+            verified.contains(&"h264_8bit") && verified.contains(&"hevc_8bit"),
+            "{verified:?}"
+        );
     }
 }

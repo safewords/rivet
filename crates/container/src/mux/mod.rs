@@ -11,27 +11,27 @@ use tempfile::NamedTempFile;
 
 use crate::AudioInfo;
 
-mod boxes;
-mod video_track;
 mod audio_track;
-mod subtitle_track;
-mod sample_table;
-mod mdat;
+mod boxes;
 mod lossless;
+mod mdat;
+mod sample_table;
+mod subtitle_track;
 #[cfg(test)]
 mod tests;
+mod video_track;
 
 // Re-exports for external crate callers that import from `container::mux::*`.
-pub(crate) use boxes::{BoxBuilder, write_unity_matrix, extract_sequence_header};
-pub(crate) use boxes::build_edts;
-pub(crate) use video_track::{build_av01, build_avc1, build_hvc1, build_avcc, build_hvcc};
-pub(crate) use video_track::{build_mp4v, build_prores_entry, build_vpx_entry, transfer_to_h273};
 pub(crate) use audio_track::build_audio_stsd;
 pub use audio_track::{
-    MP3_CODEC_STRING, dac3_body_from_sync, ddts_body_from_sync, dec3_body_from_programme, dec3_body_from_sync,
-    eac3_config_from_access_unit, mp3_object_type,
+    MP3_CODEC_STRING, dac3_body_from_sync, ddts_body_from_sync, dec3_body_from_programme,
+    dec3_body_from_sync, eac3_config_from_access_unit, mp3_object_type,
 };
+pub(crate) use boxes::build_edts;
+pub(crate) use boxes::{BoxBuilder, extract_sequence_header, write_unity_matrix};
 pub use lossless::{write_audio_mp4, write_native_flac};
+pub(crate) use video_track::{build_av01, build_avc1, build_avcc, build_hvc1, build_hvcc};
+pub(crate) use video_track::{build_mp4v, build_prores_entry, build_vpx_entry, transfer_to_h273};
 
 // Internal imports used by impl Av1Mp4Muxer below.
 use boxes::{build_ftyp, build_moov_any};
@@ -301,7 +301,11 @@ impl Av1Mp4Muxer {
     /// before the first frame, written as an empty edit (`elst`) on the video
     /// track — a source's own late start, carried through. `0` writes nothing.
     pub fn set_video_delay(&mut self, delay: u64, timescale: u32) -> &mut Self {
-        self.video_delay = if delay == 0 || timescale == 0 { (0, 1) } else { (delay, timescale) };
+        self.video_delay = if delay == 0 || timescale == 0 {
+            (0, 1)
+        } else {
+            (delay, timescale)
+        };
         self
     }
 
@@ -527,19 +531,28 @@ impl Av1Mp4Muxer {
             }
             AudioCodecKind::Ac3 => {
                 if !(1..=6).contains(&info.channels) {
-                    anyhow::bail!("audio mux: AC-3 channel count must be 1..=6 (mono..5.1); got {}", info.channels);
+                    anyhow::bail!(
+                        "audio mux: AC-3 channel count must be 1..=6 (mono..5.1); got {}",
+                        info.channels
+                    );
                 }
             }
             // E-AC-3 past 5.1 through dependent substreams (7.1: a 2/0 one
             // on the back surrounds), which the `dec3` names.
             AudioCodecKind::Eac3 => {
                 if !(1..=8).contains(&info.channels) {
-                    anyhow::bail!("audio mux: E-AC-3 channel count must be 1..=8 (mono..7.1); got {}", info.channels);
+                    anyhow::bail!(
+                        "audio mux: E-AC-3 channel count must be 1..=8 (mono..7.1); got {}",
+                        info.channels
+                    );
                 }
             }
             AudioCodecKind::Mp3 => {
                 if !(1..=2).contains(&info.channels) {
-                    anyhow::bail!("audio mux: MP3 carries 1 or 2 channels; got {}", info.channels);
+                    anyhow::bail!(
+                        "audio mux: MP3 carries 1 or 2 channels; got {}",
+                        info.channels
+                    );
                 }
             }
             AudioCodecKind::Flac | AudioCodecKind::Alac => {
@@ -889,7 +902,11 @@ impl Av1Mp4Muxer {
             &vec![frame_duration; self.sample_pts.len()],
         )
         .context("placing video samples by presentation order")?;
-        let ctts: Option<&[i32]> = if is_reordered(&offsets) { Some(&offsets) } else { None };
+        let ctts: Option<&[i32]> = if is_reordered(&offsets) {
+            Some(&offsets)
+        } else {
+            None
+        };
 
         // Build the visual sample entry up front (codec-dispatched). For AV1
         // it embeds the sequence-header OBU in av1C; for H.264/H.265 it embeds
@@ -905,7 +922,10 @@ impl Av1Mp4Muxer {
                 build_av01(self.width, self.height, &av1_obus, &self.color_metadata)
             }
             VideoCodec::H264 => {
-                let w = self.nal_writer.as_ref().context("H.264 nal writer missing")?;
+                let w = self
+                    .nal_writer
+                    .as_ref()
+                    .context("H.264 nal writer missing")?;
                 if !w.has_param_sets() {
                     anyhow::bail!("H.264 mux: no SPS/PPS captured from the encoder bitstream");
                 }
@@ -917,7 +937,10 @@ impl Av1Mp4Muxer {
                 build_avc1(self.width, self.height, &avcc, &self.color_metadata, fourcc)
             }
             VideoCodec::H265 => {
-                let w = self.nal_writer.as_ref().context("H.265 nal writer missing")?;
+                let w = self
+                    .nal_writer
+                    .as_ref()
+                    .context("H.265 nal writer missing")?;
                 if !w.has_param_sets() {
                     anyhow::bail!("H.265 mux: no VPS/SPS/PPS captured from the encoder bitstream");
                 }
@@ -928,7 +951,10 @@ impl Av1Mp4Muxer {
                 build_hvc1(self.width, self.height, &hvcc, &self.color_metadata, fourcc)
             }
             VideoCodec::Vp8 | VideoCodec::Vp9 => {
-                let first = self.first_packet_header.as_deref().context("first packet missing")?;
+                let first = self
+                    .first_packet_header
+                    .as_deref()
+                    .context("first packet missing")?;
                 let vp9 = self.codec == VideoCodec::Vp9;
                 let config = crate::vpx::VpxConfig::from_stream(
                     vp9,
@@ -939,10 +965,19 @@ impl Av1Mp4Muxer {
                     &self.color_metadata,
                 );
                 let fourcc = if vp9 { b"vp09" } else { b"vp08" };
-                build_vpx_entry(fourcc, self.width, self.height, &config.vpcc_box(), &self.color_metadata)
+                build_vpx_entry(
+                    fourcc,
+                    self.width,
+                    self.height,
+                    &config.vpcc_box(),
+                    &self.color_metadata,
+                )
             }
             VideoCodec::Mpeg2 => {
-                let first = self.first_packet_header.as_deref().context("first packet missing")?;
+                let first = self
+                    .first_packet_header
+                    .as_deref()
+                    .context("first packet missing")?;
                 let dsi = crate::mpeg_es::mpeg2_config(first)
                     .context("MPEG-2 mux: the first picture carries no sequence header")?;
                 // Object type 0x61: MPEG-2 Video Main Profile (ISO/IEC 14496-1
@@ -950,7 +985,10 @@ impl Av1Mp4Muxer {
                 build_mp4v(self.width, self.height, 0x61, dsi, &self.color_metadata)
             }
             VideoCodec::Mpeg4 => {
-                let first = self.first_packet_header.as_deref().context("first packet missing")?;
+                let first = self
+                    .first_packet_header
+                    .as_deref()
+                    .context("first packet missing")?;
                 let dsi = crate::mpeg_es::mpeg4_config(first)
                     .context("MPEG-4 mux: the first VOP carries no video object layer header")?;
                 build_mp4v(self.width, self.height, 0x20, dsi, &self.color_metadata)
@@ -1024,8 +1062,8 @@ impl Av1Mp4Muxer {
         let subtitle_duration_movie: u64 = subtitle_plans
             .iter()
             .map(|p| {
-                (p.total_duration() as u128 * movie_timescale as u128
-                    / p.timescale.max(1) as u128) as u64
+                (p.total_duration() as u128 * movie_timescale as u128 / p.timescale.max(1) as u128)
+                    as u64
             })
             .max()
             .unwrap_or(0);
@@ -1034,29 +1072,46 @@ impl Av1Mp4Muxer {
         // samples to hide (priming, preroll) or a late start. Each track header
         // then states its presentation length, and the movie the longest. With
         // neither, nothing here changes a byte.
-        let video_delay_movie =
-            if self.video_delay.0 == 0 { 0 } else { rescale_round(self.video_delay.0, movie_timescale, self.video_delay.1) };
-        let video_edts = (video_delay_movie > 0).then(|| build_edts(video_delay_movie, 0, total_video_duration));
-        let video_edit: Option<(&[u8], u64)> =
-            video_edts.as_deref().map(|edts| (edts, video_delay_movie + total_video_duration));
+        let video_delay_movie = if self.video_delay.0 == 0 {
+            0
+        } else {
+            rescale_round(self.video_delay.0, movie_timescale, self.video_delay.1)
+        };
+        let video_edts =
+            (video_delay_movie > 0).then(|| build_edts(video_delay_movie, 0, total_video_duration));
+        let video_edit: Option<(&[u8], u64)> = video_edts
+            .as_deref()
+            .map(|edts| (edts, video_delay_movie + total_video_duration));
         let audio_edts: Option<(Vec<u8>, u64)> = match audio_plan.as_ref() {
             Some(plan) if !self.audio_edit.is_identity() => {
                 let e = self.audio_edit;
                 let ts = plan.info.timescale;
                 let delay = rescale_round(e.delay, movie_timescale, ts);
-                let presented = e.duration.unwrap_or(plan.total_duration_in_own_ts.saturating_sub(e.media_time));
+                let presented = e
+                    .duration
+                    .unwrap_or(plan.total_duration_in_own_ts.saturating_sub(e.media_time));
                 let presented_movie = rescale_round(presented, movie_timescale, ts);
-                Some((build_edts(delay, e.media_time, presented_movie), delay + presented_movie))
+                Some((
+                    build_edts(delay, e.media_time, presented_movie),
+                    delay + presented_movie,
+                ))
             }
             _ => None,
         };
-        let audio_edit: Option<(&[u8], u64)> = audio_edts.as_ref().map(|(edts, d)| (edts.as_slice(), *d));
+        let audio_edit: Option<(&[u8], u64)> =
+            audio_edts.as_ref().map(|(edts, d)| (edts.as_slice(), *d));
 
         let video_duration_movie: u64 = video_edit.map_or(total_video_duration, |(_, d)| d); // video uses 90 kHz == movie
-        let audio_duration_movie: u64 =
-            audio_edit.map_or(audio_plan.as_ref().map(|p| p.total_duration_in_movie_ts).unwrap_or(0), |(_, d)| d);
-        let movie_duration: u64 =
-            video_duration_movie.max(audio_duration_movie).max(subtitle_duration_movie);
+        let audio_duration_movie: u64 = audio_edit.map_or(
+            audio_plan
+                .as_ref()
+                .map(|p| p.total_duration_in_movie_ts)
+                .unwrap_or(0),
+            |(_, d)| d,
+        );
+        let movie_duration: u64 = video_duration_movie
+            .max(audio_duration_movie)
+            .max(subtitle_duration_movie);
 
         // Video-side mdat byte total stays in self; audio side is in plan.
         let video_payload_bytes = self.mdat_payload_bytes;
@@ -1064,8 +1119,7 @@ impl Av1Mp4Muxer {
             .as_ref()
             .map(|p| p.sample_sizes.iter().map(|&s| s as u64).sum::<u64>())
             .unwrap_or(0);
-        let subtitle_payload_bytes: u64 =
-            subtitle_plans.iter().map(|p| p.payload_bytes()).sum();
+        let subtitle_payload_bytes: u64 = subtitle_plans.iter().map(|p| p.payload_bytes()).sum();
         let mdat_payload_total = video_payload_bytes
             .checked_add(audio_payload_bytes)
             .context("combined mdat payload overflow")?
@@ -1331,7 +1385,8 @@ impl Av1Mp4Muxer {
             let mut written: u64 = 0;
             for p in &subtitle_plans {
                 for s in &p.samples {
-                    out.write_all(s).context("writing subtitle sample into mdat")?;
+                    out.write_all(s)
+                        .context("writing subtitle sample into mdat")?;
                     written += s.len() as u64;
                 }
             }

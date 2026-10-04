@@ -335,7 +335,8 @@ impl Eac3Programme {
     /// Output channels: the independent substream's and the locations the
     /// dependent ones add (a pair counting two). 8 for 7.1.
     pub fn channels(&self) -> u16 {
-        channel_count(self.independent.acmod, self.independent.lfeon) + chan_loc_channels(self.chan_loc())
+        channel_count(self.independent.acmod, self.independent.lfeon)
+            + chan_loc_channels(self.chan_loc())
     }
 }
 
@@ -343,7 +344,10 @@ impl Eac3Programme {
 /// Lsd/Rsd, Lw/Rw, Lvh/Rvh: bits 0, 1, 4, 5 and 6 counted from the LSB,
 /// ETSI TS 102 366 Table F.6.1) two each, the others one.
 pub fn chan_loc_channels(chan_loc: u16) -> u16 {
-    (0..9u16).filter(|k| chan_loc & (1 << k) != 0).map(|k| if matches!(k, 0 | 1 | 4 | 5 | 6) { 2 } else { 1 }).sum()
+    (0..9u16)
+        .filter(|k| chan_loc & (1 << k) != 0)
+        .map(|k| if matches!(k, 0 | 1 | 4 | 5 | 6) { 2 } else { 1 })
+        .sum()
 }
 
 /// Read an E-AC-3 access unit: independent substream 0's syncframe at the
@@ -357,7 +361,9 @@ pub fn parse_eac3_programme(au: &[u8]) -> Result<Eac3Programme, SyncError> {
     let mut bytes = eac3_frame_bytes(independent.frmsiz);
     let mut dependents = Vec::new();
     while bytes + 8 <= au.len() {
-        let Ok(SyncInfo::Eac3(s)) = parse_sync_info(&au[bytes..]) else { break };
+        let Ok(SyncInfo::Eac3(s)) = parse_sync_info(&au[bytes..]) else {
+            break;
+        };
         if s.strmtyp != 1 {
             break;
         }
@@ -369,7 +375,11 @@ pub fn parse_eac3_programme(au: &[u8]) -> Result<Eac3Programme, SyncError> {
         });
         bytes += eac3_frame_bytes(s.frmsiz);
     }
-    Ok(Eac3Programme { independent, dependents, bytes: bytes.min(au.len()) })
+    Ok(Eac3Programme {
+        independent,
+        dependents,
+        bytes: bytes.min(au.len()),
+    })
 }
 
 /// An E-AC-3 syncframe's length in bytes, from `frmsiz` (words minus one).
@@ -505,7 +515,13 @@ mod tests {
     /// An E-AC-3 syncframe header: strmtyp, substreamid, frmsiz, 48 kHz,
     /// six blocks, acmod, lfeon, bsid 16, dialnorm 31, no compr, then
     /// (dependent) chanmape and chanmap; zero to `words` 16-bit words.
-    fn eac3_frame(strmtyp: u32, acmod: u32, lfeon: bool, chanmap: Option<u16>, words: usize) -> Vec<u8> {
+    fn eac3_frame(
+        strmtyp: u32,
+        acmod: u32,
+        lfeon: bool,
+        chanmap: Option<u16>,
+        words: usize,
+    ) -> Vec<u8> {
         let mut bits: Vec<bool> = Vec::new();
         let mut put = |v: u32, n: u32| (0..n).rev().for_each(|i| bits.push(v >> i & 1 == 1));
         put(0x0B77, 16);
@@ -550,13 +566,23 @@ mod tests {
         // num_dep_sub (4 bits) then chan_loc (9 bits) after the 35 bits
         // before them: 0001 0 0000 0010 (chan_loc bit 1, Lrs/Rrs, Table
         // F.6.1).
-        assert_eq!(dec3[4] & 0x1F, 0b00010, "num_dep_sub 1 and chan_loc's MSB (LFE2, clear)");
+        assert_eq!(
+            dec3[4] & 0x1F,
+            0b00010,
+            "num_dep_sub 1 and chan_loc's MSB (LFE2, clear)"
+        );
         assert_eq!(dec3[5], 0b0000_0010, "chan_loc: Lrs/Rrs");
-        assert_eq!(crate::demux::audio::eac3_sample_rate_channels_from_dec3(&dec3), Some((48_000, 8)));
+        assert_eq!(
+            crate::demux::audio::eac3_sample_rate_channels_from_dec3(&dec3),
+            Some((48_000, 8))
+        );
         // The independent substream alone: 5.1, a 5-byte dec3.
         let (dec3, _, channels) = crate::mux::eac3_config_from_access_unit(&au[..200]).unwrap();
         assert_eq!((dec3.len(), channels), (5, 6));
-        assert_eq!(crate::demux::audio::eac3_sample_rate_channels_from_dec3(&dec3), Some((48_000, 6)));
+        assert_eq!(
+            crate::demux::audio::eac3_sample_rate_channels_from_dec3(&dec3),
+            Some((48_000, 6))
+        );
     }
 
     /// 7.1 as ETSI TS 102 366 §E.2.8.2 lays it out (and rivet's encoder
@@ -571,11 +597,21 @@ mod tests {
         au.extend(eac3_frame(1, 6, false, Some(0x1A00), 80));
         assert_eq!(eac3_chanmap(&au[200..]), Some(0x1A00));
         let p = parse_eac3_programme(&au).unwrap();
-        assert_eq!((p.dependents.len(), p.chan_loc(), p.channels()), (1, 0x002, 8));
+        assert_eq!(
+            (p.dependents.len(), p.chan_loc(), p.channels()),
+            (1, 0x002, 8)
+        );
         let (dec3, rate, channels) = crate::mux::eac3_config_from_access_unit(&au).unwrap();
         assert_eq!((dec3.len(), rate, channels), (6, 48_000, 8));
-        assert_eq!((dec3[4] & 0x1F, dec3[5]), (0b00010, 0b0000_0010), "num_dep_sub 1, chan_loc Lrs/Rrs");
-        assert_eq!(crate::demux::audio::eac3_sample_rate_channels_from_dec3(&dec3), Some((48_000, 8)));
+        assert_eq!(
+            (dec3[4] & 0x1F, dec3[5]),
+            (0b00010, 0b0000_0010),
+            "num_dep_sub 1, chan_loc Lrs/Rrs"
+        );
+        assert_eq!(
+            crate::demux::audio::eac3_sample_rate_channels_from_dec3(&dec3),
+            Some((48_000, 8))
+        );
     }
 
     use super::*;

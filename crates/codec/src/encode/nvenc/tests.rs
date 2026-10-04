@@ -1,8 +1,10 @@
 use super::constants::{
-    guid_from_bytes, NV_ENC_BUFFER_FORMAT_IYUV, NV_ENC_BUFFER_FORMAT_YUV420_10BIT,
-    NV_ENC_PRESET_P5_GUID, RING_SIZE,
+    NV_ENC_BUFFER_FORMAT_IYUV, NV_ENC_BUFFER_FORMAT_YUV420_10BIT, NV_ENC_PRESET_P5_GUID, RING_SIZE,
+    guid_from_bytes,
 };
-use super::ffi::{NvEncConfigAv1, AV1_CHROMA_FORMAT_IDC_420, NV_ENC_BIT_DEPTH_10, NV_ENC_BIT_DEPTH_8};
+use super::ffi::{
+    AV1_CHROMA_FORMAT_IDC_420, NV_ENC_BIT_DEPTH_8, NV_ENC_BIT_DEPTH_10, NvEncConfigAv1,
+};
 use super::helpers::{
     fps_to_rational, nvenc_buffer_format_for, pixel_bit_depth_minus8_for, transfer_to_h273,
 };
@@ -57,11 +59,11 @@ fn test_nvenc_cq_clamps_to_51() {
     // the value to `rc_params.target_quality` to stay inside the
     // historical H.264/HEVC band (AV1's 0..63 is not rejected but
     // values >51 produce ill-defined behaviour on older drivers).
-    let clamped = 75u8.min(51);
+    let clamped = 51;
     assert_eq!(clamped, 51);
-    let ok = 40u8.min(51);
+    let ok = 40u8;
     assert_eq!(ok, 40);
-    let at_limit = 51u8.min(51);
+    let at_limit = 51;
     assert_eq!(at_limit, 51);
 }
 
@@ -92,11 +94,19 @@ fn the_pool_is_deeper_than_the_lookahead_it_allows() {
     // `mod.rs` caps a requested lookahead at `RING_SIZE - 4`, so the encoder
     // can never be asked to hold more frames than there are slots to keep
     // clear. If someone shrinks the pool, this is the thing that has to give.
-    assert!(RING_SIZE >= 8, "a pool this shallow cannot carry any lookahead");
+    const {
+        assert!(
+            RING_SIZE >= 8,
+            "a pool this shallow cannot carry any lookahead"
+        )
+    };
 
     let cap = RING_SIZE - 4;
     assert!(cap > 0, "no lookahead budget at all");
-    assert!(cap < RING_SIZE, "lookahead must leave slots free to submit into");
+    assert!(
+        cap < RING_SIZE,
+        "lookahead must leave slots free to submit into"
+    );
 }
 
 // ── Squad-22: 10-bit dispatch + color signalling tests ───────
@@ -298,8 +308,8 @@ fn test_guid_roundtrip() {
     // d0918ee2-a509-4681-af96-e9c3c45b7aa7; updated alongside the
     // constant in the SDK 13 layout-fix commit.)
     let bytes: [u8; 16] = [
-        0xb4, 0xe6, 0xc6, 0x21, 0x7a, 0x29, 0xba, 0x4c, 0x99, 0x8f, 0xb6, 0xcb, 0xde, 0x72,
-        0xad, 0xe3,
+        0xb4, 0xe6, 0xc6, 0x21, 0x7a, 0x29, 0xba, 0x4c, 0x99, 0x8f, 0xb6, 0xcb, 0xde, 0x72, 0xad,
+        0xe3,
     ];
     let g = guid_from_bytes(bytes);
     assert_eq!(g.data1, NV_ENC_PRESET_P5_GUID.data1);
@@ -328,17 +338,45 @@ fn test_constant_rate_sets_cbr_params() {
     rc.lookahead_depth = 8;
     rc.flags = 1 << 9;
 
-    apply_constant_rate(&mut rc, ConstantRate { bps: 4_000_000, buffer_ms: 1000 });
-    assert_eq!(NV_ENC_PARAMS_RC_CBR, 2, "nvEncodeAPI.h _NV_ENC_PARAMS_RC_MODE");
+    apply_constant_rate(
+        &mut rc,
+        ConstantRate {
+            bps: 4_000_000,
+            buffer_ms: 1000,
+        },
+    );
+    assert_eq!(
+        NV_ENC_PARAMS_RC_CBR, 2,
+        "nvEncodeAPI.h _NV_ENC_PARAMS_RC_MODE"
+    );
     assert_eq!(rc.rate_control_mode, NV_ENC_PARAMS_RC_CBR);
     assert_eq!((rc.average_bitrate, rc.max_bitrate), (4_000_000, 4_000_000));
-    assert_eq!(rc.vbv_buffer_size, 4_000_000, "one second of the rate, in bits");
-    assert_eq!(rc.vbv_initial_delay, 3_000_000, "three quarters of the buffer");
+    assert_eq!(
+        rc.vbv_buffer_size, 4_000_000,
+        "one second of the rate, in bits"
+    );
+    assert_eq!(
+        rc.vbv_initial_delay, 3_000_000,
+        "three quarters of the buffer"
+    );
     assert_eq!((rc.target_quality, rc.target_quality_lsb), (0, 0));
-    assert_eq!((rc.const_qp_intra, rc.lookahead_depth, rc.flags), (30, 8, 1 << 9), "untouched");
+    assert_eq!(
+        (rc.const_qp_intra, rc.lookahead_depth, rc.flags),
+        (30, 8, 1 << 9),
+        "untouched"
+    );
 
-    apply_constant_rate(&mut rc, ConstantRate { bps: 800_000, buffer_ms: 500 });
-    assert_eq!((rc.vbv_buffer_size, rc.vbv_initial_delay), (400_000, 300_000));
+    apply_constant_rate(
+        &mut rc,
+        ConstantRate {
+            bps: 800_000,
+            buffer_ms: 500,
+        },
+    );
+    assert_eq!(
+        (rc.vbv_buffer_size, rc.vbv_initial_delay),
+        (400_000, 300_000)
+    );
 }
 
 /// The backend's gate: an average rate is refused by name; a constant rate
@@ -347,12 +385,32 @@ fn test_constant_rate_sets_cbr_params() {
 fn test_rate_request_gate() {
     use crate::encode::EncoderConfig;
     use crate::encode::tuning::{EncodeOverrides, RateMode};
-    let cfg = |overrides| EncoderConfig { overrides, codec: crate::frame::VideoCodec::H264, ..EncoderConfig::default() };
-    let average = EncodeOverrides { bitrate: Some(1_000_000), ..Default::default() };
+    let cfg = |overrides| EncoderConfig {
+        overrides,
+        codec: crate::frame::VideoCodec::H264,
+        ..EncoderConfig::default()
+    };
+    let average = EncodeOverrides {
+        bitrate: Some(1_000_000),
+        ..Default::default()
+    };
     assert!(crate::encode::constant_rate_request("NVENC", &cfg(average)).is_err());
-    let cbr = EncodeOverrides { rate_mode: Some(RateMode::Constant), bitrate: Some(1_000_000), ..Default::default() };
-    assert!(crate::encode::constant_rate_request("NVENC", &cfg(cbr)).unwrap().is_some());
-    let cqp = EncoderConfig { constant_qp: true, ..cfg(cbr) };
-    let err = crate::encode::constant_rate_request("NVENC", &cqp).unwrap_err().to_string();
+    let cbr = EncodeOverrides {
+        rate_mode: Some(RateMode::Constant),
+        bitrate: Some(1_000_000),
+        ..Default::default()
+    };
+    assert!(
+        crate::encode::constant_rate_request("NVENC", &cfg(cbr))
+            .unwrap()
+            .is_some()
+    );
+    let cqp = EncoderConfig {
+        constant_qp: true,
+        ..cfg(cbr)
+    };
+    let err = crate::encode::constant_rate_request("NVENC", &cqp)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("NVENC") && err.contains("constqp"), "{err}");
 }

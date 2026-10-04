@@ -59,7 +59,12 @@ fn add_noise(clean: &[u8], sigma: f32, seed: u32) -> Vec<u8> {
 }
 
 fn psnr(a: &[u8], b: &[u8]) -> f64 {
-    let mse = a.iter().zip(b).map(|(&x, &y)| ((x as f64) - (y as f64)).powi(2)).sum::<f64>() / a.len() as f64;
+    let mse = a
+        .iter()
+        .zip(b)
+        .map(|(&x, &y)| ((x as f64) - (y as f64)).powi(2))
+        .sum::<f64>()
+        / a.len() as f64;
     if mse == 0.0 {
         return 99.0;
     }
@@ -69,7 +74,14 @@ fn psnr(a: &[u8], b: &[u8]) -> f64 {
 fn frame_of(luma: &[u8], w: usize, h: usize) -> VideoFrame {
     let mut data = luma.to_vec();
     data.extend(std::iter::repeat_n(128u8, 2 * (w / 2) * (h / 2)));
-    VideoFrame::new(Bytes::from(data), w as u32, h as u32, PixelFormat::Yuv420p, ColorSpace::Bt709, 0)
+    VideoFrame::new(
+        Bytes::from(data),
+        w as u32,
+        h as u32,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        0,
+    )
 }
 
 fn luma_of(f: &VideoFrame) -> Vec<u8> {
@@ -77,7 +89,19 @@ fn luma_of(f: &VideoFrame) -> Vec<u8> {
 }
 
 fn nlmeans(noisy: &[u8], w: usize, h: usize, s: f32, p: u32, r: u32) -> Vec<u8> {
-    luma_of(&apply(&frame_of(noisy, w, h), &VideoFilter::Nlmeans { s, p, pc: 0, r, rc: 0 }).unwrap())
+    luma_of(
+        &apply(
+            &frame_of(noisy, w, h),
+            &VideoFilter::Nlmeans {
+                s,
+                p,
+                pc: 0,
+                r,
+                rc: 0,
+            },
+        )
+        .unwrap(),
+    )
 }
 
 fn hqdn3d_instance(spec: &str) -> FilterInstance {
@@ -99,8 +123,9 @@ fn edge_metrics(out: &[u8], w: usize, h: usize) -> (f64, f64) {
     let (lo, hi) = (60.0, 180.0);
     let rows = 2..h - 2;
     let n = rows.len() as f64;
-    let profile: Vec<f64> =
-        (0..w).map(|x| rows.clone().map(|y| out[y * w + x] as f64).sum::<f64>() / n).collect();
+    let profile: Vec<f64> = (0..w)
+        .map(|x| rows.clone().map(|y| out[y * w + x] as f64).sum::<f64>() / n)
+        .collect();
     let cross = |t: f64| -> f64 {
         (24..40)
             .find(|&x| profile[x] < t && profile[x + 1] >= t)
@@ -113,7 +138,9 @@ fn edge_metrics(out: &[u8], w: usize, h: usize) -> (f64, f64) {
 }
 
 fn step_picture(w: usize, h: usize) -> Vec<u8> {
-    (0..w * h).map(|i| if i % w < 32 { 60 } else { 180 }).collect()
+    (0..w * h)
+        .map(|i| if i % w < 32 { 60 } else { 180 })
+        .collect()
 }
 
 // ── nlmeans ─────────────────────────────────────────────────────────────────
@@ -141,8 +168,14 @@ fn nlmeans_strength_orders_the_smoothing() {
     let at = |s| psnr(&nlmeans(&noisy, W, H, s, 5, 11), &clean);
     let (p1, p4, p10) = (at(1.0), at(4.0), at(10.0));
     let p0 = psnr(&noisy, &clean);
-    assert!(p1 - p0 < 1.0, "s=1 should barely touch σ=10 noise ({p0:.2} → {p1:.2})");
-    assert!(p4 > p1 && p10 > p4, "PSNR must rise with s toward the noise level: {p1:.2} {p4:.2} {p10:.2}");
+    assert!(
+        p1 - p0 < 1.0,
+        "s=1 should barely touch σ=10 noise ({p0:.2} → {p1:.2})"
+    );
+    assert!(
+        p4 > p1 && p10 > p4,
+        "PSNR must rise with s toward the noise level: {p1:.2} {p4:.2} {p10:.2}"
+    );
 }
 
 #[test]
@@ -155,7 +188,10 @@ fn nlmeans_keeps_edges_sharp() {
     assert!(contrast > 0.98, "edge contrast fell to {contrast:.3}");
     // The metric does see blur: a 3×3 box on the same input widens the rise.
     let (box_width, _) = edge_metrics(&super::denoise::test_box3(&noisy, w, h), w, h);
-    assert!(box_width > 2.0, "a 3×3 box blur measured only {box_width:.2}");
+    assert!(
+        box_width > 2.0,
+        "a 3×3 box blur measured only {box_width:.2}"
+    );
 }
 
 #[test]
@@ -188,9 +224,18 @@ fn hqdn3d_spatial_stage_gains_psnr_and_strength_orders_it() {
         let before = psnr(&noisy, &clean);
         let at = |ls: f32| psnr(&hqdn3d_once(&noisy, W, H, &format!("hqdn3d={ls}")), &clean);
         let (weak, matched) = (at(0.5 * sigma), at(1.5 * sigma));
-        assert!(weak >= before - 0.05, "σ={sigma}: a weak setting made it worse ({before:.2} → {weak:.2})");
-        assert!(matched > weak + 2.0, "σ={sigma}: a stronger setting must gain more ({weak:.2} vs {matched:.2})");
-        assert!(matched > before + 4.0, "σ={sigma}: PSNR {before:.2} → {matched:.2}");
+        assert!(
+            weak >= before - 0.05,
+            "σ={sigma}: a weak setting made it worse ({before:.2} → {weak:.2})"
+        );
+        assert!(
+            matched > weak + 2.0,
+            "σ={sigma}: a stronger setting must gain more ({weak:.2} vs {matched:.2})"
+        );
+        assert!(
+            matched > before + 4.0,
+            "σ={sigma}: PSNR {before:.2} → {matched:.2}"
+        );
     }
 }
 
@@ -219,7 +264,13 @@ fn hqdn3d_static_scene_converges_and_stops_flickering() {
         let out = luma_of(&inst.apply(frame_of(&noisy, W, H)).unwrap());
         psnrs.push(psnr(&out, &clean));
         if k >= 10 {
-            let mad = |a: &[u8], b: &[u8]| a.iter().zip(b).map(|(&x, &y)| (x as f64 - y as f64).abs()).sum::<f64>() / a.len() as f64;
+            let mad = |a: &[u8], b: &[u8]| {
+                a.iter()
+                    .zip(b)
+                    .map(|(&x, &y)| (x as f64 - y as f64).abs())
+                    .sum::<f64>()
+                    / a.len() as f64
+            };
             flicker_in += mad(&noisy, prev_in.as_ref().unwrap());
             flicker_out += mad(&out, prev_out.as_ref().unwrap());
         }
@@ -227,7 +278,10 @@ fn hqdn3d_static_scene_converges_and_stops_flickering() {
         prev_out = Some(out);
     }
     assert!(psnrs[19] > psnrs[0] + 2.0, "no temporal gain: {psnrs:?}");
-    assert!(flicker_out < 0.35 * flicker_in, "flicker {flicker_in:.1} → {flicker_out:.1}");
+    assert!(
+        flicker_out < 0.35 * flicker_in,
+        "flicker {flicker_in:.1} → {flicker_out:.1}"
+    );
 }
 
 #[test]
@@ -236,7 +290,15 @@ fn hqdn3d_lets_motion_through() {
     // show at once, not as a ghost blended with the old one.
     let (w, h) = (64, 32);
     let pic = |x0: usize| -> Vec<u8> {
-        (0..w * h).map(|i| if (x0..x0 + 12).contains(&(i % w)) && (10..22).contains(&(i / w)) { 200 } else { 50 }).collect()
+        (0..w * h)
+            .map(|i| {
+                if (x0..x0 + 12).contains(&(i % w)) && (10..22).contains(&(i / w)) {
+                    200
+                } else {
+                    50
+                }
+            })
+            .collect()
     };
     let mut inst = hqdn3d_instance("hqdn3d=4:3:6:4.5");
     for _ in 0..5 {
@@ -244,7 +306,12 @@ fn hqdn3d_lets_motion_through() {
     }
     let out = luma_of(&inst.apply(frame_of(&pic(40), w, h)).unwrap());
     let want = pic(40);
-    let worst = out.iter().zip(&want).map(|(&a, &b)| (a as i32 - b as i32).abs()).max().unwrap();
+    let worst = out
+        .iter()
+        .zip(&want)
+        .map(|(&a, &b)| (a as i32 - b as i32).abs())
+        .max()
+        .unwrap();
     assert!(worst <= 2, "motion ghosted (max error {worst})");
 }
 
@@ -257,7 +324,14 @@ fn hqdn3d_is_deterministic_and_handles_odd_sizes() {
                 .map(|k| {
                     let mut data = add_noise(&vec![120u8; w * h], 5.0, k);
                     data.extend(add_noise(&vec![90u8; 2 * (w / 2) * (h / 2)], 5.0, k + 50));
-                    let f = VideoFrame::new(Bytes::from(data), w as u32, h as u32, PixelFormat::Yuv420p, ColorSpace::Bt709, 0);
+                    let f = VideoFrame::new(
+                        Bytes::from(data),
+                        w as u32,
+                        h as u32,
+                        PixelFormat::Yuv420p,
+                        ColorSpace::Bt709,
+                        0,
+                    );
                     inst.apply(f).unwrap().data.to_vec()
                 })
                 .collect()
@@ -279,7 +353,10 @@ fn print_figures() {
         let noisy = add_noise(&clean, sigma, sigma as u32);
         let mut line = format!("  noise σ={sigma:>4}: input {:.2}", psnr(&noisy, &clean));
         for s in [1.0f32, 3.0, 5.0, 10.0, 15.0, 20.0, 30.0] {
-            line += &format!(" | s={s}: {:.2}", psnr(&nlmeans(&noisy, W, H, s, 7, 15), &clean));
+            line += &format!(
+                " | s={s}: {:.2}",
+                psnr(&nlmeans(&noisy, W, H, s, 7, 15), &clean)
+            );
         }
         println!("{line}");
     }
@@ -288,7 +365,10 @@ fn print_figures() {
         let noisy = add_noise(&clean, sigma, 11 + sigma as u32);
         let mut line = format!("  noise σ={sigma:>4}: input {:.2}", psnr(&noisy, &clean));
         for ls in [1.0f32, 2.0, 4.0, 8.0, 12.0, 16.0] {
-            line += &format!(" | ls={ls}: {:.2}", psnr(&hqdn3d_once(&noisy, W, H, &format!("hqdn3d={ls}")), &clean));
+            line += &format!(
+                " | ls={ls}: {:.2}",
+                psnr(&hqdn3d_once(&noisy, W, H, &format!("hqdn3d={ls}")), &clean)
+            );
         }
         println!("{line}");
     }
@@ -302,9 +382,15 @@ fn print_figures() {
             for k in 0..20u32 {
                 let noisy = add_noise(&clean, sigma, 100 + k);
                 inp = psnr(&noisy, &clean);
-                ps.push(psnr(&luma_of(&inst.apply(frame_of(&noisy, W, H)).unwrap()), &clean));
+                ps.push(psnr(
+                    &luma_of(&inst.apply(frame_of(&noisy, W, H)).unwrap()),
+                    &clean,
+                ));
             }
-            line += &format!(" | {spec} (in {inp:.1}): {:.2}/{:.2}/{:.2}", ps[0], ps[4], ps[19]);
+            line += &format!(
+                " | {spec} (in {inp:.1}): {:.2}/{:.2}/{:.2}",
+                ps[0], ps[4], ps[19]
+            );
         }
         println!("{line}");
     }

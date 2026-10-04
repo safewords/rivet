@@ -44,7 +44,12 @@ impl Vp9Decoder {
         }
         let mut inner = vp9::Decoder::new();
         inner.set_threads(super::sw_decode_threads("RIVET_VP9_DECODE_THREADS", share));
-        Ok(Self { inner, info, ready: VecDeque::new(), next_pts: 0 })
+        Ok(Self {
+            inner,
+            info,
+            ready: VecDeque::new(),
+            next_pts: 0,
+        })
     }
 
     fn convert(&mut self, frame: vp9::Frame) -> Result<VideoFrame> {
@@ -60,19 +65,32 @@ impl Vp9Decoder {
             (C::Yuv444, 10) => PixelFormat::Yuv444p10le,
             (C::Yuv444, 12) => PixelFormat::Yuv444p12le,
             (chroma, depth) => {
-                bail!("VP9 decoded a {chroma:?} {depth}-bit picture, which has no pixel format in the pipeline")
+                bail!(
+                    "VP9 decoded a {chroma:?} {depth}-bit picture, which has no pixel format in the pipeline"
+                )
             }
         };
         let color_space = match frame.color_space {
             vp9::ColorSpace::Bt709 => ColorSpace::Bt709,
             vp9::ColorSpace::Bt2020 => ColorSpace::Bt2020,
-            vp9::ColorSpace::Bt601 | vp9::ColorSpace::Smpte170 | vp9::ColorSpace::Smpte240 => ColorSpace::Bt601,
-            vp9::ColorSpace::Rgb => bail!("this VP9 stream is coded as RGB, which the pipeline does not take"),
+            vp9::ColorSpace::Bt601 | vp9::ColorSpace::Smpte170 | vp9::ColorSpace::Smpte240 => {
+                ColorSpace::Bt601
+            }
+            vp9::ColorSpace::Rgb => {
+                bail!("this VP9 stream is coded as RGB, which the pipeline does not take")
+            }
             _ => self.info.color_space,
         };
         let pts = self.next_pts;
         self.next_pts += 1;
-        Ok(VideoFrame::new(Bytes::from(frame.data), frame.width, frame.height, format, color_space, pts))
+        Ok(VideoFrame::new(
+            Bytes::from(frame.data),
+            frame.width,
+            frame.height,
+            format,
+            color_space,
+            pts,
+        ))
     }
 }
 
@@ -126,16 +144,28 @@ mod tests {
     #[test]
     fn decodes_on_the_software_decoder_threads() {
         let dec = Vp9Decoder::new(info("vp9")).expect("decoder");
-        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_VP9_DECODE_THREADS", 1));
+        assert_eq!(
+            dec.inner.threads(),
+            crate::decode::sw_decode_threads("RIVET_VP9_DECODE_THREADS", 1)
+        );
     }
 
     /// One of several decoders running at once (the ladder's range-split
     /// decode) takes its share of the machine, not all of it.
     #[test]
     fn a_shared_decoder_takes_its_share_of_the_threads() {
-        let alone = Vp9Decoder::new(info("vp9")).expect("decoder").inner.threads();
-        let shared = Vp9Decoder::new_shared(info("vp9"), 4).expect("decoder").inner.threads();
-        assert_eq!(shared, crate::decode::sw_decode_threads("RIVET_VP9_DECODE_THREADS", 4));
+        let alone = Vp9Decoder::new(info("vp9"))
+            .expect("decoder")
+            .inner
+            .threads();
+        let shared = Vp9Decoder::new_shared(info("vp9"), 4)
+            .expect("decoder")
+            .inner
+            .threads();
+        assert_eq!(
+            shared,
+            crate::decode::sw_decode_threads("RIVET_VP9_DECODE_THREADS", 4)
+        );
         if std::env::var_os("RIVET_VP9_DECODE_THREADS").is_none() {
             let machine = std::thread::available_parallelism().map_or(1, |n| n.get());
             assert_eq!(alone, machine);
@@ -146,7 +176,8 @@ mod tests {
     /// Inside a decode pump's thread budget the decoder takes the budget.
     #[test]
     fn a_pump_budget_bounds_the_decoder_threads() {
-        let dec = crate::filter::with_thread_budget(3, || Vp9Decoder::new(info("vp9")).expect("decoder"));
+        let dec =
+            crate::filter::with_thread_budget(3, || Vp9Decoder::new(info("vp9")).expect("decoder"));
         if std::env::var("RIVET_VP9_DECODE_THREADS").is_err() {
             assert_eq!(dec.inner.threads(), 3);
         }
@@ -175,7 +206,10 @@ mod tests {
         dec.finish().unwrap();
         for pts in 0..3 {
             let f = dec.decode_next().unwrap().expect("a frame");
-            assert_eq!((f.width, f.height, f.format, f.pts), (w, h, PixelFormat::Yuv420p, pts));
+            assert_eq!(
+                (f.width, f.height, f.format, f.pts),
+                (w, h, PixelFormat::Yuv420p, pts)
+            );
             assert_eq!(f.data.len(), (w * h * 3 / 2) as usize);
         }
         assert!(dec.decode_next().unwrap().is_none());

@@ -260,9 +260,7 @@ const LAYOUTS: [(usize, usize); 3] = [(TS_PACKET, 0), (192, 4), (204, 0)];
 pub(crate) fn sniff_layout(data: &[u8]) -> Option<(usize, usize)> {
     LAYOUTS.into_iter().find(|&(stride, prefix)| {
         let at = |k: usize| data.get(prefix + k * stride).copied();
-        at(0) == Some(TS_SYNC)
-            && at(1) == Some(TS_SYNC)
-            && at(2).is_none_or(|b| b == TS_SYNC)
+        at(0) == Some(TS_SYNC) && at(1) == Some(TS_SYNC) && at(2).is_none_or(|b| b == TS_SYNC)
     })
 }
 
@@ -277,7 +275,11 @@ pub(super) fn detect_packet_layout(data: &[u8]) -> Result<(usize, usize, usize)>
     let Some((stride, prefix)) = sniff_layout(data) else {
         bail!("TS: could not locate 0x47 sync pattern at 188-, 192- or 204-byte intervals")
     };
-    Ok(((data.len() - prefix - TS_PACKET) / stride + 1, stride, prefix))
+    Ok((
+        (data.len() - prefix - TS_PACKET) / stride + 1,
+        stride,
+        prefix,
+    ))
 }
 
 /// Extract the PSI (PAT/PMT) section payload from a TS packet whose PID
@@ -595,7 +597,8 @@ pub(crate) fn demux_ts(data: &[u8]) -> Result<DemuxResult> {
     // through Squad-27's path; AC-3 / E-AC-3 use the new pure-Rust
     // extractors that derive `dac3` / `dec3` from the first frame's
     // sync header (Squad-26 helpers).
-    let (audio, named_audio) = audio::read_program_audio(data, packets, packet_stride, prefix_len, &chosen_audio);
+    let (audio, named_audio) =
+        audio::read_program_audio(data, packets, packet_stride, prefix_len, &chosen_audio);
 
     // Where the streams start on the program clock — the same late starts
     // the streaming reader gives the pipeline. The samples stay every one the
@@ -638,7 +641,9 @@ pub(crate) fn demux_ts(data: &[u8]) -> Result<DemuxResult> {
 /// recognises.
 pub(crate) fn has_video(data: &[u8]) -> Result<bool> {
     let (packets, stride, prefix) = detect_packet_layout(data)?;
-    Ok(streaming::scan_programs(data, packets, stride, prefix)?.iter().any(|p| !p.video_streams.is_empty()))
+    Ok(streaming::scan_programs(data, packets, stride, prefix)?
+        .iter()
+        .any(|p| !p.video_streams.is_empty()))
 }
 
 /// The audio of a transport stream with no video (a radio service, an
@@ -653,10 +658,14 @@ pub(crate) fn read_audio_only(data: &[u8]) -> Result<Option<crate::demux::AudioT
     let Some(program) = programs.iter().find(|p| !p.audio_streams.is_empty()) else {
         return Ok(None);
     };
-    let (audio, named) = audio::read_program_audio(data, packets, stride, prefix, &program.audio_streams);
+    let (audio, named) =
+        audio::read_program_audio(data, packets, stride, prefix, &program.audio_streams);
     let layout = (packets, stride, prefix);
-    let breaks =
-        discontinuity::time_base_breaks(data, layout, discontinuity::pcr_pid(data, layout, program.pmt_pid));
+    let breaks = discontinuity::time_base_breaks(
+        data,
+        layout,
+        discontinuity::pcr_pid(data, layout, program.pmt_pid),
+    );
     let (track, _gaps) =
         retime::place_program_audio(audio, &breaks, &[], 0, clock::ProgramClock::default(), 0.0);
     Ok(track.or(named))

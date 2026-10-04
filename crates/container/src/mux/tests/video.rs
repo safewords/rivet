@@ -3,12 +3,12 @@
 // high-profile extension against GStreamer h264parse's records.
 // 16 #[test] functions.
 
-use frame::{ColorMetadata, VideoCodec};
 use super::super::boxes::{build_ftyp, build_moov_any};
 use super::super::video_track::{
-    build_av01, build_avcc, build_colr_nclx, build_mdcv, build_clli, transfer_to_h273,
+    build_av01, build_avcc, build_clli, build_colr_nclx, build_mdcv, transfer_to_h273,
 };
-use super::{find_fourcc, count_fourcc_occurrences, hdr10_mastering_display};
+use super::{count_fourcc_occurrences, find_fourcc, hdr10_mastering_display};
+use frame::{ColorMetadata, VideoCodec};
 
 // ---- Apple-compat: ftyp brands -------------------------------------------
 
@@ -23,7 +23,7 @@ fn ftyp_lists_av01_and_iso6_and_mp42_brands() {
     assert_eq!(&ftyp[8..12], b"iso6", "major_brand should be iso6");
     // After major(4) + minor(4) the compatible_brands list runs to end.
     let compat = &ftyp[16..];
-    let brands: Vec<&[u8]> = compat.chunks_exact(4).collect();
+    let brands: Vec<&[u8]> = compat.as_chunks::<4>().0.iter().map(|c| &c[..]).collect();
     assert!(
         brands.contains(&b"av01".as_ref()),
         "compatible_brands must list av01 per AV1-ISOBMFF §2.1; got {:?}",
@@ -194,9 +194,8 @@ fn mdcv_box_24_byte_payload_layout() {
     assert_eq!(&mdcv[4..8], b"mdcv", "box type must be 'mdcv' (not 'SmDm')");
     // Body fields, all u16 BE except the trailing two u32s.
     let u16_at = |off: usize| u16::from_be_bytes([mdcv[off], mdcv[off + 1]]);
-    let u32_at = |off: usize| {
-        u32::from_be_bytes([mdcv[off], mdcv[off + 1], mdcv[off + 2], mdcv[off + 3]])
-    };
+    let u32_at =
+        |off: usize| u32::from_be_bytes([mdcv[off], mdcv[off + 1], mdcv[off + 2], mdcv[off + 3]]);
     assert_eq!(u16_at(8), 8500, "primaries_g_x");
     assert_eq!(u16_at(10), 39850, "primaries_g_y");
     assert_eq!(u16_at(12), 6550, "primaries_b_x");
@@ -464,7 +463,10 @@ fn colr_bt2020_primaries_matrix() {
 // ---- avcC: the high-profile extension (ISO/IEC 14496-15 §5.3.3.1.2) -------
 
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 
 fn hex(b: &[u8]) -> String {
@@ -510,9 +512,17 @@ fn avcc_matches_an_independent_writers_record_for_main_high_and_high10() {
             avcc.len(),
             "{name}: box size"
         );
-        assert_eq!(hex(&avcc[8..]), theirs, "{name}: record differs from h264parse's");
+        assert_eq!(
+            hex(&avcc[8..]),
+            theirs,
+            "{name}: record differs from h264parse's"
+        );
         let parsed = crate::annexb::parse_avcc(&avcc[8..]).expect("the demuxer reads the record");
         assert_eq!(parsed.length_size, 4, "{name}");
-        assert_eq!(parsed.parameter_sets, vec![sps, pps], "{name}: parameter sets round-trip");
+        assert_eq!(
+            parsed.parameter_sets,
+            vec![sps, pps],
+            "{name}: parameter sets round-trip"
+        );
     }
 }

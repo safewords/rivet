@@ -5,13 +5,13 @@
 use bytes::Bytes;
 use std::os::raw::{c_int, c_ulong};
 
-use crate::frame::{PixelFormat, VideoFrame};
 use super::NvdecError;
 use super::ffi::{
-    CUVID_AV1, CUVID_CHROMA_420, CUVID_H264, CUVID_HEVC, CUVID_MPEG2, CUVID_MPEG4, CUVID_PKT_ENDOFPICTURE,
-    CUVID_VP8, CUVID_VP9,
+    CUVID_AV1, CUVID_CHROMA_420, CUVID_H264, CUVID_HEVC, CUVID_MPEG2, CUVID_MPEG4,
+    CUVID_PKT_ENDOFPICTURE, CUVID_VP8, CUVID_VP9,
 };
 use super::state::DecodedFrame;
+use crate::frame::{PixelFormat, VideoFrame};
 
 /// The packets one demuxed sample goes to the CUVID parser as, with their
 /// flags: a VP9 superframe as its frames, one per packet, and every VP8 /
@@ -23,7 +23,10 @@ use super::state::DecodedFrame;
 /// superframe's hidden frame would be decoded and its shown frame lost.
 pub fn split_frames(codec: c_int, sample: &[u8]) -> Vec<(&[u8], c_ulong)> {
     match codec {
-        CUVID_VP9 => vp9::superframe::split(sample).into_iter().map(|f| (f, CUVID_PKT_ENDOFPICTURE)).collect(),
+        CUVID_VP9 => vp9::superframe::split(sample)
+            .into_iter()
+            .map(|f| (f, CUVID_PKT_ENDOFPICTURE))
+            .collect(),
         CUVID_VP8 => vec![(sample, CUVID_PKT_ENDOFPICTURE)],
         _ => vec![(sample, 0)],
     }
@@ -172,8 +175,16 @@ pub fn output_geometry(
     // padding, so the display area is the even target and nothing is
     // resampled. The coded surface is block-aligned, so the padding is
     // there; if it were not, the side stays odd and is scaled, as before.
-    let right = if picture_width % 2 == 1 && right < coded_width { right + 1 } else { right };
-    let bottom = if picture_height % 2 == 1 && bottom < coded_height { bottom + 1 } else { bottom };
+    let right = if picture_width % 2 == 1 && right < coded_width {
+        right + 1
+    } else {
+        right
+    };
+    let bottom = if picture_height % 2 == 1 && bottom < coded_height {
+        bottom + 1
+    } else {
+        bottom
+    };
     OutputGeometry {
         coded_width,
         coded_height,
@@ -215,7 +226,7 @@ pub fn deinterleave_p016_to_yuv420p10le(p016_bytes: &[u8], w: usize, h: usize) -
 
     // Y plane: u16 LE samples, right-shift by 6 and re-emit LE.
     let y_src = &p016_bytes[..y_bytes.min(p016_bytes.len())];
-    for chunk in y_src.chunks_exact(2) {
+    for chunk in y_src.as_chunks::<2>().0 {
         let sample = u16::from_le_bytes([chunk[0], chunk[1]]);
         out.extend_from_slice(&(sample >> 6).to_le_bytes());
     }
@@ -294,14 +305,32 @@ pub fn decoded_frame_to_video_frame(frame: &DecodedFrame) -> VideoFrame {
         h,
         frame.picture_width as usize,
         frame.picture_height as usize,
-        if pixel_format == PixelFormat::Yuv420p10le { 2 } else { 1 },
+        if pixel_format == PixelFormat::Yuv420p10le {
+            2
+        } else {
+            1
+        },
     );
-    VideoFrame::new(Bytes::from(yuv), out_w as u32, out_h as u32, pixel_format, frame.color_space, frame.timestamp)
+    VideoFrame::new(
+        Bytes::from(yuv),
+        out_w as u32,
+        out_h as u32,
+        pixel_format,
+        frame.color_space,
+        frame.timestamp,
+    )
 }
 
 /// The top-left `pw` x `ph` of a planar 4:2:0 picture `w` x `h` (`bytes`
 /// per sample); the picture whole when `pw` / `ph` is zero or not smaller.
-fn crop_planar(yuv: Vec<u8>, w: usize, h: usize, pw: usize, ph: usize, bytes: usize) -> (Vec<u8>, usize, usize) {
+fn crop_planar(
+    yuv: Vec<u8>,
+    w: usize,
+    h: usize,
+    pw: usize,
+    ph: usize,
+    bytes: usize,
+) -> (Vec<u8>, usize, usize) {
     if pw == 0 || ph == 0 || pw > w || ph > h || (pw, ph) == (w, h) {
         return (yuv, w, h);
     }
@@ -337,7 +366,10 @@ mod split_tests {
         assert_eq!((g.picture_width, g.picture_height), (351, 287));
         // Even pictures unchanged.
         let g = output_geometry(640, 368, 0, 0, 640, 360);
-        assert_eq!((g.display_right, g.display_bottom, g.width, g.height), (640, 360, 640, 360));
+        assert_eq!(
+            (g.display_right, g.display_bottom, g.width, g.height),
+            (640, 360, 640, 360)
+        );
         assert_eq!((g.picture_width, g.picture_height), (640, 360));
         // No padding to take: the side stays as it was.
         let g = output_geometry(351, 288, 0, 0, 351, 288);
@@ -359,9 +391,21 @@ mod split_tests {
         let b = vec![0x86u8; 20];
         let sf = vp9::superframe::join(&[&a, &b]);
         let parts = split_frames(CUVID_VP9, &sf);
-        assert_eq!(parts, vec![(&a[..], CUVID_PKT_ENDOFPICTURE), (&b[..], CUVID_PKT_ENDOFPICTURE)]);
-        assert_eq!(split_frames(CUVID_VP9, &a), vec![(&a[..], CUVID_PKT_ENDOFPICTURE)]);
-        assert_eq!(split_frames(CUVID_VP8, &sf), vec![(&sf[..], CUVID_PKT_ENDOFPICTURE)]);
+        assert_eq!(
+            parts,
+            vec![
+                (&a[..], CUVID_PKT_ENDOFPICTURE),
+                (&b[..], CUVID_PKT_ENDOFPICTURE)
+            ]
+        );
+        assert_eq!(
+            split_frames(CUVID_VP9, &a),
+            vec![(&a[..], CUVID_PKT_ENDOFPICTURE)]
+        );
+        assert_eq!(
+            split_frames(CUVID_VP8, &sf),
+            vec![(&sf[..], CUVID_PKT_ENDOFPICTURE)]
+        );
         assert_eq!(split_frames(CUVID_H264, &sf), vec![(&sf[..], 0)]);
         assert_eq!(CUVID_PKT_ENDOFPICTURE, 0x08);
     }

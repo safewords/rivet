@@ -23,7 +23,9 @@ use container::nal_mux::{NalMuxCodec, sample_is_keyframe, split_annexb_nals};
 use frame::{EncodedPacket, VideoCodec};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/multi_pps").join(name);
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/multi_pps")
+        .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
@@ -97,7 +99,12 @@ fn packets(units: &[Vec<Vec<u8>>], codec: NalMuxCodec, shape: Shape) -> Vec<Vec<
 
 /// The stream's distinct parameter sets, sorted.
 fn stream_sets(units: &[Vec<Vec<u8>>], codec: NalMuxCodec) -> Vec<Vec<u8>> {
-    let mut sets: Vec<Vec<u8>> = units.iter().flatten().filter(|n| is_param_set(n, codec)).cloned().collect();
+    let mut sets: Vec<Vec<u8>> = units
+        .iter()
+        .flatten()
+        .filter(|n| is_param_set(n, codec))
+        .cloned()
+        .collect();
     sets.sort();
     sets.dedup();
     sets
@@ -105,9 +112,17 @@ fn stream_sets(units: &[Vec<Vec<u8>>], codec: NalMuxCodec) -> Vec<Vec<u8>> {
 
 /// The visual sample entry: its fourcc, and its body from the config box on.
 fn sample_entry(mp4: &[u8]) -> ([u8; 4], &[u8]) {
-    let at = mp4.windows(4).position(|w| w == b"stsd").expect("an stsd box") + 4 + 8;
+    let at = mp4
+        .windows(4)
+        .position(|w| w == b"stsd")
+        .expect("an stsd box")
+        + 4
+        + 8;
     let size = u32::from_be_bytes(mp4[at..at + 4].try_into().unwrap()) as usize;
-    (mp4[at + 4..at + 8].try_into().unwrap(), &mp4[at + 8 + 78..at + size])
+    (
+        mp4[at + 4..at + 8].try_into().unwrap(),
+        &mp4[at + 8 + 78..at + size],
+    )
 }
 
 /// The config box's sets, sorted, and each `hvcC` array's completeness bit —
@@ -115,7 +130,11 @@ fn sample_entry(mp4: &[u8]) -> ([u8; 4], &[u8]) {
 fn config_record(mp4: &[u8], codec: NalMuxCodec) -> (Vec<Vec<u8>>, Vec<u8>) {
     let (_, children) = sample_entry(mp4);
     let size = u32::from_be_bytes(children[..4].try_into().unwrap()) as usize;
-    let tag: &[u8; 4] = if codec == NalMuxCodec::H264 { b"avcC" } else { b"hvcC" };
+    let tag: &[u8; 4] = if codec == NalMuxCodec::H264 {
+        b"avcC"
+    } else {
+        b"hvcC"
+    };
     assert_eq!(&children[4..8], tag, "the config box comes first");
     let body = &children[8..size];
     let mut sets = Vec::new();
@@ -179,7 +198,12 @@ fn mux(packets: Vec<Vec<u8>>, codec: VideoCodec, nal_codec: NalMuxCodec) -> Byte
     let mut m = Av1Mp4Muxer::new_with_codec(64, 64, 25.0, codec).unwrap();
     for (i, au) in packets.into_iter().enumerate() {
         let is_keyframe = sample_is_keyframe(&au, nal_codec);
-        m.add_packet(EncodedPacket { data: Bytes::from(au), pts: i as u64, is_keyframe }).unwrap();
+        m.add_packet(EncodedPacket {
+            data: Bytes::from(au),
+            pts: i as u64,
+            is_keyframe,
+        })
+        .unwrap();
     }
     m.finalize().unwrap()
 }
@@ -187,8 +211,18 @@ fn mux(packets: Vec<Vec<u8>>, codec: VideoCodec, nal_codec: NalMuxCodec) -> Byte
 #[test]
 fn every_packet_shape_writes_avc1_and_hvc1_with_the_streams_sets() {
     let cases = [
-        ("two_pps.h264", VideoCodec::H264, NalMuxCodec::H264, *b"avc1"),
-        ("two_pps.h265", VideoCodec::H265, NalMuxCodec::H265, *b"hvc1"),
+        (
+            "two_pps.h264",
+            VideoCodec::H264,
+            NalMuxCodec::H264,
+            *b"avc1",
+        ),
+        (
+            "two_pps.h265",
+            VideoCodec::H265,
+            NalMuxCodec::H265,
+            *b"hvc1",
+        ),
     ];
     for (name, codec, nal_codec, entry) in cases {
         let units = access_units(&fixture(name), nal_codec);
@@ -202,7 +236,10 @@ fn every_packet_shape_writes_avc1_and_hvc1_with_the_streams_sets() {
             if codec == VideoCodec::H265 {
                 assert_eq!(complete, vec![1, 1, 1], "{case}: hvc1 arrays are complete");
             }
-            assert!(!samples_carry_sets(&mp4, nal_codec), "{case}: no set in band");
+            assert!(
+                !samples_carry_sets(&mp4, nal_codec),
+                "{case}: no set in band"
+            );
         }
     }
 }
@@ -211,7 +248,14 @@ fn every_packet_shape_writes_avc1_and_hvc1_with_the_streams_sets() {
 fn a_set_changed_under_its_id_goes_in_band_under_avc3() {
     // `conflict.h264` re-sends PPS 0 before picture 8 with other contents.
     let units = access_units(&fixture("conflict.h264"), NalMuxCodec::H264);
-    let mp4 = mux(packets(&units, NalMuxCodec::H264, Shape::Repeated), VideoCodec::H264, NalMuxCodec::H264);
+    let mp4 = mux(
+        packets(&units, NalMuxCodec::H264, Shape::Repeated),
+        VideoCodec::H264,
+        NalMuxCodec::H264,
+    );
     assert_eq!(&sample_entry(&mp4).0, b"avc3", "the sets change: avc3");
-    assert!(samples_carry_sets(&mp4, NalMuxCodec::H264), "from the change on, in band");
+    assert!(
+        samples_carry_sets(&mp4, NalMuxCodec::H264),
+        "from the change on, in band"
+    );
 }

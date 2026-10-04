@@ -14,8 +14,8 @@
 //! tempfile in unit-test time.
 
 use bytes::Bytes;
-use frame::EncodedPacket;
 use container::mux::Av1Mp4Muxer;
+use frame::EncodedPacket;
 
 fn minimal_av1_first_packet() -> Bytes {
     let header: u8 = (1 << 3) | (1 << 1);
@@ -73,7 +73,9 @@ fn output_ftyp_includes_av01_brand() {
     let ftyp_size = u32::from_be_bytes([out[0], out[1], out[2], out[3]]) as usize;
     let compat = &out[16..ftyp_size];
     let brands: Vec<[u8; 4]> = compat
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2], c[3]])
         .collect();
     assert!(

@@ -53,7 +53,11 @@ impl Arch {
     /// channel counts at the top, each `m_downN.<nb>.weight` (the stride-2
     /// conv, which follows the `nb` ResBlocks) the width of the next scale.
     pub(super) fn infer(shapes: &HashMap<String, Vec<usize>>) -> Result<Self> {
-        let shape = |n: &str| shapes.get(n).ok_or_else(|| anyhow::anyhow!("state dict has no '{n}' (not a DRUNet checkpoint?)"));
+        let shape = |n: &str| {
+            shapes.get(n).ok_or_else(|| {
+                anyhow::anyhow!("state dict has no '{n}' (not a DRUNet checkpoint?)")
+            })
+        };
         let head = shape("m_head.weight")?;
         let tail = shape("m_tail.weight")?;
         if head.len() != 4 || tail.len() != 4 {
@@ -69,7 +73,12 @@ impl Arch {
         let nc1 = shape(&format!("m_down1.{nb}.weight"))?[0];
         let nc2 = shape(&format!("m_down2.{nb}.weight"))?[0];
         let nc3 = shape(&format!("m_down3.{nb}.weight"))?[0];
-        Ok(Self { in_nc, out_nc, nc: [nc0, nc1, nc2, nc3], nb })
+        Ok(Self {
+            in_nc,
+            out_nc,
+            nc: [nc0, nc1, nc2, nc3],
+            nb,
+        })
     }
 }
 
@@ -80,7 +89,10 @@ struct ResBlock {
 
 impl ResBlock {
     fn new(nc: usize, vb: VarBuilder) -> Result<Self> {
-        let cfg = Conv2dConfig { padding: 1, ..Default::default() };
+        let cfg = Conv2dConfig {
+            padding: 1,
+            ..Default::default()
+        };
         Ok(Self {
             c1: candle_nn::conv2d_no_bias(nc, nc, 3, cfg, vb.pp("res.0"))?,
             c2: candle_nn::conv2d_no_bias(nc, nc, 3, cfg, vb.pp("res.2"))?,
@@ -119,36 +131,67 @@ impl DrUnet {
     /// Build from a `{name: tensor}` state dict (any device / dtype: the
     /// tensors are moved to `device` as `f32`).
     pub(super) fn from_tensors(tensors: HashMap<String, Tensor>, device: &Device) -> Result<Self> {
-        let shapes = tensors.iter().map(|(k, t)| (k.clone(), t.dims().to_vec())).collect();
+        let shapes = tensors
+            .iter()
+            .map(|(k, t)| (k.clone(), t.dims().to_vec()))
+            .collect();
         let arch = Arch::infer(&shapes)?;
         let vb = VarBuilder::from_tensors(tensors, DType::F32, device);
         Self::new(arch, vb, device.clone()).context("building DRUNet from the state dict")
     }
 
     fn new(arch: Arch, vb: VarBuilder, device: Device) -> Result<Self> {
-        let Arch { in_nc, out_nc, nc, nb } = arch;
-        let c3 = Conv2dConfig { padding: 1, ..Default::default() };
+        let Arch {
+            in_nc,
+            out_nc,
+            nc,
+            nb,
+        } = arch;
+        let c3 = Conv2dConfig {
+            padding: 1,
+            ..Default::default()
+        };
         let head = candle_nn::conv2d_no_bias(in_nc, nc[0], 3, c3, vb.pp("m_head"))?;
         let mut down = Vec::with_capacity(3);
         for (i, name) in ["m_down1", "m_down2", "m_down3"].iter().enumerate() {
             let v = vb.pp(name);
-            let blocks = (0..nb).map(|j| ResBlock::new(nc[i], v.pp(j.to_string()))).collect::<Result<Vec<_>>>()?;
-            let cfg = Conv2dConfig { stride: 2, ..Default::default() };
+            let blocks = (0..nb)
+                .map(|j| ResBlock::new(nc[i], v.pp(j.to_string())))
+                .collect::<Result<Vec<_>>>()?;
+            let cfg = Conv2dConfig {
+                stride: 2,
+                ..Default::default()
+            };
             let d = candle_nn::conv2d_no_bias(nc[i], nc[i + 1], 2, cfg, v.pp(nb.to_string()))?;
             down.push(Down { blocks, down: d });
         }
-        let body = (0..nb).map(|j| ResBlock::new(nc[3], vb.pp("m_body").pp(j.to_string()))).collect::<Result<Vec<_>>>()?;
+        let body = (0..nb)
+            .map(|j| ResBlock::new(nc[3], vb.pp("m_body").pp(j.to_string())))
+            .collect::<Result<Vec<_>>>()?;
         let mut up = Vec::with_capacity(3);
         for (k, name) in ["m_up3", "m_up2", "m_up1"].iter().enumerate() {
             let i = 3 - k; // this stage maps nc[i] → nc[i - 1]
             let v = vb.pp(name);
-            let cfg = ConvTranspose2dConfig { stride: 2, ..Default::default() };
+            let cfg = ConvTranspose2dConfig {
+                stride: 2,
+                ..Default::default()
+            };
             let u = candle_nn::conv_transpose2d_no_bias(nc[i], nc[i - 1], 2, cfg, v.pp("0"))?;
-            let blocks = (1..=nb).map(|j| ResBlock::new(nc[i - 1], v.pp(j.to_string()))).collect::<Result<Vec<_>>>()?;
+            let blocks = (1..=nb)
+                .map(|j| ResBlock::new(nc[i - 1], v.pp(j.to_string())))
+                .collect::<Result<Vec<_>>>()?;
             up.push(Up { up: u, blocks });
         }
         let tail = candle_nn::conv2d_no_bias(nc[0], out_nc, 3, c3, vb.pp("m_tail"))?;
-        Ok(Self { arch, device, head, down, body, up, tail })
+        Ok(Self {
+            arch,
+            device,
+            head,
+            down,
+            body,
+            up,
+            tail,
+        })
     }
 
     pub(super) fn arch(&self) -> Arch {
@@ -165,7 +208,10 @@ impl DrUnet {
     pub(super) fn forward(&self, x0: &Tensor) -> Result<Tensor> {
         let dims = x0.dims4().context("DRUNet input must be [1, C, H, W]")?;
         if dims.1 != self.arch.in_nc || dims.2 % ALIGN != 0 || dims.3 % ALIGN != 0 {
-            bail!("DRUNet input {dims:?}: want {} channels and H, W multiples of {ALIGN}", self.arch.in_nc);
+            bail!(
+                "DRUNet input {dims:?}: want {} channels and H, W multiples of {ALIGN}",
+                self.arch.in_nc
+            );
         }
         let x1 = self.head.forward(x0)?;
         let mut skips = vec![x1.clone()];

@@ -74,7 +74,8 @@ pub fn generate_thumbnail(
     let (rgb, width, height) =
         frame_to_rgb8(&captured.frame, captured.color).context("converting YUV → RGB")?;
     let quality = quality.round().clamp(1.0, 100.0) as u8;
-    let avif = crate::avif::encode_rgb(&rgb, width, height, quality).context("encoding AVIF still")?;
+    let avif =
+        crate::avif::encode_rgb(&rgb, width, height, quality).context("encoding AVIF still")?;
     Ok(ThumbnailOutput {
         bytes: avif,
         width,
@@ -106,9 +107,14 @@ pub(crate) struct StillSource {
 
 fn capture_frame_at_fraction(input_data: &Bytes, fraction: f64) -> Result<CapturedFrame> {
     let (_, mut frames) = capture_frames(input_data, |source| {
-        Ok(vec![((source.total_frames as f64) * fraction.clamp(0.0, 0.999)) as u64])
+        Ok(vec![
+            ((source.total_frames as f64) * fraction.clamp(0.0, 0.999)) as u64,
+        ])
     })?;
-    frames.pop().map(|(_, frame)| frame).ok_or_else(|| anyhow!("frame slot vanished"))
+    frames
+        .pop()
+        .map(|(_, frame)| frame)
+        .ok_or_else(|| anyhow!("frame slot vanished"))
 }
 
 /// Decode the source one sample at a time, keeping the frames at the indices
@@ -204,7 +210,13 @@ pub(crate) fn capture_frames(
             produced = true;
             let frame = colour_tag.apply(frame);
             while wanted.next_if_eq(&current_idx).is_some() {
-                kept.push((current_idx, CapturedFrame { frame: frame.clone(), color }));
+                kept.push((
+                    current_idx,
+                    CapturedFrame {
+                        frame: frame.clone(),
+                        color,
+                    },
+                ));
             }
             if wanted.peek().is_none() {
                 break 'decode;
@@ -375,7 +387,9 @@ pub(crate) fn frame_to_rgb8(frame: &VideoFrame, color: SourceColor) -> Result<(V
         // Already RGB — no matrix, just drop any alpha.
         PixelFormat::Rgb24 => data[..w * h * 3].to_vec(),
         PixelFormat::Rgba32 => data[..w * h * 4]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|px| [px[0], px[1], px[2]])
             .collect(),
     };
@@ -620,9 +634,9 @@ mod tests {
         assert_eq!(rgb.len(), 2 * 2 * 3, "{format:?} produced the wrong length");
 
         let want = expected_rgb();
-        for (i, px) in rgb.chunks_exact(3).enumerate() {
+        for (i, px) in rgb.as_chunks::<3>().0.iter().enumerate() {
             assert_eq!(
-                px, want,
+                *px, want,
                 "{format:?} pixel {i} disagrees with the 8-bit 4:2:0 baseline",
             );
         }

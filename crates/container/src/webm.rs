@@ -89,7 +89,12 @@ impl AudioState {
     /// already stop at the input's end, which is not what a decoder makes
     /// of it, so the padding is counted from the packets themselves.
     fn trim(&self) -> AudioTrim {
-        let given = || self.samples.iter().map(|(_, d)| u64::from(*d)).collect::<Vec<u64>>();
+        let given = || {
+            self.samples
+                .iter()
+                .map(|(_, d)| u64::from(*d))
+                .collect::<Vec<u64>>()
+        };
         let decoded: Vec<u64> = if self.is_opus() {
             self.samples
                 .iter()
@@ -102,21 +107,38 @@ impl AudioState {
         };
         let total: u64 = decoded.iter().sum();
         let (start, pre_skip) = if self.is_opus() {
-            let head = u64::from(u16::from_le_bytes([self.info.codec_private[2], self.info.codec_private[3]]));
-            let start = if self.edit.media_time == 0 { head } else { self.edit.media_time };
+            let head = u64::from(u16::from_le_bytes([
+                self.info.codec_private[2],
+                self.info.codec_private[3],
+            ]));
+            let start = if self.edit.media_time == 0 {
+                head
+            } else {
+                self.edit.media_time
+            };
             (start, start.min(u64::from(u16::MAX)))
         } else {
             (self.edit.media_time, 0)
         };
         let start = start.min(total);
-        let end = self.edit.duration.map_or(total, |d| start.saturating_add(d)).clamp(start, total);
+        let end = self
+            .edit
+            .duration
+            .map_or(total, |d| start.saturating_add(d))
+            .clamp(start, total);
         // Keep every packet that starts before the end (at least one).
         let (mut packets, mut at) = (0usize, 0u64);
         while packets < decoded.len() && (packets == 0 || at < end) {
             at += decoded[packets];
             packets += 1;
         }
-        AudioTrim { packets, pre_skip, leading_discard: start - pre_skip, end_padding: at - end, presented: end - start }
+        AudioTrim {
+            packets,
+            pre_skip,
+            leading_discard: start - pre_skip,
+            end_padding: at - end,
+            presented: end - start,
+        }
     }
 }
 
@@ -151,7 +173,11 @@ impl WebmMuxer {
     /// Start the video late: `delay` ticks of `timescale` before its first
     /// frame (a source whose video started late, carried through).
     pub fn set_video_delay(&mut self, delay: u64, timescale: u32) -> &mut Self {
-        self.video_delay_ms = if timescale == 0 { 0 } else { delay * 1000 / u64::from(timescale) };
+        self.video_delay_ms = if timescale == 0 {
+            0
+        } else {
+            delay * 1000 / u64::from(timescale)
+        };
         self
     }
 
@@ -160,10 +186,17 @@ impl WebmMuxer {
     pub fn check_audio(info: &AudioInfo) -> Result<()> {
         if info.codec.eq_ignore_ascii_case("vorbis") {
             if info.codec_private.first() != Some(&2) {
-                bail!("Vorbis audio without its three headers in Xiph lacing ({} bytes of codec private)", info.codec_private.len());
+                bail!(
+                    "Vorbis audio without its three headers in Xiph lacing ({} bytes of codec private)",
+                    info.codec_private.len()
+                );
             }
             if info.timescale == 0 || !(1..=8).contains(&info.channels) {
-                bail!("Vorbis audio of {} channels timed at {} Hz", info.channels, info.timescale);
+                bail!(
+                    "Vorbis audio of {} channels timed at {} Hz",
+                    info.channels,
+                    info.timescale
+                );
             }
             return Ok(());
         }
@@ -171,7 +204,10 @@ impl WebmMuxer {
             bail!("WebM carries Opus or Vorbis audio, not {}", info.codec);
         }
         if info.codec_private.len() < 11 {
-            bail!("Opus audio without an OpusHead ({} bytes of codec private)", info.codec_private.len());
+            bail!(
+                "Opus audio without an OpusHead ({} bytes of codec private)",
+                info.codec_private.len()
+            );
         }
         if info.timescale != 48_000 {
             bail!("Opus audio is timed at 48 kHz, not {}", info.timescale);
@@ -182,7 +218,11 @@ impl WebmMuxer {
     /// Add an Opus or Vorbis audio track.
     pub fn with_audio(&mut self, info: AudioInfo) -> Result<&mut Self> {
         Self::check_audio(&info)?;
-        self.audio = Some(AudioState { info, edit: TrackEdit::default(), samples: Vec::new() });
+        self.audio = Some(AudioState {
+            info,
+            edit: TrackEdit::default(),
+            samples: Vec::new(),
+        });
         Ok(self)
     }
 
@@ -202,7 +242,10 @@ impl WebmMuxer {
 
     /// One audio packet, `duration` ticks of the track's timescale long.
     pub fn add_audio_sample(&mut self, sample: &[u8], duration: u32) -> Result<()> {
-        let a = self.audio.as_mut().context("add_audio_sample before with_audio")?;
+        let a = self
+            .audio
+            .as_mut()
+            .context("add_audio_sample before with_audio")?;
         a.samples.push((sample.to_vec(), duration));
         Ok(())
     }
@@ -216,7 +259,10 @@ impl WebmMuxer {
         }
         .unwrap_or(packet.is_keyframe);
         if self.video.is_empty() && !key {
-            bail!("WebM mux: the first {} frame is not a key frame", self.codec.label());
+            bail!(
+                "WebM mux: the first {} frame is not a key frame",
+                self.codec.label()
+            );
         }
         self.video.push((packet.data, packet.pts, key));
         Ok(())
@@ -237,18 +283,27 @@ impl WebmMuxer {
             rank[i] = r;
         }
         let delay = self.video_delay_ms;
-        let video_ms = |i: usize| delay + ((rank[i] as f64 * frame_ns) / TIMESTAMP_SCALE_NS as f64).round() as u64;
-        let video_duration_ms = delay + (self.video.len() as f64 * frame_ns / TIMESTAMP_SCALE_NS as f64).round() as u64;
+        let video_ms = |i: usize| {
+            delay + ((rank[i] as f64 * frame_ns) / TIMESTAMP_SCALE_NS as f64).round() as u64
+        };
+        let video_duration_ms =
+            delay + (self.video.len() as f64 * frame_ns / TIMESTAMP_SCALE_NS as f64).round() as u64;
 
         // Every block, in time order: (ms, track, key, data, discard padding
         // in ns — written in a BlockGroup when non-zero).
-        let mut blocks: Vec<(u64, u8, bool, &[u8], i64)> =
-            self.video.iter().enumerate().map(|(i, (d, _, k))| (video_ms(i), 1u8, *k, d.as_ref(), 0)).collect();
+        let mut blocks: Vec<(u64, u8, bool, &[u8], i64)> = self
+            .video
+            .iter()
+            .enumerate()
+            .map(|(i, (d, _, k))| (video_ms(i), 1u8, *k, d.as_ref(), 0))
+            .collect();
         let mut audio_duration_ms = 0u64;
         if let Some(a) = &self.audio {
             let ts = u64::from(a.info.timescale.max(1));
             let trim = a.trim();
-            let ns = |ticks: u64| ((u128::from(ticks) * 1_000_000_000 + u128::from(ts) / 2) / u128::from(ts)) as i64;
+            let ns = |ticks: u64| {
+                ((u128::from(ticks) * 1_000_000_000 + u128::from(ts) / 2) / u128::from(ts)) as i64
+            };
             // Vorbis's hidden lead-in is on the presentation timeline before
             // the first presented sample; Opus's is `CodecDelay`, which a
             // player subtracts from every block's timestamp itself.
@@ -262,7 +317,13 @@ impl WebmMuxer {
                 if i == 0 {
                     padding -= ns(trim.leading_discard);
                 }
-                blocks.push((t.saturating_sub(lead) * 1000 / ts, 2u8, true, data.as_slice(), padding));
+                blocks.push((
+                    t.saturating_sub(lead) * 1000 / ts,
+                    2u8,
+                    true,
+                    data.as_slice(),
+                    padding,
+                ));
                 t += u64::from(*dur);
             }
             audio_duration_ms = (a.edit.delay + trim.presented) * 1000 / ts;
@@ -290,7 +351,8 @@ impl WebmMuxer {
                 cue_times.push((ms, idx));
             }
             let (start, body) = clusters.last_mut().expect("a cluster");
-            let rel = i16::try_from(ms as i64 - *start as i64).context("block timestamp outside its cluster")?;
+            let rel = i16::try_from(ms as i64 - *start as i64)
+                .context("block timestamp outside its cluster")?;
             let mut sb = Vec::with_capacity(data.len() + 4);
             sb.push(0x80 | track); // track number as a one-byte vint
             sb.extend_from_slice(&rel.to_be_bytes());
@@ -308,12 +370,19 @@ impl WebmMuxer {
                 put_element(body, 0xA0, &group); // BlockGroup
             }
         }
-        let clusters: Vec<Vec<u8>> = clusters.into_iter().map(|(_, b)| element(0x1F43B675, &b)).collect();
+        let clusters: Vec<Vec<u8>> = clusters
+            .into_iter()
+            .map(|(_, b)| element(0x1F43B675, &b))
+            .collect();
 
         let info = {
             let mut b = Vec::new();
             put_uint(&mut b, 0x2AD7B1, TIMESTAMP_SCALE_NS);
-            put_float(&mut b, 0x4489, video_duration_ms.max(audio_duration_ms) as f64);
+            put_float(
+                &mut b,
+                0x4489,
+                video_duration_ms.max(audio_duration_ms) as f64,
+            );
             put_string(&mut b, 0x4D80, "rivet");
             put_string(&mut b, 0x5741, "rivet");
             element(0x1549A966, &b)
@@ -323,7 +392,11 @@ impl WebmMuxer {
         // Layout of the Segment's body: SeekHead, Info, Tracks, Clusters,
         // Cues. The SeekHead is a fixed size (8-byte positions), so every
         // position is known before anything is written.
-        let seek_head_len = element(0x114D9B74, &seek_head_body(&[(0x1549A966, 0), (0x1654AE6B, 0), (0x1C53BB6B, 0)])).len();
+        let seek_head_len = element(
+            0x114D9B74,
+            &seek_head_body(&[(0x1549A966, 0), (0x1654AE6B, 0), (0x1C53BB6B, 0)]),
+        )
+        .len();
         let info_pos = seek_head_len as u64;
         let tracks_pos = info_pos + info.len() as u64;
         let mut cluster_pos = Vec::with_capacity(clusters.len());
@@ -346,12 +419,23 @@ impl WebmMuxer {
             }
             element(0x1C53BB6B, &b)
         };
-        let seek_head =
-            element(0x114D9B74, &seek_head_body(&[(0x1549A966, info_pos), (0x1654AE6B, tracks_pos), (0x1C53BB6B, cues_pos)]));
+        let seek_head = element(
+            0x114D9B74,
+            &seek_head_body(&[
+                (0x1549A966, info_pos),
+                (0x1654AE6B, tracks_pos),
+                (0x1C53BB6B, cues_pos),
+            ]),
+        );
         debug_assert_eq!(seek_head.len(), seek_head_len);
 
-        let mut segment_body =
-            Vec::with_capacity(seek_head.len() + info.len() + tracks.len() + clusters.iter().map(Vec::len).sum::<usize>() + cues.len());
+        let mut segment_body = Vec::with_capacity(
+            seek_head.len()
+                + info.len()
+                + tracks.len()
+                + clusters.iter().map(Vec::len).sum::<usize>()
+                + cues.len(),
+        );
         segment_body.extend_from_slice(&seek_head);
         segment_body.extend_from_slice(&info);
         segment_body.extend_from_slice(&tracks);
@@ -372,7 +456,15 @@ impl WebmMuxer {
         put_uint(&mut video, 0x73C5, 1); // TrackUID
         put_uint(&mut video, 0x83, 1); // TrackType: video
         put_uint(&mut video, 0x9C, 0); // FlagLacing
-        put_string(&mut video, 0x86, if self.codec == VideoCodec::Vp9 { "V_VP9" } else { "V_VP8" });
+        put_string(
+            &mut video,
+            0x86,
+            if self.codec == VideoCodec::Vp9 {
+                "V_VP9"
+            } else {
+                "V_VP8"
+            },
+        );
         put_uint(&mut video, 0x23E383, (1e9 / self.frame_rate).round() as u64); // DefaultDuration
         let mut v = Vec::new();
         put_uint(&mut v, 0xB0, u64::from(self.width)); // PixelWidth
@@ -402,11 +494,23 @@ impl WebmMuxer {
                 head[8] = 1; // the OpusHead version (a dOps-sourced body says 0)
                 head[10..12].copy_from_slice(&(pre_skip as u16).to_le_bytes());
                 put_element(&mut audio, 0x63A2, &head); // CodecPrivate
-                put_uint(&mut audio, 0x56AA, (pre_skip * 1_000_000_000 + 24_000) / 48_000); // CodecDelay
+                put_uint(
+                    &mut audio,
+                    0x56AA,
+                    (pre_skip * 1_000_000_000 + 24_000) / 48_000,
+                ); // CodecDelay
                 put_uint(&mut audio, 0x56BB, 80_000_000); // SeekPreRoll
             }
             let mut au = Vec::new();
-            put_float(&mut au, 0xB5, if vorbis { f64::from(a.info.sample_rate) } else { 48_000.0 }); // SamplingFrequency
+            put_float(
+                &mut au,
+                0xB5,
+                if vorbis {
+                    f64::from(a.info.sample_rate)
+                } else {
+                    48_000.0
+                },
+            ); // SamplingFrequency
             put_uint(&mut au, 0x9F, u64::from(a.info.channels)); // Channels
             put_element(&mut audio, 0xE1, &au); // Audio
             out.extend_from_slice(&element(0xAE, &audio));
@@ -421,7 +525,11 @@ fn colour_body(c: &ColorMetadata) -> Vec<u8> {
     let mut b = Vec::new();
     put_uint(&mut b, 0x55B1, u64::from(c.matrix_coefficients)); // MatrixCoefficients
     put_uint(&mut b, 0x55B9, if c.full_range { 2 } else { 1 }); // Range
-    put_uint(&mut b, 0x55BA, u64::from(crate::mux::transfer_to_h273(c.transfer))); // TransferCharacteristics
+    put_uint(
+        &mut b,
+        0x55BA,
+        u64::from(crate::mux::transfer_to_h273(c.transfer)),
+    ); // TransferCharacteristics
     put_uint(&mut b, 0x55BB, u64::from(c.colour_primaries)); // Primaries
     if let Some(cll) = c.content_light_level {
         put_uint(&mut b, 0x55BC, u64::from(cll.max_cll)); // MaxCLL
@@ -558,7 +666,13 @@ mod tests {
 
     #[test]
     fn signed_ints_are_minimal_twos_complement() {
-        for (v, want) in [(0i64, vec![0x00]), (127, vec![0x7F]), (128, vec![0x00, 0x80]), (-1, vec![0xFF]), (-129, vec![0xFF, 0x7F])] {
+        for (v, want) in [
+            (0i64, vec![0x00]),
+            (127, vec![0x7F]),
+            (128, vec![0x00, 0x80]),
+            (-1, vec![0xFF]),
+            (-129, vec![0xFF, 0x7F]),
+        ] {
             let mut b = Vec::new();
             put_int(&mut b, 0x75A2, v);
             assert_eq!(b[3..], want[..], "{v}");
@@ -595,24 +709,48 @@ mod tests {
         m.with_audio(info).unwrap();
         // 10 packets (9600 samples) for 8000 presented after the pre-skip:
         // the 9th ends at 8640, 328 past the end; the 10th is all padding.
-        m.set_audio_edit(TrackEdit { delay: 0, media_time: 312, duration: Some(8000) });
+        m.set_audio_edit(TrackEdit {
+            delay: 0,
+            media_time: 312,
+            duration: Some(8000),
+        });
         for _ in 0..10 {
             m.add_audio_sample(&opus_packet(), 960).unwrap();
         }
         let trim = m.audio.as_ref().unwrap().trim();
         assert_eq!(
             trim,
-            AudioTrim { packets: 9, pre_skip: 312, leading_discard: 0, end_padding: 328, presented: 8000 }
+            AudioTrim {
+                packets: 9,
+                pre_skip: 312,
+                leading_discard: 0,
+                end_padding: 328,
+                presented: 8000
+            }
         );
-        m.add_packet(EncodedPacket { data: bytes::Bytes::from_static(&[0x82, 0x49, 0x83, 0x42, 0x00]), pts: 0, is_keyframe: true })
-            .unwrap();
+        m.add_packet(EncodedPacket {
+            data: bytes::Bytes::from_static(&[0x82, 0x49, 0x83, 0x42, 0x00]),
+            pts: 0,
+            is_keyframe: true,
+        })
+        .unwrap();
         let file = m.finalize().unwrap();
         let trims = crate::demux::mkv::scan_mkv_audio_trims(&file, 2).unwrap();
         assert_eq!(trims.codec_delay_ns, 6_500_000);
-        assert_eq!((trims.first_padding_ns, trims.last_padding_ns), (0, 6_833_333));
+        assert_eq!(
+            (trims.first_padding_ns, trims.last_padding_ns),
+            (0, 6_833_333)
+        );
         let (track, edit) = crate::demux::audio::extract_mkv_audio_and_edit(&file).unwrap();
         assert_eq!(track.samples.len(), 9);
-        assert_eq!(edit, Some(crate::edit::AudioEdit { delay: 0, media_start: 312, media_end: Some(8312) }));
+        assert_eq!(
+            edit,
+            Some(crate::edit::AudioEdit {
+                delay: 0,
+                media_start: 312,
+                media_end: Some(8312)
+            })
+        );
     }
 
     #[test]

@@ -9,11 +9,13 @@ use crate::annexb::ParamSetTracker;
 use crate::demux::AudioTrack;
 use crate::streaming::{DemuxHeader, Sample, StreamingDemuxer};
 
-use super::opendml::{locate_stream_indx, parse_ix_chunk, read_avih_total_frames,
-                     read_dmlh_total_frames};
-use super::riff::{LengthPrefixed, VideoStream, ascii, find_video_stream, fourcc_to_codec,
-                  frame_pacing, frames_per_second, length_prefixed, scan_top_level_records,
-                  video_frame_positions};
+use super::opendml::{
+    locate_stream_indx, parse_ix_chunk, read_avih_total_frames, read_dmlh_total_frames,
+};
+use super::riff::{
+    LengthPrefixed, VideoStream, ascii, find_video_stream, fourcc_to_codec, frame_pacing,
+    frames_per_second, length_prefixed, scan_top_level_records, video_frame_positions,
+};
 
 // ---------------------------------------------------------------------------
 // Backend enum
@@ -146,8 +148,7 @@ pub(crate) fn demux_avi_streaming_init(data: bytes::Bytes) -> Result<AviStreamin
                 parse_ix_chunk(&owned, ix_off, ix_size, &prefix, &mut samples);
             }
             let chunks = samples.len() as u64;
-            let positions: Vec<u64> =
-                (0..chunks).filter(|&i| samples[i as usize].1 > 0).collect();
+            let positions: Vec<u64> = (0..chunks).filter(|&i| samples[i as usize].1 > 0).collect();
             (Backend::OpenDml { samples, cursor: 0 }, chunks, positions)
         } else {
             let (chunks, positions) = video_frame_positions(&owned, &movi_lists, &prefix);
@@ -212,7 +213,8 @@ pub(crate) fn demux_avi_streaming_init(data: bytes::Bytes) -> Result<AviStreamin
         bitrate: 0,
     };
 
-    let audio = super::audio::read_audio(&owned, &owned[hdrl_start..hdrl_end], &movi_lists_for_audio);
+    let audio =
+        super::audio::read_audio(&owned, &owned[hdrl_start..hdrl_end], &movi_lists_for_audio);
     let audio_edit = audio.as_ref().and_then(|a| a.edit);
     let mut demuxer = AviStreamingDemuxer {
         data: owned,
