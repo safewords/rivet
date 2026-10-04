@@ -118,46 +118,93 @@ impl ProresEncoder {
     /// The pipeline's 4:2:0 frame as the profile's 4:2:2 / 4:4:4 one.
     fn picture(&self, data: &[u8]) -> Result<prores::Frame> {
         let ten = self.format == PixelFormat::Yuv420p10le;
-        let sample = |i: usize| -> u16 {
-            if ten { u16::from_le_bytes([data[2 * i], data[2 * i + 1]]) } else { u16::from(data[i]) }
-        };
         let chroma = self.profile.chroma();
         let mut f = prores::Frame::new(self.width, self.height, chroma, if ten { 10 } else { 8 })
             .context("the ProRes encoder refused the frame size")?;
         let (w, h) = (self.width as usize, self.height as usize);
-        for (i, s) in f.plane_mut(0).iter_mut().enumerate() {
-            *s = sample(i);
-        }
         let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
-        let four_four = chroma == prores::ChromaFormat::Yuv444;
-        let out_w = if four_four { w } else { cw };
+        let bytes = if ten { 2 } else { 1 };
+        if data.len() < (w * h + 2 * cw * ch) * bytes {
+            bail!("the ProRes encoder was given a short frame");
+        }
+        widen(&data[..w * h * bytes], ten, f.plane_mut(0));
+        let mut src = vec![0u16; cw * ch];
         for plane in 1..3 {
-            let base = w * h + (plane - 1) * cw * ch;
-            let c = |x: usize, y: usize| -> u32 { u32::from(sample(base + y.min(ch - 1) * cw + x.min(cw - 1))) };
-            // 4:2:0 → 4:2:2: output row y lies a quarter of a chroma row from
-            // its nearest input row, toward the next one.
-            let vertical = |x: usize, y: usize| -> u32 {
-                let k = y / 2;
-                let other = if y.is_multiple_of(2) { k.saturating_sub(1) } else { k + 1 };
-                (3 * c(x, k) + c(x, other) + 2) / 4
-            };
-            let out = f.plane_mut(plane);
-            for y in 0..h {
-                for x in 0..out_w {
-                    out[y * out_w + x] = if four_four {
-                        if x % 2 == 0 {
-                            vertical(x / 2, y)
-                        } else {
-                            (vertical(x / 2, y) + vertical(x / 2 + 1, y)).div_ceil(2)
-                        }
-                    } else {
-                        vertical(x, y)
-                    } as u16;
-                }
-            }
+            let base = (w * h + (plane - 1) * cw * ch) * bytes;
+            widen(&data[base..base + cw * ch * bytes], ten, &mut src);
+            upsample_chroma(
+                &src,
+                cw,
+                ch,
+                w,
+                h,
+                chroma == prores::ChromaFormat::Yuv444,
+                f.plane_mut(plane),
+            );
         }
         f.metadata = self.metadata;
         Ok(f)
+    }
+}
+
+/// Samples as u16: 8-bit bytes, or 16-bit little-endian pairs.
+fn widen(data: &[u8], ten: bool, out: &mut [u16]) {
+    if ten {
+        for (o, pair) in out.iter_mut().zip(data.chunks_exact(2)) {
+            *o = u16::from_le_bytes([pair[0], pair[1]]);
+        }
+    } else {
+        for (o, &b) in out.iter_mut().zip(data) {
+            *o = u16::from(b);
+        }
+    }
+}
+
+/// One `cw` x `ch` 4:2:0 chroma plane as the `h`-row 4:2:2 plane (`cw` wide)
+/// or, with `four_four`, the `w`-wide 4:4:4 one. Output row `y` lies a
+/// quarter of a chroma row from its nearest input row, toward the next one
+/// (edge rows repeat); a 4:4:4 odd column averages its neighbours, rounding
+/// up.
+fn upsample_chroma(
+    src: &[u16],
+    cw: usize,
+    ch: usize,
+    w: usize,
+    h: usize,
+    four_four: bool,
+    out: &mut [u16],
+) {
+    let out_w = if four_four { w } else { cw };
+    let mut vertical = vec![0u16; cw];
+    for (y, row) in out.chunks_exact_mut(out_w).take(h).enumerate() {
+        let k = y / 2;
+        let other = if y.is_multiple_of(2) {
+            k.saturating_sub(1)
+        } else {
+            (k + 1).min(ch - 1)
+        };
+        let (near, far) = (&src[k * cw..][..cw], &src[other * cw..][..cw]);
+        for ((v, &a), &b) in vertical.iter_mut().zip(near).zip(far) {
+            *v = ((3 * u32::from(a) + u32::from(b) + 2) / 4) as u16;
+        }
+        if four_four {
+            // Column pairs: the even one is the chroma sample, the odd one
+            // the mean with the next (the last repeats); an odd width ends
+            // on a lone even column.
+            let next = vertical[1..]
+                .iter()
+                .chain(std::iter::once(&vertical[cw - 1]));
+            let mut pairs = row.chunks_exact_mut(2);
+            for ((pair, &a), &b) in (&mut pairs).zip(&vertical).zip(next) {
+                pair[0] = a;
+                pair[1] = (u32::from(a) + u32::from(b)).div_ceil(2) as u16;
+            }
+            if let [last] = pairs.into_remainder() {
+                *last = vertical[cw - 1];
+            }
+        } else {
+            row.copy_from_slice(&vertical);
+        }
     }
 }
 
@@ -193,6 +240,81 @@ impl Encoder for ProresEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The former per-sample conversion, kept as the reference the row-wise
+    /// one must equal.
+    fn upsample_reference(
+        src: &[u16],
+        cw: usize,
+        ch: usize,
+        w: usize,
+        h: usize,
+        four_four: bool,
+    ) -> Vec<u16> {
+        let c = |x: usize, y: usize| -> u32 { u32::from(src[y.min(ch - 1) * cw + x.min(cw - 1)]) };
+        let vertical = |x: usize, y: usize| -> u32 {
+            let k = y / 2;
+            let other = if y.is_multiple_of(2) {
+                k.saturating_sub(1)
+            } else {
+                k + 1
+            };
+            (3 * c(x, k) + c(x, other) + 2) / 4
+        };
+        let out_w = if four_four { w } else { cw };
+        let mut out = vec![0u16; out_w * h];
+        for y in 0..h {
+            for x in 0..out_w {
+                out[y * out_w + x] = if four_four {
+                    if x % 2 == 0 {
+                        vertical(x / 2, y)
+                    } else {
+                        (vertical(x / 2, y) + vertical(x / 2 + 1, y)).div_ceil(2)
+                    }
+                } else {
+                    vertical(x, y)
+                } as u16;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn chroma_upsampling_equals_the_per_sample_reference() {
+        let mut seed = 0x1234_5678_u32;
+        for (w, h) in [
+            (1usize, 1usize),
+            (2, 2),
+            (3, 5),
+            (17, 9),
+            (64, 48),
+            (33, 31),
+        ] {
+            let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+            for max in [255u32, 1023] {
+                let src: Vec<u16> = (0..cw * ch)
+                    .map(|i| {
+                        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                        if i % 7 == 0 {
+                            max as u16
+                        } else {
+                            ((seed >> 8) % (max + 1)) as u16
+                        }
+                    })
+                    .collect();
+                for four_four in [false, true] {
+                    let out_w = if four_four { w } else { cw };
+                    let mut got = vec![0u16; out_w * h];
+                    upsample_chroma(&src, cw, ch, w, h, four_four, &mut got);
+                    assert_eq!(
+                        got,
+                        upsample_reference(&src, cw, ch, w, h, four_four),
+                        "{w}x{h} max {max} 444 {four_four}"
+                    );
+                }
+            }
+        }
+    }
 
     fn psnr(a: &[u16], b: &[u16], max: f64) -> f64 {
         let mse: f64 =
