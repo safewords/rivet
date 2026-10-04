@@ -38,7 +38,7 @@ use std::collections::VecDeque;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 
-use super::native::{ReferenceFirst, average_rate, check_frame, frame_rate_ratio, quantizer, tier};
+use super::native::{ReferenceFirst, average_rate, check_frame, frame_rate_ratio, quantizer, threads, tier};
 use super::tuning::SpeedTier;
 use super::{EncodedPacket, Encoder, EncoderConfig};
 use crate::frame::{PixelFormat, VideoCodec, VideoFrame};
@@ -77,6 +77,7 @@ impl Mpeg2Encoder {
             SpeedTier::Standard => 32,
             SpeedTier::Archive => 64,
         };
+        cfg.threads = threads(&config);
         let inner = mpeg2::Encoder::new(cfg.clone()).context("the MPEG-2 encoder rejected the configuration")?;
         Ok(Self { inner, cfg, order: ReferenceFirst::default(), ready: VecDeque::new() })
     }
@@ -206,6 +207,17 @@ mod tests {
         }
         frames.extend(dec.flush().unwrap());
         assert_eq!(frames.len(), 8);
+    }
+
+    /// The rung's thread budget reaches the encoder; zero is the machine's.
+    #[test]
+    fn the_rung_thread_budget_reaches_the_encoder() {
+        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Mpeg2, ..Default::default() };
+        let all = std::thread::available_parallelism().map_or(1, |n| n.get());
+        for (asked, want) in [(3, 3), (0, all)] {
+            let enc = Mpeg2Encoder::new(EncoderConfig { threads: asked, ..base.clone() }).unwrap();
+            assert_eq!(enc.cfg.threads, want, "threads {asked}");
+        }
     }
 
     #[test]

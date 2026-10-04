@@ -36,7 +36,9 @@ impl Vp9Decoder {
         if !supports(&codec) {
             bail!("the VP9 decoder decodes VP9, not '{codec}'");
         }
-        Ok(Self { inner: vp9::Decoder::new(), info, ready: VecDeque::new(), next_pts: 0 })
+        let mut inner = vp9::Decoder::new();
+        inner.set_threads(super::sw_decode_threads("RIVET_VP9_DECODE_THREADS"));
+        Ok(Self { inner, info, ready: VecDeque::new(), next_pts: 0 })
     }
 
     fn convert(&mut self, frame: vp9::Frame) -> Result<VideoFrame> {
@@ -111,6 +113,22 @@ mod tests {
             total_frames: 0,
             bitrate: 0,
             color_metadata: Default::default(),
+        }
+    }
+
+    /// The decoder decodes on the software decoders' thread count.
+    #[test]
+    fn decodes_on_the_software_decoder_threads() {
+        let dec = Vp9Decoder::new(info("vp9")).expect("decoder");
+        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_VP9_DECODE_THREADS"));
+    }
+
+    /// Inside a decode pump's thread budget the decoder takes the budget.
+    #[test]
+    fn a_pump_budget_bounds_the_decoder_threads() {
+        let dec = crate::filter::with_thread_budget(3, || Vp9Decoder::new(info("vp9")).expect("decoder"));
+        if std::env::var("RIVET_VP9_DECODE_THREADS").is_err() {
+            assert_eq!(dec.inner.threads(), 3);
         }
     }
 

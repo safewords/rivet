@@ -86,6 +86,15 @@ pub(crate) fn quantizer(config: &EncoderConfig) -> u8 {
     tuning::native_sw_quantizer(config.codec, config.target, &config.overrides)
 }
 
+/// The threads a native encoder codes on: the rung's budget
+/// ([`EncoderConfig::threads`], which the pipeline divides between the
+/// encoders it runs at once), or, at zero, the runtime's available
+/// parallelism — which respects a container CPU quota where the crates' own
+/// "one per core" does not (as `h26x_sw` resolves it).
+pub(crate) fn threads(config: &EncoderConfig) -> usize {
+    if config.threads > 0 { config.threads } else { std::thread::available_parallelism().map_or(1, |n| n.get()) }
+}
+
 /// The speed tier the rung asks for.
 pub(crate) fn tier(config: &EncoderConfig) -> tuning::SpeedTier {
     config.overrides.speed_tier.unwrap_or(config.tier)

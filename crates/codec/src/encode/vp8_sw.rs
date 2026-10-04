@@ -22,6 +22,13 @@
 //! No rate control — a bitrate rung is refused by name. The speed tier sets
 //! the motion search range (8 / 16 / 32 samples).
 //!
+//! # Threads
+//!
+//! Each frame encodes on [`EncoderConfig::threads`] threads (0: one per
+//! CPU); the stream does not depend on the count. Frames 720 lines or taller
+//! are written with four token partitions, so a decoder (this crate's
+//! included) can decode their macroblock rows in parallel.
+//!
 //! # Colour
 //!
 //! VP8 has one colour space (BT.601, RFC 6386 §9.2) and signals nothing
@@ -33,7 +40,7 @@ use std::collections::VecDeque;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 
-use super::native::{check_frame, quantizer, refuse_any_rate, tier};
+use super::native::{check_frame, quantizer, refuse_any_rate, threads, tier};
 use super::tuning::SpeedTier;
 use super::{EncodedPacket, Encoder, EncoderConfig};
 use crate::frame::{PixelFormat, VideoCodec, VideoFrame};
@@ -68,6 +75,8 @@ impl Vp8Encoder {
                 SpeedTier::Standard => 16,
                 SpeedTier::Archive => 32,
             },
+            token_partitions: if config.height >= 720 { 4 } else { 1 },
+            threads: threads(&config),
             ..vp8::Config::default()
         };
         let inner = vp8::Encoder::new(cfg.clone()).context("the VP8 encoder rejected the configuration")?;
@@ -130,6 +139,17 @@ mod tests {
         enc.force_keyframe_next().unwrap();
         enc.send_frame(&super::super::native::test_picture(w, h, 5)).unwrap();
         assert!(enc.receive_packet().unwrap().unwrap().is_keyframe);
+    }
+
+    /// The rung's thread budget reaches the encoder; zero is the machine's.
+    #[test]
+    fn the_rung_thread_budget_reaches_the_encoder() {
+        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Vp8, ..Default::default() };
+        let all = std::thread::available_parallelism().map_or(1, |n| n.get());
+        for (asked, want) in [(3, 3), (0, all)] {
+            let enc = Vp8Encoder::new(EncoderConfig { threads: asked, ..base.clone() }).unwrap();
+            assert_eq!(enc.cfg.threads, want, "threads {asked}");
+        }
     }
 
     #[test]

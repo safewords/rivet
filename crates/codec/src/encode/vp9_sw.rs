@@ -56,7 +56,7 @@ use std::collections::VecDeque;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 
-use super::native::{average_rate, quantizer, tier};
+use super::native::{average_rate, quantizer, threads, tier};
 use super::tuning::SpeedTier;
 use super::{EncodedPacket, Encoder, EncoderConfig};
 use crate::frame::{ColorMetadata, PixelFormat, VideoCodec, VideoFrame};
@@ -138,6 +138,7 @@ impl Vp9Encoder {
                 cfg.search_range = 32;
             }
         }
+        cfg.threads = threads(&config);
         cfg.color_space = color_space(&config.color_metadata);
         cfg.full_range = config.color_metadata.full_range;
         cfg.validate().context("the VP9 encoder rejected the configuration")?;
@@ -203,6 +204,17 @@ impl Encoder for Vp9Encoder {
 mod tests {
     use super::*;
     use crate::encode::tuning::{EncodeOverrides, RateMode};
+
+    /// The rung's thread budget reaches the encoder; zero is the machine's.
+    #[test]
+    fn the_rung_thread_budget_reaches_the_encoder() {
+        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Vp9, ..Default::default() };
+        let all = std::thread::available_parallelism().map_or(1, |n| n.get());
+        for (asked, want) in [(3, 3), (0, all)] {
+            let enc = Vp9Encoder::new(EncoderConfig { threads: asked, ..base.clone() }).unwrap();
+            assert_eq!(enc.cfg.threads, want, "threads {asked}");
+        }
+    }
 
     fn psnr8(a: &[u8], b: &[u8]) -> f64 {
         let mse = a.iter().zip(b).map(|(x, y)| (f64::from(*x) - f64::from(*y)).powi(2)).sum::<f64>() / a.len() as f64;

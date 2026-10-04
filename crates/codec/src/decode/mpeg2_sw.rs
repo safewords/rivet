@@ -34,7 +34,9 @@ impl Mpeg2Decoder {
         if !supports(&codec) {
             bail!("the MPEG-2 decoder decodes MPEG-1/2 video, not '{codec}'");
         }
-        Ok(Self { inner: mpeg2::Decoder::new(), info, ready: VecDeque::new(), next_pts: 0 })
+        let mut inner = mpeg2::Decoder::new();
+        inner.set_threads(super::sw_decode_threads("RIVET_MPEG2_DECODE_THREADS"));
+        Ok(Self { inner, info, ready: VecDeque::new(), next_pts: 0 })
     }
 
     /// The colour matrix the sequence signals (ITU-T H.273 codes), or the
@@ -117,6 +119,13 @@ mod tests {
             bitrate: 0,
             color_metadata: Default::default(),
         }
+    }
+
+    /// The decoder decodes on the software decoders' thread count.
+    #[test]
+    fn decodes_on_the_software_decoder_threads() {
+        let dec = Mpeg2Decoder::new(info("mpeg2")).expect("decoder");
+        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_MPEG2_DECODE_THREADS"));
     }
 
     #[test]

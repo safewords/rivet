@@ -35,7 +35,7 @@ impl ProresDecoder {
         if !supports(&codec) {
             bail!("the ProRes decoder decodes ProRes, not '{codec}'");
         }
-        Ok(Self { inner: prores::Decoder::new(), info, ready: VecDeque::new(), next_pts: 0 })
+        Ok(Self { inner: prores::Decoder::new().with_threads(super::sw_decode_threads("RIVET_PRORES_DECODE_THREADS")), info, ready: VecDeque::new(), next_pts: 0 })
     }
 
     /// The frame's colour matrix, from its header (ITU-T H.273 codes), or the
