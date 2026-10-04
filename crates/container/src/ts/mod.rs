@@ -18,6 +18,12 @@
 //!   0x81 (AC-3, ATSC A/53), 0x87 (E-AC-3, ATSC A/53), and 0x06 (PES
 //!   private) when the ES descriptor loop carries a registration_descriptor
 //!   tagged "AC-3" / "EAC3" (DVB / ETSI TS 101 154) — Squad-37.
+//! - Packet framing (`detect_packet_layout`): 188-byte packets, BDAV /
+//!   Blu-ray `.m2ts` 192-byte source packets (the 4-byte TP_extra_header
+//!   stripped), and 204-byte packets (the 16 parity bytes passed over).
+//! - Blu-ray audio: LPCM (stream_type 0x80, `bd_lpcm`), AC-3 (0x81), DTS and
+//!   DTS-HD (0x82, 0x85, 0x86: the core), E-AC-3 (0x84, 0xA1); Dolby TrueHD
+//!   (0x83) and DTS Express (0xA2) are named and refused.
 //! - Encrypted streams (`transport_scrambling_control != 0` on the active
 //!   video PID) trip a one-time typed warn and switch the demuxer into a
 //!   drop-everything mode (Squad-37); previously the bytes were silently
@@ -42,12 +48,11 @@
 //! - Multiple video streams within one program (we take the first).
 //! - Adaptation-field-only packets with payload=0 are passed over
 //!   transparently.
-//! - BDAV 192-byte wrapper (the 4-byte timestamp prefix) — if present,
-//!   we detect and strip it.
 //! - Common-Access (CA) tables: encrypted streams are dropped, not
 //!   decrypted (we don't carry CA descriptors).
 
 pub(crate) mod audio;
+mod bd_lpcm;
 mod clock;
 mod discontinuity;
 mod framerate;
@@ -127,6 +132,11 @@ pub(super) const STREAM_TYPE_TRUEHD: u8 = 0x83;
 pub(super) const STREAM_TYPE_BD_EAC3: u8 = 0x84;
 pub(super) const STREAM_TYPE_DTS_HD_HR: u8 = 0x85;
 pub(super) const STREAM_TYPE_DTS_HD_MA: u8 = 0x86;
+/// Blu-ray secondary audio (the picture-in-picture commentary track): Dolby
+/// Digital Plus (0xA1), read as E-AC-3, and DTS-HD LBR / DTS Express (0xA2),
+/// which has no DTS core and no reader in rivet.
+pub(super) const STREAM_TYPE_BD_SECONDARY_EAC3: u8 = 0xA1;
+pub(super) const STREAM_TYPE_BD_SECONDARY_DTS: u8 = 0xA2;
 /// ISO/IEC 13818-1 Table 2-34: MPEG-4 audio in LATM (0x11) and with no
 /// additional transport syntax (0x1C) — AAC rivet does not unwrap.
 pub(super) const STREAM_TYPE_AAC_LATM: u8 = 0x11;
@@ -165,6 +175,9 @@ pub enum AudioCodecKind {
     /// 0x82 / 0x85 / 0x86, or 0x06 + registration "DTS1".."DTS3" or the DVB
     /// DTS audio descriptor).
     Dts,
+    /// Blu-ray LPCM (stream_type 0x80): read into little-endian PCM in
+    /// WAVE channel order (`bd_lpcm`).
+    BdLpcm,
     /// An audio stream rivet has no reader for, by the name it is reported
     /// under: surfaced as a named track with no packets, so a job refuses it
     /// by name rather than writing the video alone.
@@ -186,6 +199,7 @@ impl AudioCodecKind {
             AudioCodecKind::MpegAudio => "mp3",
             AudioCodecKind::Opus { .. } => "opus",
             AudioCodecKind::Dts => "dts",
+            AudioCodecKind::BdLpcm => "pcm_bluray",
             AudioCodecKind::Unsupported(name) => name,
         }
     }
@@ -228,24 +242,42 @@ pub struct ProgramInfo {
 // Shared private helpers used by both entry points
 // ---------------------------------------------------------------------------
 
-/// Decide whether the file uses 188-byte (plain TS) or 192-byte (BDAV
-/// M2TS) packets. Returns (packet_count, stride, prefix_len).
-/// BDAV prepends a 4-byte TP_extra_header before each 188-byte TS
-/// packet, so stride=192 and prefix_len=4. For plain TS stride=188
-/// and prefix_len=0.
+/// The packet framings a transport stream is read in, as `(stride,
+/// prefix)`: plain 188-byte packets (ISO/IEC 13818-1); BDAV / Blu-ray
+/// `.m2ts` 192-byte source packets, each a 4-byte `TP_extra_header`
+/// (2-bit copy_permission_indicator, 30-bit arrival_time_stamp) before the
+/// 188-byte packet; and 204-byte packets, the 188 followed by 16 bytes of
+/// Reed-Solomon parity (ETSI EN 300 468 / DVB, as some capture devices
+/// store them).
+const LAYOUTS: [(usize, usize); 3] = [(TS_PACKET, 0), (192, 4), (204, 0)];
+
+/// The packet framing of a transport stream, as `(stride, prefix)`, from its
+/// first bytes: the sync byte where the framing puts the first packet's and
+/// the second's, and the third's when the bytes reach it (one `0x47` alone
+/// turns up in any payload). `None` when no framing fits. The container
+/// sniffer and the demuxer both read it, so the two cannot disagree about a
+/// file.
+pub(crate) fn sniff_layout(data: &[u8]) -> Option<(usize, usize)> {
+    LAYOUTS.into_iter().find(|&(stride, prefix)| {
+        let at = |k: usize| data.get(prefix + k * stride).copied();
+        at(0) == Some(TS_SYNC)
+            && at(1) == Some(TS_SYNC)
+            && at(2).is_none_or(|b| b == TS_SYNC)
+    })
+}
+
+/// Decide the packet framing ([`sniff_layout`]): 188-byte plain TS, 192-byte
+/// BDAV M2TS (a 4-byte prefix stripped from each), or 204-byte (16 bytes of
+/// parity after each). Returns `(packet_count, stride, prefix_len)`, the
+/// count being the packets whose 188 bytes are all there.
 pub(super) fn detect_packet_layout(data: &[u8]) -> Result<(usize, usize, usize)> {
     if data.len() < TS_PACKET {
         bail!("TS: file too small");
     }
-    // Plain 188-byte: sync at 0, 188, 376...
-    if data[0] == TS_SYNC && data.len() >= 2 * TS_PACKET && data[TS_PACKET] == TS_SYNC {
-        return Ok((data.len() / TS_PACKET, TS_PACKET, 0));
-    }
-    // M2TS 192-byte: 4-byte prefix, then sync at 4, 196, 388...
-    if data.len() >= 192 + 4 && data[4] == TS_SYNC && data[196] == TS_SYNC {
-        return Ok((data.len() / 192, 192, 4));
-    }
-    bail!("TS: could not locate 0x47 sync pattern at 188- or 192-byte intervals")
+    let Some((stride, prefix)) = sniff_layout(data) else {
+        bail!("TS: could not locate 0x47 sync pattern at 188-, 192- or 204-byte intervals")
+    };
+    Ok(((data.len() - prefix - TS_PACKET) / stride + 1, stride, prefix))
 }
 
 /// Extract the PSI (PAT/PMT) section payload from a TS packet whose PID

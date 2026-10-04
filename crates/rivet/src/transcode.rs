@@ -93,10 +93,11 @@ impl AudioHandling {
 pub fn transcode_file(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Result<TranscodeOutcome> {
     let input = input.as_ref();
     let output = output.as_ref();
+    crate::output_guard::refuse_input_as_output(output, &[input])?;
     let bytes = std::fs::read(input)
         .with_context(|| format!("reading input file {}", input.display()))?;
     let outcome = transcode_bytes(&bytes)?;
-    std::fs::write(output, &outcome.output_bytes)
+    crate::output_guard::write_atomic(output, &outcome.output_bytes)
         .with_context(|| format!("writing output file {}", output.display()))?;
     Ok(outcome)
 }

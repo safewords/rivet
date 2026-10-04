@@ -172,6 +172,18 @@ Multi-rung single-file jobs write `<dir>/<label>.mp4` per rung (e.g.
 `720p.mp4`). HLS jobs write the usual `master.m3u8` + `audio/` + `video/<h>p/`
 tree into the directory. Parent directories are created as needed.
 
+**Never the input.** A name the batch derives (the last two rows) that would be
+the input file itself — `clip.mp4` to MP4 with no `output_dir`, `song.mp3` in
+`mode: audio`, the same file in another case on a file system that ignores
+case — gets `.rivet` before its extension instead: `clip.rivet.mp4`,
+`song.rivet.mp3`. An `output` given verbatim that resolves to the input (by
+any spelling: a case variant, `..`, a symbolic or hard link), or an HLS
+directory holding the input where the package writes (`master.m3u8`, or
+anything under it), fails that job before any work with a `refusing to write
+…` error, the source untouched. A finished file is written to a temporary file
+beside its target and renamed over it, so an existing file at the target is
+replaced only whole, once the job has succeeded.
+
 ---
 
 ## How it runs

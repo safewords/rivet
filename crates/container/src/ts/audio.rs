@@ -816,6 +816,19 @@ pub(super) fn extract_ts_audio(
                 track,
             }))
         }
+        AudioCodecKind::BdLpcm => {
+            let (es, pes) = reassemble_audio_pes(data, packets, packet_stride, prefix_len, info.pid);
+            let starts: Vec<usize> = pes.iter().map(|&(at, _, _)| at).collect();
+            let Some((track, starts)) = super::bd_lpcm::bd_lpcm_from_pes(&es, &starts)? else {
+                return Ok(None);
+            };
+            Ok(Some(TsAudio {
+                first_pts: first_frame_pts(&pes, &starts, &track.durations, track.sample_rate),
+                pes,
+                frame_starts: starts,
+                track,
+            }))
+        }
         AudioCodecKind::Unsupported(name) => bail!("TS: no reader for {name} audio"),
     }
 }

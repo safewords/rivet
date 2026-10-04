@@ -54,7 +54,7 @@ fn audio_track(file: &[u8]) -> container::demux::AudioTrack {
 }
 
 /// Decode a file's audio track to integers: (codec, samples, bit depth).
-fn decode(file: &[u8]) -> (String, Vec<i32>, u32) {
+pub(super) fn decode(file: &[u8]) -> (String, Vec<i32>, u32) {
     let t = audio_track(file);
     let mut out = Vec::new();
     let bits = match t.codec.as_str() {
