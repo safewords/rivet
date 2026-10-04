@@ -398,9 +398,9 @@ pub fn decode_capabilities() -> Vec<DecodeSupport> {
 /// takes the codec.
 /// The threads one of the workspace's own threaded software decoders (VP8,
 /// VP9, MPEG-2, ProRes) decodes on: `env` when it holds a positive count,
-/// else the [thread budget](crate::filter::with_thread_budget) of the decode
-/// pump building it (several range pumps share the machine), else the
-/// runtime's available parallelism, which respects a container CPU quota. A
+/// else the runtime's available parallelism (which respects a container CPU
+/// quota) held to the [thread budget](crate::threads) of the decode pump
+/// building it (several range pumps, or several jobs, share the machine). A
 /// lone pump decodes the source once for the whole ladder, so one decoder
 /// owning the cores is the intended shape (as `h26x_sw`); the output does
 /// not depend on the count.
@@ -409,8 +409,7 @@ pub(crate) fn sw_decode_threads(env: &str) -> usize {
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
         .filter(|&n| n > 0)
-        .or_else(|| Some(crate::filter::thread_budget()).filter(|&n| n > 0))
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+        .unwrap_or_else(|| crate::threads::cap(std::thread::available_parallelism().map_or(1, |n| n.get())))
 }
 
 pub fn create_decoder(codec: &str, info: StreamInfo) -> Result<Box<dyn Decoder>> {

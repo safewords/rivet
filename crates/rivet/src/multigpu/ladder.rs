@@ -373,15 +373,21 @@ pub(super) fn plan_ranges(params: &MultiGpuParams<'_>, shape: LadderShape, capac
     vec![DecodeRange::whole_source()]
 }
 
-/// The filter thread budget of each of `pumps` decode pumps running at once:
-/// `0` (the filters' own default, the whole machine) for a lone pump, else
-/// the machine divided among them, at least one thread each.
+/// The thread budget of each of `pumps` decode pumps running at once: this
+/// job's share of the machine ([`crate::thread_budget::per_job`]) divided
+/// among them.
 fn filter_threads_per_pump(pumps: usize) -> usize {
+    pump_share(crate::thread_budget::per_job(), pumps)
+}
+
+/// `job_threads` among `pumps` pumps: `0` (no narrower budget than the pump
+/// sets itself, the job's share) for a lone pump, else an equal part, at
+/// least one thread each.
+fn pump_share(job_threads: usize, pumps: usize) -> usize {
     if pumps <= 1 {
         return 0;
     }
-    let parallelism = std::thread::available_parallelism().map_or(1, |n| n.get());
-    (parallelism / pumps).max(1)
+    (job_threads / pumps).max(1)
 }
 
 /// One pump per range, each on its own decode-capable card, each fanning out
@@ -1018,10 +1024,10 @@ mod tests {
     /// A lone pump's filters keep the machine; several share it.
     #[test]
     fn pumps_share_the_filter_threads() {
-        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
-        assert_eq!(filter_threads_per_pump(1), 0);
-        assert_eq!(filter_threads_per_pump(2), (cores / 2).max(1));
-        assert_eq!(filter_threads_per_pump(cores * 4), 1);
+        assert_eq!(pump_share(32, 1), 0);
+        assert_eq!(pump_share(32, 2), 16);
+        assert_eq!(pump_share(16, 3), 5, "a job's half of 32 cores among three pumps");
+        assert_eq!(pump_share(4, 16), 1);
     }
     use codec::frame::{ColorSpace, PixelFormat};
     use std::time::Duration;

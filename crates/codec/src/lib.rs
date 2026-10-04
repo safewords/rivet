@@ -30,6 +30,7 @@ pub use ::frame::pixel_format;
 pub mod probe;
 pub mod quality;
 pub mod simd;
+pub mod threads;
 #[cfg(feature = "qsv")]
 pub(crate) mod qsv_ffi;
 pub mod tonemap;

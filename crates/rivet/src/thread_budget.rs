@@ -11,10 +11,31 @@
 //! machine's parallelism divided by the jobs running now, never below one.
 //! The encoders' output does not depend on their thread count, so this
 //! changes only how the cores are shared.
+//!
+//! A process set up to run several jobs at once — `rivet serve` with several
+//! job slots — says so with [`reserve_jobs`]: the share is then reckoned
+//! against at least that many jobs, so the first of N concurrent jobs does
+//! not size its pools to the whole machine before the others arrive (they
+//! would then oversubscribe it until it ended).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static RUNNING: AtomicUsize = AtomicUsize::new(0);
+/// [`reserve_jobs`]' count (0 and 1 alike: one job).
+static RESERVED: AtomicUsize = AtomicUsize::new(0);
+
+/// Reckon every job's share against at least `jobs` jobs from now on: the
+/// number this process may run at once. Set once, at startup, by the
+/// server.
+pub fn reserve_jobs(jobs: usize) {
+    RESERVED.store(jobs, Ordering::SeqCst);
+}
+
+/// The jobs each share is reckoned against: those running now, or the
+/// reserved count when that is more.
+pub fn sharing_jobs(running: usize, reserved: usize) -> usize {
+    running.max(reserved).max(1)
+}
 
 /// A running job's place in the budget, released when dropped.
 #[must_use = "the job counts against the budget only while the slot is held"]
@@ -48,14 +69,30 @@ pub fn share(parallelism: usize, jobs: usize) -> usize {
 }
 
 /// The threads one job's encoder gets: the machine shared by the jobs
-/// running now.
+/// running now, or by the [reserved](reserve_jobs) count when that is more.
 pub fn per_job() -> usize {
-    share(parallelism(), running_jobs())
+    share(parallelism(), sharing_jobs(running_jobs(), RESERVED.load(Ordering::SeqCst)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reserved_jobs_hold_each_share_to_one_nth() {
+        // A server with two slots: one job running alone still gets half.
+        assert_eq!(share(32, sharing_jobs(1, 2)), 16);
+        assert_eq!(share(32, sharing_jobs(2, 2)), 16);
+        // More running than reserved (jobs outside the server): those count.
+        assert_eq!(share(32, sharing_jobs(4, 2)), 8);
+        // Nothing reserved: the jobs running now, as before.
+        assert_eq!(share(32, sharing_jobs(1, 0)), 32);
+        assert_eq!(share(32, sharing_jobs(0, 0)), 32);
+        // N slots together never ask for more than the machine.
+        for slots in 1..=40 {
+            assert!(slots * share(32, sharing_jobs(slots, slots)) <= 32.max(slots));
+        }
+    }
 
     #[test]
     fn the_machine_is_shared_and_never_below_one() {

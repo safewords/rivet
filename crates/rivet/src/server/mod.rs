@@ -25,12 +25,15 @@
 //! job's status carries its hook report (`hooks`), and a job a hook rejected
 //! ends `rejected` with the rejection (a `?sync=true` request gets `422`).
 //!
-//! **Concurrency.** A job sizes its own encoders and pools to the machine
-//! (the software slots and thread shares of `multigpu::gpu_policy`), so
-//! jobs run one at a time by default: a request accepted while another job
-//! runs stays `queued` until it ends, rather than each job spreading over
-//! every core at once. [`SERVER_JOBS_ENV`] raises the limit (a GPU host whose
-//! jobs are mostly hardware encodes, say).
+//! **Concurrency.** The server runs as many jobs at once as the host has
+//! hardware encode devices this build can use (one per card: two Arc cards,
+//! two jobs), and one on a host without any; [`SERVER_JOBS_ENV`] overrides
+//! it. A request accepted while every slot is busy stays `queued` until one
+//! frees, in arrival order. The CPU is shared the same way: with N slots,
+//! every job's thread budget — software encoders and decoders, worker
+//! pools, the decode pump's filters and colour conversions — is a 1/N share
+//! of the machine ([`crate::thread_budget`]), even while it runs alone, so
+//! the jobs together never ask for more threads than the machine has.
 //!
 //! The job registry is in-memory; completed single-file artifacts are held in
 //! RAM until the process exits (fine for a sidecar/worker, not a public CDN —
@@ -70,14 +73,22 @@ pub(super) const MAX_UPLOAD: usize = 4 * 1024 * 1024 * 1024;
 // State
 // ---------------------------------------------------------------------------
 
-/// Environment variable: how many jobs `rivet serve` runs at once (default
-/// 1; at least 1). Jobs beyond it wait, `queued`, in arrival order.
+/// Environment variable: how many jobs `rivet serve` runs at once (at least
+/// 1). Unset, it is the host's hardware encode devices, at least one. Jobs
+/// beyond it wait, `queued`, in arrival order.
 pub const SERVER_JOBS_ENV: &str = "RIVET_SERVER_JOBS";
 
 /// The number of jobs run at once: `value` (the [`SERVER_JOBS_ENV`] setting)
-/// as a whole number of at least one, else one.
-pub(super) fn concurrent_jobs(value: Option<&str>) -> usize {
-    value.and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n >= 1).unwrap_or(1)
+/// as a whole number of at least one, else `encode_devices` (the host's
+/// usable hardware encode devices), at least one.
+pub(super) fn concurrent_jobs(value: Option<&str>, encode_devices: usize) -> usize {
+    value.and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n >= 1).unwrap_or(encode_devices.max(1))
+}
+
+/// The cards on this host a job can encode on: detected, openable by this
+/// process, and with their vendor's backend in this build.
+fn host_encode_devices() -> usize {
+    codec::encode::hardware_encode_devices(codec::gpu::detect_gpus_cached().iter().map(|d| d.vendor))
 }
 
 #[derive(Clone)]
@@ -93,7 +104,11 @@ pub struct AppState {
 
 impl AppState {
     fn new(hooks: crate::hooks::Hooks) -> Self {
-        let slots = concurrent_jobs(std::env::var(SERVER_JOBS_ENV).ok().as_deref());
+        let slots = concurrent_jobs(std::env::var(SERVER_JOBS_ENV).ok().as_deref(), host_encode_devices());
+        // Every job's share of the CPU is reckoned against the slots, so the
+        // jobs together fit the machine however many are running.
+        crate::thread_budget::reserve_jobs(slots);
+        tracing::info!(slots, "rivet serve: jobs at once");
         Self::with_slots(hooks, slots)
     }
 
