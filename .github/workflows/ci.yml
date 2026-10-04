@@ -329,28 +329,24 @@ jobs:
     name: multi-GPU scheduling (both of devbox's Intel cards)
     # Its runner needs both of devbox's cards free at once, so it runs after
     # this run's per-codec jobs have let go of them (whatever they concluded:
-    # a codec failure must not hide the scheduling results), and one at a
-    # time across runs. The group is on this job, not the workflow: a
-    # workflow-level group would also queue every run's per-codec jobs behind
-    # the previous run, and GitHub cancels a queued member that a newer one
-    # replaces, so a burst of pushes would lose whole runs instead of only
-    # their scheduling job. A one-card job from another run can still hold a
-    # devbox card for a while; the pod then waits for it.
+    # a codec failure must not hide the scheduling results). A one-card job
+    # from another run can still hold a devbox card for a while; the pod
+    # then waits for it.
     #
-    # No other GPU work can share the cards while it runs, so no concurrency
-    # group with the per-card jobs is needed (and one would cost: a group
-    # runs one member and keeps one pending, cancelling the rest). The pod
-    # requests gpu.intel.com/i915: 2 on devbox, which has exactly two, and
-    # the device plugin runs with -shared-dev-num 1, so while it holds them
-    # no other pod (safewords-runners-gpu, or another org's GPU runners,
-    # all of which request i915) is given either card: per-card jobs queued
-    # meanwhile run on vulpes-zerda's A310 or wait. Other pods can still
-    # load devbox's CPU, which is what the interleaved timings are for.
+    # The cards are its alone while it runs, with no concurrency group: the
+    # pod requests gpu.intel.com/i915: 2 on devbox, which has exactly two,
+    # and the device plugin runs with -shared-dev-num 1, so no other pod
+    # (safewords-runners-gpu, or another org's GPU runners, all of which
+    # request i915) is given either card meanwhile; per-card jobs queued
+    # then run on vulpes-zerda's A310 or wait. The runner set has one
+    # runner, so scheduling jobs of several runs simply queue for it. A
+    # concurrency group (there was one) keeps only one pending member and
+    # cancels the rest ("a higher priority waiting request ... exists"),
+    # which lost the scheduling job of every develop push in a burst but
+    # the last. Other pods can still load devbox's CPU (it is also a CI
+    # node), which is what the interleaved best-of-3 timings are for.
     needs: [gpu-build, gpu-devices, gpu-codec]
     if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.gpu-build.result == 'success' }}
-    concurrency:
-      group: safewords-runners-gpu-x2
-      cancel-in-progress: false
     runs-on: safewords-runners-gpu-x2
     env:
       NO_COLOR: "1"
