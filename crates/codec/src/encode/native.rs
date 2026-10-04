@@ -24,7 +24,13 @@ use crate::frame::{PixelFormat, VideoCodec, VideoFrame};
 
 /// The bytes of a `width` x `height` frame in `format` (4:2:0 planar, 8 or
 /// 10 bits), or an error naming `name` for a frame the encoder cannot take.
-pub(crate) fn check_frame(name: &str, frame: &VideoFrame, width: u32, height: u32, formats: &[PixelFormat]) -> Result<usize> {
+pub(crate) fn check_frame(
+    name: &str,
+    frame: &VideoFrame,
+    width: u32,
+    height: u32,
+    formats: &[PixelFormat],
+) -> Result<usize> {
     if !formats.contains(&frame.format) {
         bail!(
             "the {name} encoder takes {formats:?} frames and got a {:?} one. Convert with the colorspace \
@@ -41,9 +47,17 @@ pub(crate) fn check_frame(name: &str, frame: &VideoFrame, width: u32, height: u3
     }
     let (cw, ch) = (width.div_ceil(2) as usize, height.div_ceil(2) as usize);
     let samples = width as usize * height as usize + 2 * cw * ch;
-    let want = if frame.format == PixelFormat::Yuv420p10le { samples * 2 } else { samples };
+    let want = if frame.format == PixelFormat::Yuv420p10le {
+        samples * 2
+    } else {
+        samples
+    };
     if frame.data.len() < want {
-        bail!("frame buffer is {} bytes, too short for {width}x{height} {:?} ({want} expected)", frame.data.len(), frame.format);
+        bail!(
+            "frame buffer is {} bytes, too short for {width}x{height} {:?} ({want} expected)",
+            frame.data.len(),
+            frame.format
+        );
     }
     Ok(want)
 }
@@ -51,7 +65,11 @@ pub(crate) fn check_frame(name: &str, frame: &VideoFrame, width: u32, height: u3
 /// `frame_rate` as a ratio: the NTSC rates as their `/1001` fractions, a
 /// whole rate over 1, anything else to a thousandth.
 pub(crate) fn frame_rate_ratio(frame_rate: f64) -> (u32, u32) {
-    let fps = if frame_rate.is_finite() && frame_rate > 0.0 { frame_rate } else { 30.0 };
+    let fps = if frame_rate.is_finite() && frame_rate > 0.0 {
+        frame_rate
+    } else {
+        30.0
+    };
     for n in [24_000u32, 30_000, 48_000, 60_000, 120_000] {
         if (fps - f64::from(n) / 1001.0).abs() < 0.005 {
             return (n, 1001);
@@ -92,7 +110,11 @@ pub(crate) fn quantizer(config: &EncoderConfig) -> u8 {
 /// parallelism — which respects a container CPU quota where the crates' own
 /// "one per core" does not (as `h26x_sw` resolves it).
 pub(crate) fn threads(config: &EncoderConfig) -> usize {
-    if config.threads > 0 { config.threads } else { std::thread::available_parallelism().map_or(1, |n| n.get()) }
+    if config.threads > 0 {
+        config.threads
+    } else {
+        std::thread::available_parallelism().map_or(1, |n| n.get())
+    }
 }
 
 /// The speed tier the rung asks for.
@@ -124,7 +146,9 @@ pub(crate) fn refuse_any_rate(name: &str, config: &EncoderConfig) -> Result<()> 
 pub(crate) fn average_rate(name: &str, config: &EncoderConfig) -> Result<Option<u32>> {
     let o = &config.overrides;
     if o.rate_mode == Some(tuning::RateMode::Constant) {
-        bail!("the {name} encoder codes an average rate, not a constant one (rate=cbr): drop rate=cbr");
+        bail!(
+            "the {name} encoder codes an average rate, not a constant one (rate=cbr): drop rate=cbr"
+        );
     }
     if o.buffer_ms.is_some_and(|ms| ms > 0) {
         bail!(
@@ -187,7 +211,14 @@ pub(crate) fn test_picture(w: u32, h: u32, n: u64) -> VideoFrame {
             data[(y * w + x) as usize] = ((x * 3 + y * 2 + n as u32 * 4) % 220 + 16) as u8;
         }
     }
-    VideoFrame::new(bytes::Bytes::from(data), w, h, PixelFormat::Yuv420p, crate::frame::ColorSpace::Bt709, n)
+    VideoFrame::new(
+        bytes::Bytes::from(data),
+        w,
+        h,
+        PixelFormat::Yuv420p,
+        crate::frame::ColorSpace::Bt709,
+        n,
+    )
 }
 
 #[cfg(test)]

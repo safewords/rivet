@@ -71,7 +71,10 @@ pub fn mpeg4_config(data: &[u8]) -> Option<&[u8]> {
         .iter()
         .find(|(_, c)| matches!(*c, MPEG4_VOP | MPEG4_GOV))
         .map_or(data.len(), |(o, _)| *o);
-    codes.iter().any(|(o, c)| *o < end && is_mpeg4_vol(*c)).then(|| &data[start..end])
+    codes
+        .iter()
+        .any(|(o, c)| *o < end && is_mpeg4_vol(*c))
+        .then(|| &data[start..end])
 }
 
 /// Whether `data` carries an MPEG-4 video object layer header in band.
@@ -81,7 +84,9 @@ pub fn has_mpeg4_vol(data: &[u8]) -> bool {
 
 /// Whether `data` carries an MPEG-1 / MPEG-2 sequence header.
 pub fn has_mpeg2_sequence_header(data: &[u8]) -> bool {
-    start_codes(data).iter().any(|(_, c)| *c == MPEG2_SEQUENCE_HEADER)
+    start_codes(data)
+        .iter()
+        .any(|(_, c)| *c == MPEG2_SEQUENCE_HEADER)
 }
 
 /// MPEG-1 / MPEG-2 `picture_coding_type` of each picture in `data`, in
@@ -184,7 +189,9 @@ mod tests {
 
     #[test]
     fn mpeg4_config_is_everything_before_the_first_vop() {
-        let mut s = vec![0, 0, 1, 0xb0, 1, 0, 0, 1, 0xb5, 9, 0, 0, 1, 0x00, 0, 0, 1, 0x20, 5, 6];
+        let mut s = vec![
+            0, 0, 1, 0xb0, 1, 0, 0, 1, 0xb5, 9, 0, 0, 1, 0x00, 0, 0, 1, 0x20, 5, 6,
+        ];
         let cfg_len = s.len();
         s.extend([0, 0, 1, 0xb6, 0x10, 0xff]);
         let second = s.len();

@@ -70,7 +70,10 @@ impl AacDecoder {
             None => aac::decode::Decoder::new_adts(),
         };
         inner.set_core_only(core_only);
-        Ok(Self { inner, layout: None })
+        Ok(Self {
+            inner,
+            layout: None,
+        })
     }
 
     /// Whether the stream turned out to be HE-AAC.
@@ -115,9 +118,17 @@ impl AudioDecoder for AacDecoder {
 /// What the first access unit of an AAC track says: the rate and channels
 /// it decodes to (for HE-AAC the SBR rate, or the core's with `core_only`)
 /// and whether it is HE-AAC. `asc` empty means the packets are ADTS.
-pub fn probe(asc: &[u8], first: &[u8], core_only: bool) -> Result<aac::decode::StreamInfo, AudioError> {
+pub fn probe(
+    asc: &[u8],
+    first: &[u8],
+    core_only: bool,
+) -> Result<aac::decode::StreamInfo, AudioError> {
     let asc = (!asc.is_empty()).then_some(asc);
-    let mut d = if core_only { AacDecoder::new_core_only(asc)? } else { AacDecoder::new(asc)? };
+    let mut d = if core_only {
+        AacDecoder::new_core_only(asc)?
+    } else {
+        AacDecoder::new(asc)?
+    };
     let frame = d
         .inner
         .decode(first)
@@ -136,17 +147,32 @@ pub fn probe(asc: &[u8], first: &[u8], core_only: bool) -> Result<aac::decode::S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::encode::aac::{AacConfig, AacEncoder, adts_frame};
     use crate::audio::AudioEncoder;
+    use crate::audio::encode::aac::{AacConfig, AacEncoder, adts_frame};
 
     fn encode(rate: u32, channels: u8) -> (AacEncoder, Vec<Vec<u8>>) {
-        let mut enc = AacEncoder::new(AacConfig { sample_rate: rate, channels, bitrate: 0 }).unwrap();
+        let mut enc = AacEncoder::new(AacConfig {
+            sample_rate: rate,
+            channels,
+            bitrate: 0,
+        })
+        .unwrap();
         let n = usize::from(channels);
         let samples: Vec<f32> = (0..rate as usize * n / 2)
             .map(|i| 0.3 * ((i / n) as f32 * 0.03 * (1 + i % n) as f32).sin())
             .collect();
-        let frame = AudioFrame { samples, sample_rate: rate, channels, pts: 0 };
-        let mut aus: Vec<Vec<u8>> = enc.encode(&frame).unwrap().into_iter().map(|p| p.data).collect();
+        let frame = AudioFrame {
+            samples,
+            sample_rate: rate,
+            channels,
+            pts: 0,
+        };
+        let mut aus: Vec<Vec<u8>> = enc
+            .encode(&frame)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.data)
+            .collect();
         aus.extend(enc.flush().unwrap().into_iter().map(|p| p.data));
         (enc, aus)
     }
@@ -162,12 +188,18 @@ mod tests {
             let b = adts.decode(&framed, k as i64 * 21_333).unwrap();
             assert_eq!(a.len(), 1);
             assert_eq!(a[0].samples, b[0].samples);
-            assert_eq!((a[0].sample_rate, a[0].channels, a[0].pts), (48_000, 6, k as i64 * 21_333));
+            assert_eq!(
+                (a[0].sample_rate, a[0].channels, a[0].pts),
+                (48_000, 6, k as i64 * 21_333)
+            );
         }
         assert_eq!(raw.layout(), Some(ChannelLayout::named("5.1")));
         assert!(!raw.he_aac());
         let info = probe(&enc.audio_specific_config(), &aus[0], false).unwrap();
-        assert_eq!((info.sample_rate, info.channels, info.he_aac), (48_000, 6, None));
+        assert_eq!(
+            (info.sample_rate, info.channels, info.he_aac),
+            (48_000, 6, None)
+        );
     }
 
     #[test]
@@ -175,8 +207,14 @@ mod tests {
         let (enc, _) = encode(44_100, 2);
         let mut dec = AacDecoder::new(Some(&enc.audio_specific_config())).unwrap();
         // A single channel element that ends before its global gain.
-        assert!(matches!(dec.decode(&[0x00, 0x00], 0), Err(AudioError::Decode(_))));
-        assert!(matches!(AacDecoder::new(Some(&[0x0a, 0x10])), Err(AudioError::Unsupported(_))));
+        assert!(matches!(
+            dec.decode(&[0x00, 0x00], 0),
+            Err(AudioError::Decode(_))
+        ));
+        assert!(matches!(
+            AacDecoder::new(Some(&[0x0a, 0x10])),
+            Err(AudioError::Unsupported(_))
+        ));
     }
 
     /// An HE-AAC stream decodes at its SBR rate, or with `new_core_only` as
@@ -184,11 +222,29 @@ mod tests {
     #[test]
     fn he_aac_decodes_in_full_or_as_its_core() {
         use crate::audio::encode::aac::Profile;
-        let mut enc =
-            AacEncoder::with_profile(AacConfig { sample_rate: 48_000, channels: 2, bitrate: 0 }, Profile::HeAac).unwrap();
-        let samples: Vec<f32> = (0..48_000 * 2).map(|i| 0.3 * ((i / 2) as f32 * 0.05).sin()).collect();
-        let mut aus: Vec<Vec<u8>> =
-            enc.encode(&AudioFrame { samples, sample_rate: 48_000, channels: 2, pts: 0 }).unwrap().into_iter().map(|p| p.data).collect();
+        let mut enc = AacEncoder::with_profile(
+            AacConfig {
+                sample_rate: 48_000,
+                channels: 2,
+                bitrate: 0,
+            },
+            Profile::HeAac,
+        )
+        .unwrap();
+        let samples: Vec<f32> = (0..48_000 * 2)
+            .map(|i| 0.3 * ((i / 2) as f32 * 0.05).sin())
+            .collect();
+        let mut aus: Vec<Vec<u8>> = enc
+            .encode(&AudioFrame {
+                samples,
+                sample_rate: 48_000,
+                channels: 2,
+                pts: 0,
+            })
+            .unwrap()
+            .into_iter()
+            .map(|p| p.data)
+            .collect();
         aus.extend(enc.flush().unwrap().into_iter().map(|p| p.data));
         let asc = enc.audio_specific_config();
         let full = probe(&asc, &aus[0], false).unwrap();
@@ -197,7 +253,10 @@ mod tests {
         assert!(full.he_aac.is_some() && core.he_aac.is_some());
         let mut dec = AacDecoder::new(Some(&asc)).unwrap();
         let f = dec.decode(&aus[1], 0).unwrap();
-        assert_eq!((f[0].sample_rate, f[0].channels, f[0].samples.len()), (48_000, 2, 4096));
+        assert_eq!(
+            (f[0].sample_rate, f[0].channels, f[0].samples.len()),
+            (48_000, 2, 4096)
+        );
         assert!(dec.he_aac());
     }
 }

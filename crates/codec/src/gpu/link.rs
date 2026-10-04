@@ -32,7 +32,11 @@ impl PcieLink {
     /// coding (8b/10b to 5 GT/s, 128b/130b from 8 GT/s) times the lanes.
     pub fn gbytes_per_s(&self) -> f64 {
         let gts = f64::from(self.gts);
-        let per_lane = if gts <= 5.0 { gts * 0.8 / 8.0 } else { gts * (128.0 / 130.0) / 8.0 };
+        let per_lane = if gts <= 5.0 {
+            gts * 0.8 / 8.0
+        } else {
+            gts * (128.0 / 130.0) / 8.0
+        };
         per_lane * f64::from(self.width)
     }
 
@@ -52,7 +56,11 @@ impl PcieLink {
             g if g <= 32.0 => "5.0",
             _ => "6.0",
         };
-        format!("PCIe {generation} x{} ({:.1} GB/s)", self.width, self.gbytes_per_s())
+        format!(
+            "PCIe {generation} x{} ({:.1} GB/s)",
+            self.width,
+            self.gbytes_per_s()
+        )
     }
 }
 
@@ -71,8 +79,13 @@ pub struct PcieReport {
 #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
 pub fn bottleneck(chain: &[PcieLink]) -> Option<PcieLink> {
     let real: Vec<PcieLink> = chain.iter().copied().filter(|l| !l.is_nominal()).collect();
-    let pick = if real.is_empty() { chain.to_vec() } else { real };
-    pick.into_iter().min_by(|a, b| a.gbytes_per_s().total_cmp(&b.gbytes_per_s()))
+    let pick = if real.is_empty() {
+        chain.to_vec()
+    } else {
+        real
+    };
+    pick.into_iter()
+        .min_by(|a, b| a.gbytes_per_s().total_cmp(&b.gbytes_per_s()))
 }
 
 /// Parse sysfs `current_link_speed` (`"16.0 GT/s PCIe"`, `"8 GT/s"`) and
@@ -153,10 +166,21 @@ mod tests {
     #[test]
     fn link_bandwidth_follows_the_line_coding() {
         let gen3x2 = PcieLink { gts: 8.0, width: 2 };
-        let gen4x16 = PcieLink { gts: 16.0, width: 16 };
+        let gen4x16 = PcieLink {
+            gts: 16.0,
+            width: 16,
+        };
         let gen1x1 = PcieLink { gts: 2.5, width: 1 };
-        assert!((gen3x2.gbytes_per_s() - 1.97).abs() < 0.01, "{}", gen3x2.gbytes_per_s());
-        assert!((gen4x16.gbytes_per_s() - 31.5).abs() < 0.1, "{}", gen4x16.gbytes_per_s());
+        assert!(
+            (gen3x2.gbytes_per_s() - 1.97).abs() < 0.01,
+            "{}",
+            gen3x2.gbytes_per_s()
+        );
+        assert!(
+            (gen4x16.gbytes_per_s() - 31.5).abs() < 0.1,
+            "{}",
+            gen4x16.gbytes_per_s()
+        );
         assert!((gen1x1.gbytes_per_s() - 0.25).abs() < 1e-9);
         assert_eq!(gen3x2.describe(), "PCIe 3.0 x2 (2.0 GB/s)");
         assert_eq!(gen4x16.describe(), "PCIe 4.0 x16 (31.5 GB/s)");
@@ -164,9 +188,21 @@ mod tests {
 
     #[test]
     fn sysfs_link_attributes_parse() {
-        assert_eq!(parse_link("16.0 GT/s PCIe\n", "16\n"), Some(PcieLink { gts: 16.0, width: 16 }));
-        assert_eq!(parse_link("8 GT/s", "2"), Some(PcieLink { gts: 8.0, width: 2 }));
-        assert_eq!(parse_link("2.5 GT/s PCIe", "1"), Some(PcieLink { gts: 2.5, width: 1 }));
+        assert_eq!(
+            parse_link("16.0 GT/s PCIe\n", "16\n"),
+            Some(PcieLink {
+                gts: 16.0,
+                width: 16
+            })
+        );
+        assert_eq!(
+            parse_link("8 GT/s", "2"),
+            Some(PcieLink { gts: 8.0, width: 2 })
+        );
+        assert_eq!(
+            parse_link("2.5 GT/s PCIe", "1"),
+            Some(PcieLink { gts: 2.5, width: 1 })
+        );
         assert_eq!(parse_link("Unknown", "16"), None);
         assert_eq!(parse_link("8.0 GT/s PCIe", "0"), None);
         assert_eq!(parse_link("", ""), None);
@@ -177,7 +213,12 @@ mod tests {
         let path = "/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0/0000:02:01.0/0000:03:00.0";
         assert_eq!(
             pci_path_components(path),
-            vec!["0000:00:01.1", "0000:01:00.0", "0000:02:01.0", "0000:03:00.0"]
+            vec![
+                "0000:00:01.1",
+                "0000:01:00.0",
+                "0000:02:01.0",
+                "0000:03:00.0"
+            ]
         );
         assert!(pci_path_components("/sys/devices/platform/foo").is_empty());
     }
@@ -189,14 +230,20 @@ mod tests {
     #[test]
     fn the_bottleneck_skips_on_card_nominal_links() {
         let chain = [
-            PcieLink { gts: 16.0, width: 4 },
+            PcieLink {
+                gts: 16.0,
+                width: 4,
+            },
             PcieLink { gts: 8.0, width: 2 },
             PcieLink { gts: 2.5, width: 1 },
             PcieLink { gts: 2.5, width: 1 },
         ];
         assert_eq!(bottleneck(&chain), Some(PcieLink { gts: 8.0, width: 2 }));
         // Nothing but nominal links: that is the answer, for want of another.
-        assert_eq!(bottleneck(&chain[2..]), Some(PcieLink { gts: 2.5, width: 1 }));
+        assert_eq!(
+            bottleneck(&chain[2..]),
+            Some(PcieLink { gts: 2.5, width: 1 })
+        );
         assert_eq!(bottleneck(&[]), None);
     }
 }

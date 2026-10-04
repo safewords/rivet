@@ -70,9 +70,9 @@ mod saturation;
 mod vflip;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod denoise_quality_tests;
+#[cfg(test)]
+mod tests;
 
 pub use denoise::DenoiseMethod;
 pub use denoise::hqdn3d::Strengths as Hqdn3dStrengths;
@@ -266,7 +266,7 @@ impl fmt::Display for VideoFilter {
                     "hqdn3d={}:{}:{}:{}",
                     s.luma_spatial, s.chroma_spatial, s.luma_tmp, s.chroma_tmp
                 )
-    },
+            }
             VideoFilter::Dpir { sigma, color } => {
                 write!(f, "denoise=dpir:{sigma}")?;
                 if *color {
@@ -627,7 +627,9 @@ pub fn apply(frame: &VideoFrame, filter: &VideoFilter) -> Result<VideoFrame> {
             )
         }
         VideoFilter::Dpir { .. } => {
-            bail!("denoise=dpir is a resource filter — build a FilterChain::prepare(..) and call .apply()")
+            bail!(
+                "denoise=dpir is a resource filter — build a FilterChain::prepare(..) and call .apply()"
+            )
         }
     }
 }
@@ -724,12 +726,15 @@ impl FilterChain {
                 VideoFilter::Overlay { image, x, y } => {
                     // rivet's own PNG codec (`crates/png`): every colour type
                     // and depth, palette and tRNS transparency to RGBA.
-                    let bytes =
-                        std::fs::read(image).with_context(|| format!("opening overlay image '{image}'"))?;
-                    let png = rpng::decode(&bytes).map_err(|e| anyhow::anyhow!("decoding overlay image '{image}': {e}"))?;
+                    let bytes = std::fs::read(image)
+                        .with_context(|| format!("opening overlay image '{image}'"))?;
+                    let png = rpng::decode(&bytes)
+                        .map_err(|e| anyhow::anyhow!("decoding overlay image '{image}': {e}"))?;
                     let (w, h) = (png.image.width, png.image.height);
                     let rgba = png.image.to_rgba8();
-                    steps.push(Step::Overlay(overlay::PreparedOverlay::from_rgba(&rgba, w, h, *x, *y)?));
+                    steps.push(Step::Overlay(overlay::PreparedOverlay::from_rgba(
+                        &rgba, w, h, *x, *y,
+                    )?));
                 }
                 VideoFilter::Hqdn3d {
                     luma_spatial,
@@ -746,7 +751,10 @@ impl FilterChain {
                     steps.push(Step::Hqdn3d(denoise::hqdn3d::Prepared::new(s)));
                 }
                 VideoFilter::Dpir { sigma, color } => {
-                    steps.push(Step::Dpir(dpir::PreparedDpir::prepare(*sigma, *color).context("preparing denoise=dpir")?));
+                    steps.push(Step::Dpir(
+                        dpir::PreparedDpir::prepare(*sigma, *color)
+                            .context("preparing denoise=dpir")?,
+                    ));
                 }
                 other => steps.push(Step::Plain(other.clone())),
             }

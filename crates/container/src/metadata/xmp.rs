@@ -13,17 +13,31 @@ pub(crate) fn read(packet: &[u8], m: &mut Metadata) {
     let lat = prop(xml, "exif:GPSLatitude").and_then(|v| gps_coordinate(&v));
     let lon = prop(xml, "exif:GPSLongitude").and_then(|v| gps_coordinate(&v));
     if let (Some(lat), Some(lon)) = (lat, lon) {
-        let alt = prop(xml, "exif:GPSAltitude").and_then(|v| rational(&v)).map(|a| {
-            if prop(xml, "exif:GPSAltitudeRef").as_deref() == Some("1") { -a } else { a }
-        });
+        let alt = prop(xml, "exif:GPSAltitude")
+            .and_then(|v| rational(&v))
+            .map(|a| {
+                if prop(xml, "exif:GPSAltitudeRef").as_deref() == Some("1") {
+                    -a
+                } else {
+                    a
+                }
+            });
         m.set_location(Location::coordinates(lat, lon, alt));
     }
     if xml.contains("exif:GPS") || xml.contains("exifEX:GPS") {
         m.present.insert(Category::Location);
     }
-    for name in ["Iptc4xmpCore:Location", "photoshop:City", "Iptc4xmpExt:LocationShown", "Iptc4xmpExt:LocationCreated"] {
+    for name in [
+        "Iptc4xmpCore:Location",
+        "photoshop:City",
+        "Iptc4xmpExt:LocationShown",
+        "Iptc4xmpExt:LocationCreated",
+    ] {
         if let Some(v) = prop(xml, name) {
-            m.set_location(Location { name: Some(v), ..Default::default() });
+            m.set_location(Location {
+                name: Some(v),
+                ..Default::default()
+            });
         } else if xml.contains(name) {
             m.present.insert(Category::Location);
         }
@@ -47,7 +61,13 @@ pub(crate) fn read(packet: &[u8], m: &mut Metadata) {
         }
     }
 
-    for name in ["exif:DateTimeOriginal", "photoshop:DateCreated", "xmp:CreateDate", "exif:DateTimeDigitized", "tiff:DateTime"] {
+    for name in [
+        "exif:DateTimeOriginal",
+        "photoshop:DateCreated",
+        "xmp:CreateDate",
+        "exif:DateTimeDigitized",
+        "tiff:DateTime",
+    ] {
         if let Some(v) = prop(xml, name) {
             m.set_capture_time(&v);
         }
@@ -124,7 +144,11 @@ fn non_empty(s: String) -> Option<String> {
 }
 
 fn unescape(s: &str) -> String {
-    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 /// XMP's GPS coordinate: `DDD,MM.mmk` or `DDD,MM,SSk` with `k` one of NSEW.
@@ -136,7 +160,11 @@ fn gps_coordinate(v: &str) -> Option<f64> {
         'S' | 'W' => -1.0,
         _ => return v.parse().ok(),
     };
-    let parts: Vec<f64> = v[..v.len() - 1].split(',').map(|p| p.trim().parse::<f64>()).collect::<Result<_, _>>().ok()?;
+    let parts: Vec<f64> = v[..v.len() - 1]
+        .split(',')
+        .map(|p| p.trim().parse::<f64>())
+        .collect::<Result<_, _>>()
+        .ok()?;
     let deg = match parts.as_slice() {
         [d] => *d,
         [d, m] => d + m / 60.0,
@@ -173,7 +201,10 @@ mod tests {
         assert_eq!(m.device.make.as_deref(), Some("Canon"));
         assert_eq!(m.device.model.as_deref(), Some("Canon EOS R5"));
         assert_eq!(m.capture_time.as_deref(), Some("2023-07-04T09:30:00-04:00"));
-        assert_eq!(m.descriptive.get("title").map(String::as_str), Some("Fireworks & river"));
+        assert_eq!(
+            m.descriptive.get("title").map(String::as_str),
+            Some("Fireworks & river")
+        );
         let loc = m.location.unwrap();
         assert!((loc.latitude.unwrap() - (40.0 + 26.767 / 60.0)).abs() < 1e-9);
         assert!(loc.longitude.unwrap() < 0.0);

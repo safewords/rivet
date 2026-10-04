@@ -169,7 +169,10 @@ impl AmfRuntime {
             let mut context: *mut c_void = ptr::null_mut();
             let rc = (factory_vt.create_context)(factory, &mut context);
             if rc != AMF_OK || context.is_null() {
-                bail!("AMFFactory::CreateContext failed: {rc} ({})", result_name(rc));
+                bail!(
+                    "AMFFactory::CreateContext failed: {rc} ({})",
+                    result_name(rc)
+                );
             }
             let context_vt = &*(*(context as *mut AmfContextObj)).vtbl;
 
@@ -244,8 +247,12 @@ impl AmfRuntime {
             let factory_vt = &*(*(self.factory as *mut AmfFactoryObj)).vtbl;
             let wid = wide(id);
             let mut component: *mut c_void = ptr::null_mut();
-            let rc =
-                (factory_vt.create_component)(self.factory, self.context, wid.as_ptr(), &mut component);
+            let rc = (factory_vt.create_component)(
+                self.factory,
+                self.context,
+                wid.as_ptr(),
+                &mut component,
+            );
             if rc != AMF_OK || component.is_null() {
                 bail!(
                     "AMFFactory::CreateComponent({id}) failed: {rc} ({})",
@@ -263,7 +270,10 @@ impl AmfRuntime {
             let mut buf: *mut c_void = ptr::null_mut();
             let rc = (context_vt.alloc_buffer)(self.context, AMF_MEMORY_HOST, size, &mut buf);
             if rc != AMF_OK || buf.is_null() {
-                bail!("AMFContext::AllocBuffer({size}) failed: {rc} ({})", result_name(rc));
+                bail!(
+                    "AMFContext::AllocBuffer({size}) failed: {rc} ({})",
+                    result_name(rc)
+                );
             }
             Ok(buf)
         }

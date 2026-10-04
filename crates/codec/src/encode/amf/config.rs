@@ -80,7 +80,11 @@ pub(super) fn amf_color_profile_for(matrix_coefficients: u8, full_range: bool) -
 /// controller need — an exact 30000/1001 is not distinguishable at the
 /// precision the config carries.
 pub(super) fn frame_rate_rational(fps: f64) -> (u32, u32) {
-    let fps = if fps.is_finite() && fps > 0.0 { fps } else { 30.0 };
+    let fps = if fps.is_finite() && fps > 0.0 {
+        fps
+    } else {
+        30.0
+    };
     if (fps - fps.round()).abs() < 1e-6 {
         (fps.round() as u32, 1)
     } else {

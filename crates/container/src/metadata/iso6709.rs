@@ -23,7 +23,9 @@ pub fn parse(s: &str) -> Option<Location> {
             return None;
         }
     }
-    let end = s.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '+' || c == '-')).unwrap_or(s.len());
+    let end = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '+' || c == '-'))
+        .unwrap_or(s.len());
     if let Some(st) = start.filter(|&st| st < end) {
         fields.push(&s[st..end]);
     }
@@ -83,9 +85,15 @@ mod tests {
     #[test]
     fn decimal_degrees_with_and_without_altitude() {
         let l = parse("+37.3349-122.0090+010.000/").unwrap();
-        assert_eq!((l.latitude, l.longitude, l.altitude), (Some(37.3349), Some(-122.009), Some(10.0)));
+        assert_eq!(
+            (l.latitude, l.longitude, l.altitude),
+            (Some(37.3349), Some(-122.009), Some(10.0))
+        );
         let l = parse("-33.8568+151.2153/").unwrap();
-        assert_eq!((l.latitude, l.longitude, l.altitude), (Some(-33.8568), Some(151.2153), None));
+        assert_eq!(
+            (l.latitude, l.longitude, l.altitude),
+            (Some(-33.8568), Some(151.2153), None)
+        );
     }
 
     #[test]

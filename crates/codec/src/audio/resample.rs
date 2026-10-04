@@ -89,13 +89,21 @@ impl Kernel {
         let half = taps.div_ceil(2).max(2);
         let beta = 0.1102 * (ATTENUATION_DB - 8.7);
         let exact = step_den <= MAX_EXACT_PHASES;
-        let rows = if exact { step_den as usize } else { INTERPOLATED_PHASES + 1 };
+        let rows = if exact {
+            step_den as usize
+        } else {
+            INTERPOLATED_PHASES + 1
+        };
         let width = 2 * half;
         let mut table = vec![0f32; rows * width];
         let i0_beta = bessel_i0(beta);
         let mut row = vec![0f64; width];
         for (r, out) in table.chunks_exact_mut(width).enumerate() {
-            let phase = if exact { r as f64 / step_den as f64 } else { r as f64 / INTERPOLATED_PHASES as f64 };
+            let phase = if exact {
+                r as f64 / step_den as f64
+            } else {
+                r as f64 / INTERPOLATED_PHASES as f64
+            };
             for (j, v) in row.iter_mut().enumerate() {
                 // Tap j reads input n0 + j − (half − 1): τ = φ − that offset.
                 let tau = phase - (j as f64 - (half as f64 - 1.0));
@@ -103,7 +111,8 @@ impl Kernel {
                 *v = if x.abs() >= 1.0 {
                     0.0
                 } else {
-                    2.0 * fc * sinc(2.0 * fc * tau) * bessel_i0(beta * (1.0 - x * x).sqrt()) / i0_beta
+                    2.0 * fc * sinc(2.0 * fc * tau) * bessel_i0(beta * (1.0 - x * x).sqrt())
+                        / i0_beta
                 };
             }
             let sum: f64 = row.iter().sum();
@@ -111,7 +120,13 @@ impl Kernel {
                 *o = (v / sum) as f32;
             }
         }
-        Kernel { half, step_num, step_den, exact, table }
+        Kernel {
+            half,
+            step_num,
+            step_den,
+            exact,
+            table,
+        }
     }
 
     /// Output `k`'s first input index (`n0 − W + 1`) and its taps (built in
@@ -223,7 +238,12 @@ fn dot_scalar(x: &[f32], t: &[f32]) -> f32 {
     let n = x.len().min(t.len());
     let wide = n - n % 16;
     let mut a = [0f32; 16];
-    for (xs, ts) in x[..wide].as_chunks::<16>().0.iter().zip(t[..wide].as_chunks::<16>().0) {
+    for (xs, ts) in x[..wide]
+        .as_chunks::<16>()
+        .0
+        .iter()
+        .zip(t[..wide].as_chunks::<16>().0)
+    {
         for j in 0..16 {
             a[j] += xs[j] * ts[j];
         }
@@ -251,8 +271,17 @@ unsafe fn dot_avx2(x: &[f32], t: &[f32]) -> f32 {
         let (mut a, mut b) = (_mm256_setzero_ps(), _mm256_setzero_ps());
         let mut i = 0;
         while i < wide {
-            a = _mm256_add_ps(a, _mm256_mul_ps(_mm256_loadu_ps(xp.add(i)), _mm256_loadu_ps(tp.add(i))));
-            b = _mm256_add_ps(b, _mm256_mul_ps(_mm256_loadu_ps(xp.add(i + 8)), _mm256_loadu_ps(tp.add(i + 8))));
+            a = _mm256_add_ps(
+                a,
+                _mm256_mul_ps(_mm256_loadu_ps(xp.add(i)), _mm256_loadu_ps(tp.add(i))),
+            );
+            b = _mm256_add_ps(
+                b,
+                _mm256_mul_ps(
+                    _mm256_loadu_ps(xp.add(i + 8)),
+                    _mm256_loadu_ps(tp.add(i + 8)),
+                ),
+            );
             i += 16;
         }
         let s = _mm256_add_ps(a, b);
@@ -281,7 +310,10 @@ unsafe fn dot_neon(x: &[f32], t: &[f32]) -> f32 {
         let mut i = 0;
         while i < wide {
             for (k, acc) in a.iter_mut().enumerate() {
-                *acc = vaddq_f32(*acc, vmulq_f32(vld1q_f32(xp.add(i + 4 * k)), vld1q_f32(tp.add(i + 4 * k))));
+                *acc = vaddq_f32(
+                    *acc,
+                    vmulq_f32(vld1q_f32(xp.add(i + 4 * k)), vld1q_f32(tp.add(i + 4 * k))),
+                );
             }
             i += 16;
         }
@@ -289,7 +321,12 @@ unsafe fn dot_neon(x: &[f32], t: &[f32]) -> f32 {
         let (s0, s1) = (vaddq_f32(a[0], a[2]), vaddq_f32(a[1], a[3]));
         // u[j] = s[j] + s[j + 4].
         let u = vaddq_f32(s0, s1);
-        let (u0, u1, u2, u3) = (vgetq_lane_f32::<0>(u), vgetq_lane_f32::<1>(u), vgetq_lane_f32::<2>(u), vgetq_lane_f32::<3>(u));
+        let (u0, u1, u2, u3) = (
+            vgetq_lane_f32::<0>(u),
+            vgetq_lane_f32::<1>(u),
+            vgetq_lane_f32::<2>(u),
+            vgetq_lane_f32::<3>(u),
+        );
         let mut sum = (u0 + u2) + (u1 + u3);
         for i in wide..n {
             sum += x[i] * t[i];
@@ -302,10 +339,14 @@ impl AlignedResampler {
     /// From `in_rate` to `out_rate`, `channels` interleaved (1 to 8).
     pub fn new(in_rate: u32, out_rate: u32, channels: u8) -> Result<Self, AudioError> {
         if in_rate == 0 || out_rate == 0 {
-            return Err(AudioError::Resample(format!("invalid sample rate {in_rate} -> {out_rate}")));
+            return Err(AudioError::Resample(format!(
+                "invalid sample rate {in_rate} -> {out_rate}"
+            )));
         }
         if channels == 0 || channels > 8 {
-            return Err(AudioError::Unsupported(format!("resampler channel count {channels} (must be 1..=8)")));
+            return Err(AudioError::Unsupported(format!(
+                "resampler channel count {channels} (must be 1..=8)"
+            )));
         }
         let kernel = (in_rate != out_rate).then(|| Kernel::new(in_rate, out_rate));
         // The silence before the input: enough for output 0's taps.
@@ -340,7 +381,8 @@ impl AlignedResampler {
     /// The input's samples per channel so far, at the output rate, rounded up:
     /// what the output holds once [`Self::flush`] has run.
     pub fn target_len(&self) -> u64 {
-        (u128::from(self.samples_in) * u128::from(self.out_rate)).div_ceil(u128::from(self.in_rate)) as u64
+        (u128::from(self.samples_in) * u128::from(self.out_rate)).div_ceil(u128::from(self.in_rate))
+            as u64
     }
 
     /// Resample `frame` (interleaved, at the input rate), appending to `out`.
@@ -425,7 +467,12 @@ mod tests {
         let mut r = AlignedResampler::new(from, to, ch).unwrap();
         let mut out = Vec::new();
         for c in input.chunks(chunk * usize::from(ch)) {
-            let frame = AudioFrame { samples: c.to_vec(), sample_rate: from, channels: ch, pts: 0 };
+            let frame = AudioFrame {
+                samples: c.to_vec(),
+                sample_rate: from,
+                channels: ch,
+                pts: 0,
+            };
             r.process(&frame, &mut out).unwrap();
         }
         r.flush(&mut out).unwrap();
@@ -461,10 +508,18 @@ mod tests {
     fn every_level_sums_in_the_same_order() {
         let mut seed = 9u64;
         let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((seed >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
         };
-        let levels = [crate::simd::Level::Scalar, crate::simd::Level::Avx2, crate::simd::Level::Avx512].into_iter().filter(|&l| l <= crate::simd::Level::host());
+        let levels = [
+            crate::simd::Level::Scalar,
+            crate::simd::Level::Avx2,
+            crate::simd::Level::Avx512,
+        ]
+        .into_iter()
+        .filter(|&l| l <= crate::simd::Level::host());
         let levels: Vec<_> = levels.collect();
         for n in 0..=70 {
             for scale in [1.0f32, 1e-3, 1e6] {
@@ -472,7 +527,11 @@ mod tests {
                 let t: Vec<f32> = (0..n).map(|_| next()).collect();
                 let want = dot_scalar(&x, &t);
                 for &level in &levels {
-                    assert_eq!(dot(level, &x, &t).to_bits(), want.to_bits(), "{level:?} n={n} scale={scale}");
+                    assert_eq!(
+                        dot(level, &x, &t).to_bits(),
+                        want.to_bits(),
+                        "{level:?} n={n} scale={scale}"
+                    );
                 }
             }
         }
@@ -486,9 +545,19 @@ mod tests {
         assert!(AlignedResampler::new(44100, 48000, 9).is_err());
         let mut r = AlignedResampler::new(44100, 48000, 2).unwrap();
         let mut out = Vec::new();
-        let mono = AudioFrame { samples: vec![0.0; 64], sample_rate: 44100, channels: 1, pts: 0 };
+        let mono = AudioFrame {
+            samples: vec![0.0; 64],
+            sample_rate: 44100,
+            channels: 1,
+            pts: 0,
+        };
         assert!(r.process(&mono, &mut out).is_err());
-        let wrong_rate = AudioFrame { samples: vec![0.0; 64], sample_rate: 22050, channels: 2, pts: 0 };
+        let wrong_rate = AudioFrame {
+            samples: vec![0.0; 64],
+            sample_rate: 22050,
+            channels: 2,
+            pts: 0,
+        };
         assert!(r.process(&wrong_rate, &mut out).is_err());
     }
 
@@ -508,11 +577,16 @@ mod tests {
             let nyquist = f64::from(from.min(to)) / 2.0;
             let n = from as usize / 2; // half a second
             for f in [100.0, 1000.0, 0.5 * nyquist, 0.85 * nyquist] {
-                let tone =
-                    |rate: u32, i: f64| 0.5 * (2.0 * std::f64::consts::PI * f * i / f64::from(rate) + 0.3).sin();
+                let tone = |rate: u32, i: f64| {
+                    0.5 * (2.0 * std::f64::consts::PI * f * i / f64::from(rate) + 0.3).sin()
+                };
                 let input: Vec<f32> = (0..n).map(|i| tone(from, i as f64) as f32).collect();
                 let out = resample(from, to, 1, &input, 777);
-                assert_eq!(out.len() as u64, (n as u64 * u64::from(to)).div_ceil(u64::from(from)), "{from} -> {to}");
+                assert_eq!(
+                    out.len() as u64,
+                    (n as u64 * u64::from(to)).div_ceil(u64::from(from)),
+                    "{from} -> {to}"
+                );
                 // Away from the ends (where the input starts and stops).
                 let skip = to as usize / 50;
                 let (mut e, mut dot, mut pow) = (0f64, 0f64, 0f64);
@@ -524,8 +598,14 @@ mod tests {
                 }
                 let snr = 10.0 * (pow / e.max(1e-30)).log10();
                 let gain_db = 20.0 * (dot / pow).log10();
-                assert!(snr > 80.0, "{from} -> {to}, {f:.0} Hz: {snr:.1} dB against the tone at zero lag");
-                assert!(gain_db.abs() < 0.01, "{from} -> {to}, {f:.0} Hz: gain {gain_db:+.4} dB");
+                assert!(
+                    snr > 80.0,
+                    "{from} -> {to}, {f:.0} Hz: {snr:.1} dB against the tone at zero lag"
+                );
+                assert!(
+                    gain_db.abs() < 0.01,
+                    "{from} -> {to}, {f:.0} Hz: gain {gain_db:+.4} dB"
+                );
             }
         }
     }
@@ -542,18 +622,30 @@ mod tests {
                 let out = resample(from, to, 1, &input, 500);
                 let want = (2000 + n) as f64 * f64::from(to) / f64::from(from);
                 // The centre of the response's energy.
-                let (m, w) = out.iter().enumerate().fold((0f64, 0f64), |(m, w), (i, &v)| {
-                    let e = f64::from(v) * f64::from(v);
-                    (m + i as f64 * e, w + e)
-                });
+                let (m, w) = out
+                    .iter()
+                    .enumerate()
+                    .fold((0f64, 0f64), |(m, w), (i, &v)| {
+                        let e = f64::from(v) * f64::from(v);
+                        (m + i as f64 * e, w + e)
+                    });
                 let centre = m / w;
-                assert!((centre - want).abs() < 1e-2, "{from} -> {to}, impulse at {n}: centre {centre:.4}, want {want:.4}");
+                assert!(
+                    (centre - want).abs() < 1e-2,
+                    "{from} -> {to}, impulse at {n}: centre {centre:.4}, want {want:.4}"
+                );
                 let peak = out
                     .iter()
                     .enumerate()
-                    .fold((0, 0f32), |b, (i, &v)| if v.abs() > b.1 { (i, v.abs()) } else { b })
+                    .fold(
+                        (0, 0f32),
+                        |b, (i, &v)| if v.abs() > b.1 { (i, v.abs()) } else { b },
+                    )
                     .0;
-                assert!((peak as f64 - want).abs() <= 0.5 + 1e-9, "{from} -> {to}: peak at {peak}, want {want}");
+                assert!(
+                    (peak as f64 - want).abs() <= 0.5 + 1e-9,
+                    "{from} -> {to}: peak at {peak}, want {want}"
+                );
             }
         }
     }
@@ -569,7 +661,8 @@ mod tests {
             let out = resample(from, to, 1, &input, 1000);
             let skip = out.len() / 8;
             let body = &out[skip..out.len() - skip];
-            let rms = (body.iter().map(|&v| f64::from(v).powi(2)).sum::<f64>() / body.len() as f64).sqrt();
+            let rms = (body.iter().map(|&v| f64::from(v).powi(2)).sum::<f64>() / body.len() as f64)
+                .sqrt();
             let db = 20.0 * (rms * 2f64.sqrt()).log10();
             assert!(db < -100.0, "{from} -> {to}: {f:.0} Hz at {db:.1} dB");
         }
@@ -580,7 +673,9 @@ mod tests {
     #[test]
     fn channels_and_chunking() {
         let n = 10_000;
-        let input: Vec<f32> = (0..n).flat_map(|i| [(i as f32 * 0.01).sin(), -0.25]).collect();
+        let input: Vec<f32> = (0..n)
+            .flat_map(|i| [(i as f32 * 0.01).sin(), -0.25])
+            .collect();
         let a = resample(44_100, 48_000, 2, &input, 1);
         let b = resample(44_100, 48_000, 2, &input, 4096);
         assert_eq!(a.len(), 2 * (n * 48_000usize).div_ceil(44_100));
@@ -596,8 +691,12 @@ mod tests {
     fn an_odd_ratio_interpolates_its_phases() {
         let (from, to) = (44_101u32, 48_000u32);
         assert!(u64::from(to) / gcd(u64::from(from), u64::from(to)) > MAX_EXACT_PHASES);
-        let tone = |rate: u32, i: f64| 0.5 * (2.0 * std::f64::consts::PI * 997.0 * i / f64::from(rate)).sin();
-        let input: Vec<f32> = (0..from as usize / 2).map(|i| tone(from, i as f64) as f32).collect();
+        let tone = |rate: u32, i: f64| {
+            0.5 * (2.0 * std::f64::consts::PI * 997.0 * i / f64::from(rate)).sin()
+        };
+        let input: Vec<f32> = (0..from as usize / 2)
+            .map(|i| tone(from, i as f64) as f32)
+            .collect();
         let out = resample(from, to, 1, &input, 1000);
         let (mut s, mut e) = (0f64, 0f64);
         for (i, &v) in out.iter().enumerate().skip(1000).take(out.len() - 2000) {

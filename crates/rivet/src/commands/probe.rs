@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 pub(crate) fn run(input: PathBuf, json: bool) -> Result<()> {
-    let info = rivet::probe_file(&input)
-        .with_context(|| format!("probing {}", input.display()))?;
+    let info = rivet::probe_file(&input).with_context(|| format!("probing {}", input.display()))?;
     if json {
         println!("{}", probe_json(&info));
     } else {
@@ -32,7 +31,10 @@ fn print_probe(input: &Path, info: &rivet::MediaInfo) {
     }
     println!("  pixel fmt : {}", info.pixel_format);
     match &info.audio {
-        Some(a) => println!("  audio     : {} {} Hz {} ch", a.codec, a.sample_rate, a.channels),
+        Some(a) => println!(
+            "  audio     : {} {} Hz {} ch",
+            a.codec, a.sample_rate, a.channels
+        ),
         None => println!("  audio     : (none)"),
     }
     if info.subtitles.is_empty() {

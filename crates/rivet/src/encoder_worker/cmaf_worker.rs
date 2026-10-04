@@ -1,14 +1,14 @@
 //! CMAF segment worker: encodes one chunk and writes one CMAF segment file.
 
+use super::{EncoderWorkerConfig, InvariantCheck, WorkerOutput, validate_or_set_rung_invariant};
+use crate::cmaf_util::add_packet_with_segment_flush;
+use crate::frame_queue::{SegmentChunk, SegmentChunkQueue};
 use anyhow::{Context, Result};
-use std::sync::Arc;
-use tokio::sync::mpsc;
 use codec::encode::{self, EncoderConfig};
 use codec::frame::ColorMetadata;
 use container::cmaf::{CmafVideoMuxer, CmafVideoMuxerOptions, SegmentInfo};
-use crate::cmaf_util::add_packet_with_segment_flush;
-use crate::frame_queue::{SegmentChunk, SegmentChunkQueue};
-use super::{EncoderWorkerConfig, WorkerOutput, InvariantCheck, validate_or_set_rung_invariant};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 /// Run the encoder loop until the chunk queue is closed and drained.
 /// Designed to be wrapped in `tokio::task::spawn_blocking`.
@@ -37,7 +37,12 @@ pub fn run_encoder_worker_blocking(
             Some(c) => c,
             None => break,
         };
-        tracing::debug!(rung_idx = cfg.rung_idx, segment = chunk.segment_idx, frames = chunk.frames.len(), "encoder worker popped chunk");
+        tracing::debug!(
+            rung_idx = cfg.rung_idx,
+            segment = chunk.segment_idx,
+            frames = chunk.frames.len(),
+            "encoder worker popped chunk"
+        );
         match encode_one_segment(
             &cfg,
             &enc_config,
@@ -109,10 +114,7 @@ pub enum UnitOutcome {
     /// with the rung's established invariant on a mandatory field. The chunk
     /// comes back untouched so the caller can hand it to a different worker;
     /// nothing was written.
-    Rejected {
-        chunk: SegmentChunk,
-        diff: String,
-    },
+    Rejected { chunk: SegmentChunk, diff: String },
 }
 
 /// Encode exactly one chunk into one CMAF segment.
@@ -198,8 +200,8 @@ fn encode_one_segment(
         )
     })?;
 
-    let mut encoder =
-        encode::select_encoder(enc_config.clone(), cfg.backend).context("creating encoder for segment")?;
+    let mut encoder = encode::select_encoder(enc_config.clone(), cfg.backend)
+        .context("creating encoder for segment")?;
 
     // Buffered packets emitted from the encoder, awaiting either
     // commit-to-muxer (after invariant validation passes) or discard

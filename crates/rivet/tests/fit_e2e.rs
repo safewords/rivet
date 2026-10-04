@@ -38,7 +38,12 @@ enum Wrap {
 /// A one-second source at 10 fps, `w x h` stored, with `sar` samples,
 /// carrying a disc that is round on screen: in stored samples it is
 /// `1 / sar` as wide.
-fn make_source((w, h): (u32, u32), (sn, sd): (u32, u32), chroma: ChromaFormat, wrap: Wrap) -> Vec<u8> {
+fn make_source(
+    (w, h): (u32, u32),
+    (sn, sd): (u32, u32),
+    chroma: ChromaFormat,
+    wrap: Wrap,
+) -> Vec<u8> {
     const FPS: u32 = 10;
     let pictures = (0..FPS).map(|_| synth::disc(w, h, (sn, sd), chroma));
     let square = (sn, sd) == (1, 1);
@@ -51,11 +56,20 @@ fn make_source((w, h): (u32, u32), (sn, sd): (u32, u32), chroma: ChromaFormat, w
         }
         Wrap::Ts => {
             let sar = (!square).then_some((sn as u16, sd as u16));
-            let cfg = synth::H264 { chroma, qp: 12, sar, ..synth::H264::new(w, h, FPS) };
+            let cfg = synth::H264 {
+                chroma,
+                qp: 12,
+                sar,
+                ..synth::H264::new(w, h, FPS)
+            };
             synth::ts(&synth::encode_h264(&cfg, pictures), 0x1B, FPS)
         }
         Wrap::Mp4 | Wrap::Mkv => {
-            let cfg = synth::H264 { chroma, qp: 12, ..synth::H264::new(w, h, FPS) };
+            let cfg = synth::H264 {
+                chroma,
+                qp: 12,
+                ..synth::H264::new(w, h, FPS)
+            };
             let coded = synth::encode_h264(&cfg, pictures);
             if wrap == Wrap::Mp4 {
                 synth::mp4(&coded, w, h, FPS, None, (!square).then_some((sn, sd)))
@@ -82,7 +96,8 @@ fn run(input: &[u8], settings: &str) -> (Vec<Produced>, Vec<rivet::fit::FittedRu
         .expect("settings")
         .into_spec_for(&probed)
         .expect("spec");
-    let out = rivet::run_job_blocking(input, &spec, None, Arc::new(NullSink)).expect("the job runs");
+    let out =
+        rivet::run_job_blocking(input, &spec, None, Arc::new(NullSink)).expect("the job runs");
     let rungs = out
         .rungs
         .into_iter()
@@ -97,14 +112,18 @@ fn run(input: &[u8], settings: &str) -> (Vec<Produced>, Vec<rivet::fit::FittedRu
 /// The file's video as rivet reads it: stored width and height, sample
 /// aspect, and the luma plane of frame 5 (the middle one) decoded.
 fn read_back(name: &str, bytes: &[u8]) -> (u32, u32, (u32, u32), Vec<u8>) {
-    let probed = rivet::probe_bytes(bytes).unwrap_or_else(|e| panic!("{name}: rivet probes its own output: {e:#}"));
-    let mut demux = container::streaming::demux_streaming(bytes).unwrap_or_else(|e| panic!("{name}: demux: {e:#}"));
+    let probed = rivet::probe_bytes(bytes)
+        .unwrap_or_else(|e| panic!("{name}: rivet probes its own output: {e:#}"));
+    let mut demux = container::streaming::demux_streaming(bytes)
+        .unwrap_or_else(|e| panic!("{name}: demux: {e:#}"));
     let header = demux.header().clone();
     let (w, h) = (header.info.width, header.info.height);
-    let mut dec = codec::decode::create_decoder(&header.codec, header.info.clone()).expect("a decoder");
+    let mut dec =
+        codec::decode::create_decoder(&header.codec, header.info.clone()).expect("a decoder");
     let mut frames = Vec::new();
     while let Some(s) = demux.next_video_sample().unwrap() {
-        dec.push_sample(&s.data).unwrap_or_else(|e| panic!("{name}: decode: {e:#}"));
+        dec.push_sample(&s.data)
+            .unwrap_or_else(|e| panic!("{name}: decode: {e:#}"));
         while let Some(f) = dec.decode_next().unwrap() {
             frames.push(f);
         }
@@ -117,7 +136,12 @@ fn read_back(name: &str, bytes: &[u8]) -> (u32, u32, (u32, u32), Vec<u8>) {
     let f = &frames[5];
     assert_eq!((f.width, f.height), (w, h), "{name}: decoded frame size");
     let luma = f.data[..(w * h) as usize].to_vec();
-    (probed.stored_width, probed.stored_height, probed.sample_aspect, luma)
+    (
+        probed.stored_width,
+        probed.stored_height,
+        probed.sample_aspect,
+        luma,
+    )
 }
 
 /// The bounding box of the disc in `luma`.
@@ -152,19 +176,64 @@ fn every_shape_keeps_its_shape_through_explicit_rungs() {
     type Case<'a> = (&'a str, Vec<u8>, &'a str, Vec<(u32, u32)>);
     let cases: Vec<Case> = vec![
         // 4:3 through the 720p preset's rung: kept 4:3, not upscaled.
-        ("4x3", mp4((640, 480), (1, 1)), "codec=h264 rungs=1280x720", vec![(640, 480)]),
-        ("4x3-up", mp4((640, 480), (1, 1)), "codec=h264 rungs=1280x720 upscale=1", vec![(960, 720)]),
+        (
+            "4x3",
+            mp4((640, 480), (1, 1)),
+            "codec=h264 rungs=1280x720",
+            vec![(640, 480)],
+        ),
+        (
+            "4x3-up",
+            mp4((640, 480), (1, 1)),
+            "codec=h264 rungs=1280x720 upscale=1",
+            vec![(960, 720)],
+        ),
         // Portrait through a landscape box: the box turns.
-        ("9x16", mp4((360, 640), (1, 1)), "codec=h264 rungs=1280x720", vec![(360, 640)]),
-        ("9x16-up", mp4((360, 640), (1, 1)), "codec=h264 rungs=1280x720 upscale=1", vec![(720, 1280)]),
+        (
+            "9x16",
+            mp4((360, 640), (1, 1)),
+            "codec=h264 rungs=1280x720",
+            vec![(360, 640)],
+        ),
+        (
+            "9x16-up",
+            mp4((360, 640), (1, 1)),
+            "codec=h264 rungs=1280x720 upscale=1",
+            vec![(720, 1280)],
+        ),
         // 21:9 and 1:1 into 16:9 boxes.
-        ("21x9", mp4((1280, 548), (1, 1)), "codec=h264 rungs=854x480", vec![(854, 366)]),
-        ("1x1", mp4((480, 480), (1, 1)), "codec=h264 rungs=854x480", vec![(480, 480)]),
+        (
+            "21x9",
+            mp4((1280, 548), (1, 1)),
+            "codec=h264 rungs=854x480",
+            vec![(854, 366)],
+        ),
+        (
+            "1x1",
+            mp4((480, 480), (1, 1)),
+            "codec=h264 rungs=854x480",
+            vec![(480, 480)],
+        ),
         // Anamorphic PAL 16:9: 720x576 at 64:45 is shown 1024x576.
-        ("pal", mp4((720, 576), (64, 45)), "codec=h264 rungs=1920x1080", vec![(1024, 576)]),
+        (
+            "pal",
+            mp4((720, 576), (64, 45)),
+            "codec=h264 rungs=1920x1080",
+            vec![(1024, 576)],
+        ),
         // Each fit on the 4:3 source.
-        ("cover", mp4((640, 480), (1, 1)), "codec=h264 rungs=640x360 fit=cover", vec![(640, 360)]),
-        ("pad", mp4((640, 480), (1, 1)), "codec=h264 rungs=854x480 fit=pad", vec![(854, 480)]),
+        (
+            "cover",
+            mp4((640, 480), (1, 1)),
+            "codec=h264 rungs=640x360 fit=cover",
+            vec![(640, 360)],
+        ),
+        (
+            "pad",
+            mp4((640, 480), (1, 1)),
+            "codec=h264 rungs=854x480 fit=pad",
+            vec![(854, 480)],
+        ),
         // A vertical rung that crops a landscape source.
         (
             "vertical",
@@ -183,12 +252,18 @@ fn every_shape_keeps_its_shape_through_explicit_rungs() {
     }
 
     // `stretch` is still there when asked for, and distorts as it always did.
-    let (rungs, _) = run(&mp4((640, 480), (1, 1)), "codec=h264 rungs=1280x720 fit=stretch");
+    let (rungs, _) = run(
+        &mp4((640, 480), (1, 1)),
+        "codec=h264 rungs=1280x720 fit=stretch",
+    );
     let (_, w, h, bytes) = &rungs[0];
     assert_eq!((*w, *h), (1280, 720));
     let (_, _, _, luma) = read_back("stretch", bytes);
     let (dw, dh) = disc_extent("stretch", &luma, (*w, *h));
-    assert!(f64::from(dw) / f64::from(dh) > 1.25, "stretch kept the disc round: {dw}x{dh}");
+    assert!(
+        f64::from(dw) / f64::from(dh) > 1.25,
+        "stretch kept the disc round: {dw}x{dh}"
+    );
 }
 
 #[test]
@@ -196,7 +271,12 @@ fn the_sample_aspect_is_read_from_every_container() {
     // PAL 16:9 in MP4 (`pasp` alone), Matroska (DisplayWidth alone) and
     // MPEG-TS (the SPS VUI alone), and as MPEG-2 (the sequence header's
     // display ratio).
-    for (name, wrap) in [("pal.mp4", Wrap::Mp4), ("pal.mkv", Wrap::Mkv), ("pal.ts", Wrap::Ts), ("pal-mpeg2.ts", Wrap::Mpeg2Ts)] {
+    for (name, wrap) in [
+        ("pal.mp4", Wrap::Mp4),
+        ("pal.mkv", Wrap::Mkv),
+        ("pal.ts", Wrap::Ts),
+        ("pal-mpeg2.ts", Wrap::Mpeg2Ts),
+    ] {
         let input = make_source((720, 576), (64, 45), ChromaFormat::Yuv420, wrap);
         let probed = rivet::probe_bytes(&input).unwrap();
         assert_eq!(probed.sample_aspect, (64, 45), "{name}: sample aspect");
@@ -240,10 +320,24 @@ fn crop_psnr(want: &[u8], ww: u32, got: &[u8], (w, h): (u32, u32)) -> f64 {
 fn an_odd_source_keeps_its_size_or_is_cropped_to_even() {
     let input = make_source((351, 241), (1, 1), ChromaFormat::Yuv444, Wrap::Mp4);
     let (_, _, _, source) = read_back("source", &input);
-    for codec in ["h264", "h265", "av1", "vp9", "vp8", "mpeg2", "mpeg4", "prores-422"] {
+    for codec in [
+        "h264",
+        "h265",
+        "av1",
+        "vp9",
+        "vp8",
+        "mpeg2",
+        "mpeg4",
+        "prores-422",
+    ] {
         // A codec a hardware encoder in the build may take is evened too.
-        let odd = codec::encode::codes_odd_sizes(rivet::settings::parse_video_codec(codec).unwrap().codec());
-        assert!(!(odd && codec.starts_with('h')), "{codec} cannot code an odd 4:2:0 size");
+        let odd = codec::encode::codes_odd_sizes(
+            rivet::settings::parse_video_codec(codec).unwrap().codec(),
+        );
+        assert!(
+            !(odd && codec.starts_with('h')),
+            "{codec} cannot code an odd 4:2:0 size"
+        );
         let want = if odd { (351, 241) } else { (350, 240) };
         let (rungs, _) = run(&input, &format!("codec={codec}"));
         let (_, w, h, bytes) = &rungs[0];
@@ -256,8 +350,14 @@ fn an_odd_source_keeps_its_size_or_is_cropped_to_even() {
         }
         let (_, _, _, luma) = read_back(codec, bytes);
         let db = crop_psnr(&source, 351, &luma, want);
-        eprintln!("{codec}: {}x{}, {db:.1} dB against the source's top-left", want.0, want.1);
-        assert!(db > 33.0, "{codec}: {db:.1} dB: resampled rather than cropped?");
+        eprintln!(
+            "{codec}: {}x{}, {db:.1} dB against the source's top-left",
+            want.0, want.1
+        );
+        assert!(
+            db > 33.0,
+            "{codec}: {db:.1} dB: resampled rather than cropped?"
+        );
     }
 }
 
@@ -265,10 +365,16 @@ fn an_odd_source_keeps_its_size_or_is_cropped_to_even() {
 fn rungs_a_small_source_collapses_are_merged_and_reported() {
     let input = mp4((640, 480), (1, 1));
     // The compat preset's ladder over a 640x480 source.
-    let (rungs, report) = run(&input, "codec=h264 rungs=1920x1080,1280x720,854x480,640x360");
+    let (rungs, report) = run(
+        &input,
+        "codec=h264 rungs=1920x1080,1280x720,854x480,640x360",
+    );
     let got: Vec<_> = rungs.iter().map(|r| (r.0.as_str(), r.1, r.2)).collect();
     assert_eq!(got, vec![("480p", 640, 480), ("360p", 480, 360)]);
-    let merged: Vec<_> = report.iter().map(|r| (r.requested, r.output, r.duplicate_of)).collect();
+    let merged: Vec<_> = report
+        .iter()
+        .map(|r| (r.requested, r.output, r.duplicate_of))
+        .collect();
     assert_eq!(
         merged,
         vec![
@@ -285,10 +391,12 @@ fn an_hls_ladder_is_fitted_too() {
     let dir = tempfile::tempdir().expect("temp dir");
     let input = mp4((360, 640), (1, 1));
     let probed = rivet::probe_bytes(&input).unwrap();
-    let spec = TranscodeSettings::parse_kv_line("mode=hls codec=h264 segment-seconds=1 rungs=1920x1080,1280x720,480x270")
-        .unwrap()
-        .into_spec_for(&probed)
-        .unwrap();
+    let spec = TranscodeSettings::parse_kv_line(
+        "mode=hls codec=h264 segment-seconds=1 rungs=1920x1080,1280x720,480x270",
+    )
+    .unwrap()
+    .into_spec_for(&probed)
+    .unwrap();
     let root = dir.path().join("package");
     let out = match rivet::run_job_blocking(&input, &spec, Some(&root), Arc::new(NullSink)) {
         Ok(out) => out,
@@ -298,14 +406,27 @@ fn an_hls_ladder_is_fitted_too() {
         }
         Err(e) => panic!("the HLS job: {e:#}"),
     };
-    let got: Vec<_> = out.rungs.iter().map(|r| (r.label.as_str(), r.width, r.height)).collect();
+    let got: Vec<_> = out
+        .rungs
+        .iter()
+        .map(|r| (r.label.as_str(), r.width, r.height))
+        .collect();
     // Portrait: 1920x1080 and 1280x720 turn and collapse onto the source;
     // 480x270 turns to 270x480.
     assert_eq!(got, vec![("360p", 360, 640), ("270p", 270, 480)]);
-    assert_eq!(out.renditions.iter().filter(|r| r.duplicate_of.is_some()).count(), 1);
+    assert_eq!(
+        out.renditions
+            .iter()
+            .filter(|r| r.duplicate_of.is_some())
+            .count(),
+        1
+    );
     let master = std::fs::read_to_string(out.master_playlist.unwrap()).unwrap();
     assert!(master.contains("RESOLUTION=360x640"), "{master}");
-    assert!(!master.contains("RESOLUTION=1920x1080") && !master.contains("RESOLUTION=1080x1920"), "{master}");
+    assert!(
+        !master.contains("RESOLUTION=1920x1080") && !master.contains("RESOLUTION=1080x1920"),
+        "{master}"
+    );
     for r in &out.rungs {
         let (rel, media) = match &r.artifact {
             RungArtifact::HlsRendition { dir, relative_dir } => (relative_dir.clone(), dir.clone()),
@@ -324,7 +445,10 @@ fn an_hls_ladder_is_fitted_too() {
             .find_map(|l| l.strip_prefix("#EXT-X-MAP:URI=\"")?.split('"').next())
             .unwrap_or("init.mp4");
         let mut joined = std::fs::read(media.join(init)).unwrap();
-        for seg in text.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+        for seg in text
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        {
             joined.extend(std::fs::read(media.join(seg.trim())).unwrap());
         }
         let (w, h, sar, _) = read_back(&rel, &joined);

@@ -13,13 +13,13 @@
 //!      pipeline crate's integration test).
 
 use bytes::Bytes;
-use frame::EncodedPacket;
 use container::AudioInfo;
 use container::aac_asc::{
     AscSignaling, effective_output_channels, parse_aac_asc, upgrade_to_explicit_signaling,
 };
 use container::demux;
 use container::mux::Av1Mp4Muxer;
+use frame::EncodedPacket;
 
 fn minimal_av1_first_packet() -> Bytes {
     let header: u8 = (1 << 3) | (1 << 1);
@@ -281,8 +281,15 @@ fn aac_7_1_emits_aac_7_1_chan_tag() {
 #[test]
 fn aac_configuration_12_round_trips_as_7_1_rear() {
     fn chan_tag(out: &[u8]) -> u32 {
-        let pos = out.windows(4).position(|w| w == b"chan").expect("7.1 output must contain chan");
-        assert_eq!(&out[pos + 4..pos + 8], &[0, 0, 0, 0], "chan version and flags must be 0");
+        let pos = out
+            .windows(4)
+            .position(|w| w == b"chan")
+            .expect("7.1 output must contain chan");
+        assert_eq!(
+            &out[pos + 4..pos + 8],
+            &[0, 0, 0, 0],
+            "chan version and flags must be 0"
+        );
         u32::from_be_bytes(out[pos + 8..pos + 12].try_into().unwrap())
     }
     // AOT=2 SFI=3 channelConfiguration=12: 00010 0011 1100 000.
@@ -298,12 +305,21 @@ fn aac_configuration_12_round_trips_as_7_1_rear() {
         asc_bytes: asc.clone(),
         codec_private: Vec::new(),
     };
-    muxer.with_audio(info).expect("with_audio 7.1 (configuration 12)");
+    muxer
+        .with_audio(info)
+        .expect("with_audio 7.1 (configuration 12)");
     push_aac_samples(&mut muxer, 5, 200);
     let out = muxer.finalize().expect("finalize");
-    assert_eq!(chan_tag(&out), (183 << 16) | 8, "kAudioChannelLayoutTag_AAC_7_1_B");
+    assert_eq!(
+        chan_tag(&out),
+        (183 << 16) | 8,
+        "kAudioChannelLayoutTag_AAC_7_1_B"
+    );
 
-    let audio = demux::demux(&out).expect("demux").audio.expect("audio track must demux");
+    let audio = demux::demux(&out)
+        .expect("demux")
+        .audio
+        .expect("audio track must demux");
     assert_eq!(audio.channels, 8);
     assert_eq!(audio.asc, asc);
     let mut again = Av1Mp4Muxer::new(320, 240, 30.0).expect("muxer");
@@ -319,7 +335,10 @@ fn aac_configuration_12_round_trips_as_7_1_rear() {
         })
         .expect("the demuxed 7.1 passes the gate");
     push_aac_samples(&mut again, 5, 200);
-    assert_eq!(chan_tag(&again.finalize().expect("finalize")), (183 << 16) | 8);
+    assert_eq!(
+        chan_tag(&again.finalize().expect("finalize")),
+        (183 << 16) | 8
+    );
 }
 
 #[test]
@@ -334,7 +353,10 @@ fn implicit_he_aac_upgrade_then_mux() {
     // (0x2B7, AOT 5, flag 0, after the 16 bits)...
     let no_sbr = [0x13u8, 0x08, 0x56, 0xE5, 0x00];
     let parsed = parse_aac_asc(&no_sbr).expect("parse");
-    assert_eq!((parsed.signaling, parsed.sbr_present, parsed.sample_rate), (AscSignaling::NoExtension, false, 24_000));
+    assert_eq!(
+        (parsed.signaling, parsed.sbr_present, parsed.sample_rate),
+        (AscSignaling::NoExtension, false, 24_000)
+    );
 
     // ...and the upgrade says it is present.
     let upgraded = upgrade_to_explicit_signaling(&implicit).expect("upgrade");

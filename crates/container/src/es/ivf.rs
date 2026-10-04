@@ -33,7 +33,10 @@ pub(super) fn index(data: &[u8]) -> Result<Indexed> {
         b"VP80" => "vp8",
         b"VP90" => "vp9",
         b"AV01" => "av1",
-        other => bail!("IVF: unsupported codec fourcc {:?}", String::from_utf8_lossy(other)),
+        other => bail!(
+            "IVF: unsupported codec fourcc {:?}",
+            String::from_utf8_lossy(other)
+        ),
     };
     let (width, height) = (u32::from(u16_at(12)), u32::from(u16_at(14)));
     let (rate, scale) = (u32_at(16), u32_at(20));
@@ -46,14 +49,22 @@ pub(super) fn index(data: &[u8]) -> Result<Indexed> {
         let pts = i64::from_le_bytes(data[pos + 4..pos + 12].try_into().unwrap());
         let body = pos + FRAME_HEADER;
         let Some(end) = body.checked_add(size).filter(|&e| e <= data.len()) else {
-            tracing::warn!(offset = pos, size, "IVF: a frame runs past the end of the file; truncated there");
+            tracing::warn!(
+                offset = pos,
+                size,
+                "IVF: a frame runs past the end of the file; truncated there"
+            );
             break;
         };
         pos = end;
         if size == 0 {
             continue;
         }
-        let start = if codec == "av1" { body + super::obu::leading_temporal_delimiter(&data[body..end]) } else { body };
+        let start = if codec == "av1" {
+            body + super::obu::leading_temporal_delimiter(&data[body..end])
+        } else {
+            body
+        };
         // A VP8 frame with show_frame clear (RFC 6386 §9.1) makes no
         // picture — libvpx writes an alt-ref that way.
         if codec != "vp8" || (data[body] >> 4) & 1 == 1 {
@@ -66,8 +77,15 @@ pub(super) fn index(data: &[u8]) -> Result<Indexed> {
         .filter(|_| rate > 0 && scale > 0)
         .map(|step| f64::from(rate) / (f64::from(scale) * step as f64));
     // Timestamps on the time base's ticks: `t * scale` per second at `rate`.
-    let pts = (rate > 0 && scale > 0)
-        .then(|| (stamps.iter().map(|&t| t.saturating_mul(i64::from(scale))).collect(), rate));
+    let pts = (rate > 0 && scale > 0).then(|| {
+        (
+            stamps
+                .iter()
+                .map(|&t| t.saturating_mul(i64::from(scale)))
+                .collect(),
+            rate,
+        )
+    });
     Ok(Indexed {
         codec,
         samples,
@@ -81,7 +99,11 @@ pub(super) fn index(data: &[u8]) -> Result<Indexed> {
 
 /// The median step between consecutive timestamps, when there are any.
 fn typical_step(stamps: &[i64]) -> Option<i64> {
-    let mut steps: Vec<i64> = stamps.windows(2).map(|w| w[1] - w[0]).filter(|&d| d > 0).collect();
+    let mut steps: Vec<i64> = stamps
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .filter(|&d| d > 0)
+        .collect();
     if steps.is_empty() {
         return None;
     }
@@ -92,7 +114,8 @@ fn typical_step(stamps: &[i64]) -> Option<i64> {
 /// The dimensions a VP8 key frame states (RFC 6386 §9.1: the start code
 /// `9d 01 2a`, then 14-bit width and height, each with two scaling bits).
 pub(super) fn vp8_dims(codec: &str, frame: &[u8]) -> Option<(u32, u32)> {
-    if codec != "vp8" || frame.len() < 10 || frame[0] & 1 != 0 || frame[3..6] != [0x9d, 0x01, 0x2a] {
+    if codec != "vp8" || frame.len() < 10 || frame[0] & 1 != 0 || frame[3..6] != [0x9d, 0x01, 0x2a]
+    {
         return None;
     }
     let w = u32::from(u16::from_le_bytes([frame[6], frame[7]]) & 0x3fff);

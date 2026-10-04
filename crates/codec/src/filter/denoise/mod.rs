@@ -409,7 +409,14 @@ pub(super) mod test_support {
 
 /// Test hook: the parameterized nlmeans on one plane of any size.
 #[cfg(test)]
-pub(super) fn test_nlmeans_plane(src: &[u8], w: usize, h: usize, s: f32, p: u32, r: u32) -> Vec<u8> {
+pub(super) fn test_nlmeans_plane(
+    src: &[u8],
+    w: usize,
+    h: usize,
+    s: f32,
+    p: u32,
+    r: u32,
+) -> Vec<u8> {
     nlmeans::plane_params(src, w, h, p, r, s)
 }
 

@@ -260,7 +260,10 @@ mod tests {
         ac3[0] = 0x0B;
         ac3[1] = 0x77;
         assert_eq!(parse_core_sync(&ac3), Err(DtsError::NoSync));
-        assert!(matches!(parse_core_sync(&[0x7F, 0xFE]), Err(DtsError::TooShort(2))));
+        assert!(matches!(
+            parse_core_sync(&[0x7F, 0xFE]),
+            Err(DtsError::TooShort(2))
+        ));
     }
 
     #[test]
@@ -291,7 +294,10 @@ mod tests {
         assert!(!has_hd_extension(&f, &core), "nothing after the core yet");
         f.resize(512, 0);
         f.extend_from_slice(&DTS_HD_SYNC.to_be_bytes());
-        assert!(has_hd_extension(&f, &core), "DTS-HD substream should be seen");
+        assert!(
+            has_hd_extension(&f, &core),
+            "DTS-HD substream should be seen"
+        );
     }
 
     #[test]
@@ -299,6 +305,10 @@ mod tests {
         assert_eq!(amode_channels(0), Some(1), "mono");
         assert_eq!(amode_channels(2), Some(2), "L/R stereo");
         assert_eq!(amode_channels(9), Some(5), "3F2R — the 5.1 core");
-        assert_eq!(amode_channels(16), None, "custom arrangements aren't described");
+        assert_eq!(
+            amode_channels(16),
+            None,
+            "custom arrangements aren't described"
+        );
     }
 }

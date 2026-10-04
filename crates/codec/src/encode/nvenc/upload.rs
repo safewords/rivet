@@ -1,6 +1,6 @@
 //! NVENC surface upload: copy YUV frames into locked input buffers.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::ptr;
 
 use crate::frame::VideoFrame;

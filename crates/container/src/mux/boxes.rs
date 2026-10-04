@@ -1,9 +1,9 @@
+use super::audio_track::build_audio_trak;
+use super::sample_table::AudioBuildPlan;
+use super::subtitle_track::{SUBTITLE_TRACK_ID, SubtitleBuildPlan, build_subtitle_trak};
+use super::video_track::build_video_trak;
 use anyhow::Result;
 use frame::{ColorMetadata, VideoCodec};
-use super::sample_table::AudioBuildPlan;
-use super::video_track::build_video_trak;
-use super::audio_track::build_audio_trak;
-use super::subtitle_track::{SubtitleBuildPlan, build_subtitle_trak, SUBTITLE_TRACK_ID};
 
 // ---- Generic box infrastructure -----------------------------------------------
 
@@ -258,7 +258,9 @@ pub(crate) fn build_edts(delay: u64, media_time: u64, segment_duration: u64) -> 
         entries.push((delay, -1));
     }
     entries.push((segment_duration, media_time as i64));
-    let wide = entries.iter().any(|&(d, t)| d > u64::from(u32::MAX) || t > i64::from(i32::MAX));
+    let wide = entries
+        .iter()
+        .any(|&(d, t)| d > u64::from(u32::MAX) || t > i64::from(i32::MAX));
     let mut elst = BoxBuilder::new(b"elst");
     elst.u8(u8::from(wide));
     elst.extend(&[0, 0, 0]);

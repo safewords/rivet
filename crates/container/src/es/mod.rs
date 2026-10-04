@@ -111,7 +111,15 @@ pub(crate) fn demux_es_streaming_init(data: Bytes) -> Result<EsStreamingDemuxer>
 }
 
 fn build(data: Bytes, ix: Indexed) -> Result<EsStreamingDemuxer> {
-    let Indexed { codec, samples, pts, frame_rate, frames, dims, label } = ix;
+    let Indexed {
+        codec,
+        samples,
+        pts,
+        frame_rate,
+        frames,
+        dims,
+        label,
+    } = ix;
     if samples.is_empty() {
         bail!("{label}: the stream holds no picture");
     }
@@ -155,7 +163,11 @@ fn build(data: Bytes, ix: Indexed) -> Result<EsStreamingDemuxer> {
         pixel_format: PixelFormat::Yuv420p,
         color_space: ColorSpace::Bt709,
         total_frames: frames,
-        bitrate: if duration > 0.0 { (data.len() as f64 * 8.0 / duration) as u64 } else { 0 },
+        bitrate: if duration > 0.0 {
+            (data.len() as f64 * 8.0 / duration) as u64
+        } else {
+            0
+        },
         color_metadata: Default::default(),
     };
     info.pixel_format = frame::pixel_format::detect(codec, std::slice::from_ref(&first));
@@ -164,16 +176,32 @@ fn build(data: Bytes, ix: Indexed) -> Result<EsStreamingDemuxer> {
     // lacks the SEIs.
     let head = crate::demux::hdr::colour_window(
         codec,
-        samples.iter().take(16).map(bytes_of).collect::<Vec<_>>().iter().map(Vec::as_slice),
+        samples
+            .iter()
+            .take(16)
+            .map(bytes_of)
+            .collect::<Vec<_>>()
+            .iter()
+            .map(Vec::as_slice),
         label,
     );
-    let head_au = head.as_ref().map(|h| h.annexb.clone()).unwrap_or_else(|| first.clone());
+    let head_au = head
+        .as_ref()
+        .map(|h| h.annexb.clone())
+        .unwrap_or_else(|| first.clone());
     let sample_aspect = crate::demux::aspect::resolve(
         None,
         || crate::demux::aspect::from_bitstream(codec, &[], Some(&head_au), width, height),
         label,
     );
-    crate::demux::hdr::resolve_source_colour(&mut info, Default::default(), codec, &[], Some(&head_au), label);
+    crate::demux::hdr::resolve_source_colour(
+        &mut info,
+        Default::default(),
+        codec,
+        &[],
+        Some(&head_au),
+        label,
+    );
 
     let (timescale, frame_ticks, stamps) = match pts {
         Some((stamps, timescale)) => {
@@ -183,7 +211,9 @@ fn build(data: Bytes, ix: Indexed) -> Result<EsStreamingDemuxer> {
         None => {
             const TIMESCALE: u32 = 90_000;
             let ticks = f64::from(TIMESCALE) / frame_rate;
-            let stamps = (0..samples.len()).map(|i| (i as f64 * ticks).round() as i64).collect();
+            let stamps = (0..samples.len())
+                .map(|i| (i as f64 * ticks).round() as i64)
+                .collect();
             (TIMESCALE, ticks.round().max(1.0) as u32, stamps)
         }
     };
@@ -197,8 +227,18 @@ fn build(data: Bytes, ix: Indexed) -> Result<EsStreamingDemuxer> {
         "elementary stream indexed"
     );
     Ok(EsStreamingDemuxer {
-        header: DemuxHeader { codec: codec_s, info, timescale, rotation_degrees: 0, sample_aspect },
-        samples: samples.into_iter().zip(stamps).collect::<Vec<_>>().into_iter(),
+        header: DemuxHeader {
+            codec: codec_s,
+            info,
+            timescale,
+            rotation_degrees: 0,
+            sample_aspect,
+        },
+        samples: samples
+            .into_iter()
+            .zip(stamps)
+            .collect::<Vec<_>>()
+            .into_iter(),
         frame_ticks,
         data,
     })
@@ -210,12 +250,18 @@ impl StreamingDemuxer for EsStreamingDemuxer {
     }
 
     fn next_video_sample(&mut self) -> Result<Option<Sample>> {
-        let Some((sample, pts_ticks)) = self.samples.next() else { return Ok(None) };
+        let Some((sample, pts_ticks)) = self.samples.next() else {
+            return Ok(None);
+        };
         let data = match sample {
             EsSample::Span(r) => self.data[r].to_vec(),
             EsSample::Owned(v) => v,
         };
-        Ok(Some(Sample { data, pts_ticks, duration_ticks: self.frame_ticks }))
+        Ok(Some(Sample {
+            data,
+            pts_ticks,
+            duration_ticks: self.frame_ticks,
+        }))
     }
 
     /// An elementary stream is one stream: no audio.

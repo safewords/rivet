@@ -105,7 +105,8 @@ use bytes::Bytes;
 use super::{AUTO_FROM_TARGET, EncodedPacket, Encoder, EncoderConfig};
 use crate::encode::tuning::h26x_sw_params_with;
 use crate::frame::{
-    ColorMetadata, ContentLightLevel, MasteringDisplay, PixelFormat, TransferFn, VideoCodec, VideoFrame,
+    ColorMetadata, ContentLightLevel, MasteringDisplay, PixelFormat, TransferFn, VideoCodec,
+    VideoFrame,
 };
 
 /// The pipeline's mastering display as the encoder's: the same ten
@@ -125,7 +126,10 @@ fn mastering_display(m: &MasteringDisplay) -> h26x::encode::MasteringDisplay {
 
 /// The pipeline's content light level as the encoder's: two cd/m² values.
 fn content_light(c: &ContentLightLevel) -> h26x::encode::ContentLightLevel {
-    h26x::encode::ContentLightLevel { max_cll: c.max_cll, max_fall: c.max_fall }
+    h26x::encode::ContentLightLevel {
+        max_cll: c.max_cll,
+        max_fall: c.max_fall,
+    }
 }
 
 /// The H.273 `transfer_characteristics` code the SPS VUI carries for a
@@ -191,7 +195,9 @@ pub fn rate_refusal(
         });
     };
     if bps == 0 {
-        return Some("bitrate=0 is not a rate: name a positive bitrate, or none for a quality target".into());
+        return Some(
+            "bitrate=0 is not a rate: name a positive bitrate, or none for a quality target".into(),
+        );
     }
     // AV1's average rate is the software AV1 encoder's (`av1_sw`): its rate
     // controller spends a budget per frame and has no coded picture buffer
@@ -253,7 +259,9 @@ fn encoder_bps(bps: u32, frame_rate: f64, fps: u32) -> u32 {
     if !(frame_rate.is_finite() && frame_rate > 0.0) {
         return bps;
     }
-    (f64::from(bps) * f64::from(fps) / frame_rate).round().clamp(1.0, f64::from(u32::MAX)) as u32
+    (f64::from(bps) * f64::from(fps) / frame_rate)
+        .round()
+        .clamp(1.0, f64::from(u32::MAX)) as u32
 }
 
 /// The two encoders behind one face, both boxed. The H.264 encoder is about
@@ -412,7 +420,9 @@ impl H26xEncoder {
                         "this rung is coded to a bitrate: its quality target and delta are not consulted"
                     );
                 }
-                let rate = h26x::encode::RateControl::Bitrate { bps: encoder_bps(bps, config.frame_rate, fps) };
+                let rate = h26x::encode::RateControl::Bitrate {
+                    bps: encoder_bps(bps, config.frame_rate, fps),
+                };
                 (rate, p.buffer_ms, lookahead)
             }
         };
@@ -425,7 +435,9 @@ impl H26xEncoder {
         let threads = if config.threads > 0 {
             config.threads
         } else {
-            std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
         };
 
         let cfg = h26x::encode::Config {
@@ -435,7 +447,11 @@ impl H26xEncoder {
             chroma: h26x::ChromaFormat::Yuv420,
             // The encoder's zero means "every picture an IDR", which is not
             // what a caller leaving the interval unset wants.
-            gop: if config.keyframe_interval == 0 { 250 } else { config.keyframe_interval },
+            gop: if config.keyframe_interval == 0 {
+                250
+            } else {
+                config.keyframe_interval
+            },
             // Consecutive B pictures between anchors, non-pyramid — the same
             // grammar the hardware tiers read from the same override. The
             // encoder bumps `max_refs` to 2 itself when this is non-zero (a B
@@ -486,8 +502,16 @@ impl H26xEncoder {
             chroma_loc: None,
             // The HDR10 static metadata, when the source carried it: an SEI
             // each in every IDR access unit, beside the container's boxes.
-            mastering_display: config.color_metadata.mastering_display.as_ref().map(mastering_display),
-            content_light: config.color_metadata.content_light_level.as_ref().map(content_light),
+            mastering_display: config
+                .color_metadata
+                .mastering_display
+                .as_ref()
+                .map(mastering_display),
+            content_light: config
+                .color_metadata
+                .content_light_level
+                .as_ref()
+                .map(content_light),
             // Always a number from the tuning table, never `None`: `None` is
             // "whatever the h26x crate's default is this release", and a
             // submodule bump that moves that default would silently change
@@ -616,7 +640,9 @@ impl Encoder for H26xEncoder {
         // frame is the one `lookahead` frames back; a forced IDR meant for it
         // is handed over now (see `force_keyframe_next`).
         let display = self.pts.len() as u64;
-        if self.force_at.is_some() && display.checked_sub(u64::from(self.cfg.lookahead)) == self.force_at {
+        if self.force_at.is_some()
+            && display.checked_sub(u64::from(self.cfg.lookahead)) == self.force_at
+        {
             self.inner.force_idr();
             self.force_at = None;
         }
@@ -725,7 +751,10 @@ mod tests {
         ] {
             assert_eq!(TransferFn::from_h273(transfer_to_h273(tf)), tf, "{tf:?}");
         }
-        assert_eq!(TransferFn::from_h273(transfer_to_h273(TransferFn::Unspecified)), TransferFn::Bt709);
+        assert_eq!(
+            TransferFn::from_h273(transfer_to_h273(TransferFn::Unspecified)),
+            TransferFn::Bt709
+        );
     }
 
     /// HDR10 metadata becomes the three H.273 codes BT.2020 / SMPTE ST 2084
@@ -740,9 +769,15 @@ mod tests {
             ..ColorMetadata::default()
         };
         let c = colour_description(&hdr10);
-        assert_eq!((c.primaries, c.transfer, c.matrix, c.full_range), (9, 16, 9, false));
+        assert_eq!(
+            (c.primaries, c.transfer, c.matrix, c.full_range),
+            (9, 16, 9, false)
+        );
         let sdr = colour_description(&ColorMetadata::default());
-        assert_eq!((sdr.primaries, sdr.transfer, sdr.matrix, sdr.full_range), (1, 1, 1, false));
+        assert_eq!(
+            (sdr.primaries, sdr.transfer, sdr.matrix, sdr.full_range),
+            (1, 1, 1, false)
+        );
     }
 
     /// One coded H.264 access unit for `cm`, 64x64 grey.
@@ -776,7 +811,10 @@ mod tests {
         );
         enc.send_frame(&frame).expect("frame");
         enc.flush().expect("flush");
-        enc.receive_packet().expect("packet").expect("one coded picture").data
+        enc.receive_packet()
+            .expect("packet")
+            .expect("one coded picture")
+            .data
     }
 
     /// An encoder for `codec` with `overrides`, handed four 64x64 frames of a
@@ -799,7 +837,11 @@ mod tests {
         let mut data: Vec<u8> = (0..64 * 64)
             .map(|p| {
                 let (x, y) = (p % 64, p / 64);
-                ((if x < 24 { 20 } else { ((x ^ y) & 0x1f) * 3 + 90 }) + i as usize * 12) as u8
+                ((if x < 24 {
+                    20
+                } else {
+                    ((x ^ y) & 0x1f) * 3 + 90
+                }) + i as usize * 12) as u8
             })
             .collect();
         data.extend(std::iter::repeat_n(128u8, 2 * 32 * 32));
@@ -807,7 +849,11 @@ mod tests {
     }
 
     /// The 64x64 configuration [`encode_at`] builds its encoder from.
-    fn config_at(codec: VideoCodec, tier: SpeedTier, overrides: crate::encode::tuning::EncodeOverrides) -> EncoderConfig {
+    fn config_at(
+        codec: VideoCodec,
+        tier: SpeedTier,
+        overrides: crate::encode::tuning::EncodeOverrides,
+    ) -> EncoderConfig {
         EncoderConfig {
             width: 64,
             height: 64,
@@ -837,7 +883,14 @@ mod tests {
         let mut enc = H26xEncoder::new(config_at(codec, tier, overrides)).expect("encoder");
         let mut packets = Vec::new();
         for i in 0..4u64 {
-            let frame = VideoFrame::new(test_picture(i).into(), 64, 64, PixelFormat::Yuv420p, ColorSpace::Bt709, i);
+            let frame = VideoFrame::new(
+                test_picture(i).into(),
+                64,
+                64,
+                PixelFormat::Yuv420p,
+                ColorSpace::Bt709,
+                i,
+            );
             enc.send_frame(&frame).expect("frame");
             while let Some(p) = enc.receive_packet().expect("packet") {
                 packets.push(p.data);
@@ -877,15 +930,33 @@ mod tests {
     #[test]
     fn the_opt_in_tools_reach_the_encoder_config_and_the_stream() {
         use crate::encode::tuning::EncodeOverrides;
-        let aq = EncodeOverrides { aq_strength_tenths: Some(10), ..Default::default() };
-        let wp_off = EncodeOverrides { weighted_pred: Some(false), ..Default::default() };
+        let aq = EncodeOverrides {
+            aq_strength_tenths: Some(10),
+            ..Default::default()
+        };
+        let wp_off = EncodeOverrides {
+            weighted_pred: Some(false),
+            ..Default::default()
+        };
 
         let (on_cfg, on) = encode_with(VideoCodec::H265, EncodeOverrides::default());
         let (aq_cfg, aq_out) = encode_with(VideoCodec::H265, aq);
         let (off_cfg, off) = encode_with(VideoCodec::H265, wp_off);
-        assert_eq!((on_cfg.aq_strength, on_cfg.weighted_pred, on_cfg.lookahead), (0.0, true, 0), "H.265 table row");
-        assert_eq!((aq_cfg.aq_strength, aq_cfg.weighted_pred), (1.0, true), "H.265 aq");
-        assert_eq!((off_cfg.aq_strength, off_cfg.weighted_pred), (0.0, false), "H.265 wp=off");
+        assert_eq!(
+            (on_cfg.aq_strength, on_cfg.weighted_pred, on_cfg.lookahead),
+            (0.0, true, 0),
+            "H.265 table row"
+        );
+        assert_eq!(
+            (aq_cfg.aq_strength, aq_cfg.weighted_pred),
+            (1.0, true),
+            "H.265 aq"
+        );
+        assert_eq!(
+            (off_cfg.aq_strength, off_cfg.weighted_pred),
+            (0.0, false),
+            "H.265 wp=off"
+        );
 
         let (on_pps, aq_pps, off_pps) = (hevc_pps(&on), hevc_pps(&aq_out), hevc_pps(&off));
         assert_eq!(on_pps.len(), 1, "one PPS per stream");
@@ -896,9 +967,21 @@ mod tests {
         let (on_cfg, on) = encode_with(VideoCodec::H264, EncodeOverrides::default());
         let (aq_cfg, aq_out) = encode_with(VideoCodec::H264, aq);
         let (off_cfg, off) = encode_with(VideoCodec::H264, wp_off);
-        assert_eq!((on_cfg.aq_strength, on_cfg.weighted_pred, on_cfg.lookahead), (0.0, true, 0), "H.264 table row");
-        assert_eq!((aq_cfg.aq_strength, aq_cfg.weighted_pred), (1.0, true), "H.264 aq");
-        assert_eq!((off_cfg.aq_strength, off_cfg.weighted_pred), (0.0, false), "H.264 wp=off");
+        assert_eq!(
+            (on_cfg.aq_strength, on_cfg.weighted_pred, on_cfg.lookahead),
+            (0.0, true, 0),
+            "H.264 table row"
+        );
+        assert_eq!(
+            (aq_cfg.aq_strength, aq_cfg.weighted_pred),
+            (1.0, true),
+            "H.264 aq"
+        );
+        assert_eq!(
+            (off_cfg.aq_strength, off_cfg.weighted_pred),
+            (0.0, false),
+            "H.264 wp=off"
+        );
         let weighted = |packets: &[bytes::Bytes]| -> Vec<bool> {
             let sps: Vec<h26x::h264::Sps> = packets
                 .iter()
@@ -909,15 +992,23 @@ mod tests {
                 .iter()
                 .flat_map(|p| nals_of_type(p, 8))
                 .map(|pps| {
-                    h26x::h264::Pps::parse(&pps, &|_| sps.first().cloned()).expect("the PPS parses").weighted_pred
+                    h26x::h264::Pps::parse(&pps, &|_| sps.first().cloned())
+                        .expect("the PPS parses")
+                        .weighted_pred
                 })
                 .collect()
         };
         // The H.264 encoder repeats its PPS in every access unit here; every
         // copy has to say the same thing.
         let (on_w, off_w) = (weighted(&on), weighted(&off));
-        assert!(!on_w.is_empty() && on_w.iter().all(|&w| w), "the table's wp did not reach the H.264 PPS: {on_w:?}");
-        assert!(!off_w.is_empty() && off_w.iter().all(|w| !w), "wp=off did not reach the H.264 PPS: {off_w:?}");
+        assert!(
+            !on_w.is_empty() && on_w.iter().all(|&w| w),
+            "the table's wp did not reach the H.264 PPS: {on_w:?}"
+        );
+        assert!(
+            !off_w.is_empty() && off_w.iter().all(|w| !w),
+            "wp=off did not reach the H.264 PPS: {off_w:?}"
+        );
         assert_ne!(aq_out, on, "aq=1.0 left the H.264 pictures as they were");
     }
 
@@ -930,16 +1021,29 @@ mod tests {
     #[test]
     fn the_tables_weighted_prediction_reaches_both_encoders() {
         use crate::encode::tuning::{EncodeOverrides, h26x_sw_params};
-        let wp = |on: bool| EncodeOverrides { weighted_pred: Some(on), ..Default::default() };
+        let wp = |on: bool| EncodeOverrides {
+            weighted_pred: Some(on),
+            ..Default::default()
+        };
         for tier in [SpeedTier::Draft, SpeedTier::Standard, SpeedTier::Archive] {
             for codec in [VideoCodec::H264, VideoCodec::H265] {
                 let want = h26x_sw_params(codec, QualityTarget::Standard, tier).weighted_pred;
                 let (cfg, packets) = encode_at(codec, tier, EncodeOverrides::default());
-                assert_eq!(cfg.weighted_pred, want, "{codec:?} {tier:?}: the configuration does not carry the table's wp");
+                assert_eq!(
+                    cfg.weighted_pred, want,
+                    "{codec:?} {tier:?}: the configuration does not carry the table's wp"
+                );
                 let (_, same) = encode_at(codec, tier, wp(want));
                 let (_, other) = encode_at(codec, tier, wp(!want));
-                assert_eq!(packets, same, "{codec:?} {tier:?}: the default stream is not wp={want}'s stream");
-                assert_ne!(packets, other, "{codec:?} {tier:?}: wp={} coded the same stream", !want);
+                assert_eq!(
+                    packets, same,
+                    "{codec:?} {tier:?}: the default stream is not wp={want}'s stream"
+                );
+                assert_ne!(
+                    packets, other,
+                    "{codec:?} {tier:?}: wp={} coded the same stream",
+                    !want
+                );
             }
         }
     }
@@ -955,24 +1059,53 @@ mod tests {
     fn the_tables_cu_depth_reaches_the_h265_encoder() {
         use crate::encode::tuning::{EncodeOverrides, h26x_sw_params};
         let direct = |cfg: &h26x::encode::Config, depth: u32| -> Vec<bytes::Bytes> {
-            let mut e = h26x::encode::h265::H265Encoder::new(h26x::encode::Config { max_cu_depth: Some(depth), ..cfg.clone() })
-                .expect("encoder");
+            let mut e = h26x::encode::h265::H265Encoder::new(h26x::encode::Config {
+                max_cu_depth: Some(depth),
+                ..cfg.clone()
+            })
+            .expect("encoder");
             let mut out = Vec::new();
             for i in 0..4 {
-                out.extend(e.push(&test_picture(i)).expect("picture").into_iter().map(|a| bytes::Bytes::from(a.data)));
+                out.extend(
+                    e.push(&test_picture(i))
+                        .expect("picture")
+                        .into_iter()
+                        .map(|a| bytes::Bytes::from(a.data)),
+                );
             }
-            out.extend(e.flush().expect("flush").into_iter().map(|a| bytes::Bytes::from(a.data)));
+            out.extend(
+                e.flush()
+                    .expect("flush")
+                    .into_iter()
+                    .map(|a| bytes::Bytes::from(a.data)),
+            );
             out
         };
         for tier in [SpeedTier::Draft, SpeedTier::Standard, SpeedTier::Archive] {
             let want = h26x_sw_params(VideoCodec::H265, QualityTarget::Standard, tier).max_cu_depth;
             let (cfg, packets) = encode_at(VideoCodec::H265, tier, EncodeOverrides::default());
-            assert_eq!(cfg.max_cu_depth, Some(want), "{tier:?}: the configuration does not carry the table's depth");
-            assert_eq!(packets, direct(&cfg, want), "{tier:?}: the stream is not the table depth's stream");
+            assert_eq!(
+                cfg.max_cu_depth,
+                Some(want),
+                "{tier:?}: the configuration does not carry the table's depth"
+            );
+            assert_eq!(
+                packets,
+                direct(&cfg, want),
+                "{tier:?}: the stream is not the table depth's stream"
+            );
             let other = if want == 0 { 2 } else { 0 };
-            assert_ne!(direct(&cfg, want), direct(&cfg, other), "{tier:?}: depth {want} and {other} coded the same stream");
+            assert_ne!(
+                direct(&cfg, want),
+                direct(&cfg, other),
+                "{tier:?}: depth {want} and {other} coded the same stream"
+            );
         }
-        let (h264, _) = encode_at(VideoCodec::H264, SpeedTier::Archive, EncodeOverrides::default());
+        let (h264, _) = encode_at(
+            VideoCodec::H264,
+            SpeedTier::Archive,
+            EncodeOverrides::default(),
+        );
         assert_eq!(h264.max_cu_depth, Some(0), "H.264 has no quadtree");
     }
 
@@ -984,14 +1117,24 @@ mod tests {
     #[test]
     fn a_cu_depth_override_reaches_the_h265_encoder_and_h264_refuses_it() {
         use crate::encode::tuning::EncodeOverrides;
-        let depth = |d: u8| EncodeOverrides { cu_depth: Some(d), ..Default::default() };
-        let (table, table_out) = encode_at(VideoCodec::H265, SpeedTier::Standard, EncodeOverrides::default());
+        let depth = |d: u8| EncodeOverrides {
+            cu_depth: Some(d),
+            ..Default::default()
+        };
+        let (table, table_out) = encode_at(
+            VideoCodec::H265,
+            SpeedTier::Standard,
+            EncodeOverrides::default(),
+        );
         let (std0, std0_out) = encode_at(VideoCodec::H265, SpeedTier::Standard, depth(0));
         let (draft2, _) = encode_at(VideoCodec::H265, SpeedTier::Draft, depth(2));
         assert_eq!(table.max_cu_depth, Some(2), "the Standard row");
         assert_eq!(std0.max_cu_depth, Some(0), "cu_depth=0 at Standard");
         assert_eq!(draft2.max_cu_depth, Some(2), "cu_depth=2 at Draft");
-        assert_ne!(std0_out, table_out, "cu_depth=0 coded the table depth's stream");
+        assert_ne!(
+            std0_out, table_out,
+            "cu_depth=0 coded the table depth's stream"
+        );
 
         let err = H26xEncoder::new(config_at(VideoCodec::H264, SpeedTier::Standard, depth(1)))
             .err()
@@ -1015,8 +1158,9 @@ mod tests {
             v ^= v >> 15;
             v.wrapping_mul(0xC2B2_AE3D) >> 24
         };
-        let mut data: Vec<u8> =
-            (0..w * h).map(|p| (((p % w) + 2 * i) / 4 * 3 + p / w + hash((p % w) + 2 * i, p / w) / 3) as u8).collect();
+        let mut data: Vec<u8> = (0..w * h)
+            .map(|p| (((p % w) + 2 * i) / 4 * 3 + p / w + hash((p % w) + 2 * i, p / w) / 3) as u8)
+            .collect();
         let (cw, ch) = (w / 2, h / 2);
         data.extend((0..cw * ch).map(|p| (96 + ((p % cw) + i) % 64) as u8));
         data.extend((0..cw * ch).map(|p| (160 - (p / cw + i) % 48) as u8));
@@ -1033,11 +1177,23 @@ mod tests {
         frame_rate: f64,
     ) -> (h26x::encode::Config, Vec<u8>) {
         let (w, h, _) = CLIP;
-        let cfg = EncoderConfig { width: w, height: h, frame_rate, ..config_at(codec, SpeedTier::Draft, overrides) };
+        let cfg = EncoderConfig {
+            width: w,
+            height: h,
+            frame_rate,
+            ..config_at(codec, SpeedTier::Draft, overrides)
+        };
         let mut enc = H26xEncoder::new(cfg).expect("encoder");
         let mut out = Vec::new();
         for i in 0..frames {
-            let frame = VideoFrame::new(clip_picture(i).into(), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, u64::from(i));
+            let frame = VideoFrame::new(
+                clip_picture(i).into(),
+                w,
+                h,
+                PixelFormat::Yuv420p,
+                ColorSpace::Bt709,
+                u64::from(i),
+            );
             enc.send_frame(&frame).expect("frame");
             while let Some(p) = enc.receive_packet().expect("packet") {
                 out.extend_from_slice(&p.data);
@@ -1051,12 +1207,18 @@ mod tests {
     }
 
     fn bitrate(bps: u32) -> crate::encode::tuning::EncodeOverrides {
-        crate::encode::tuning::EncodeOverrides { bitrate: Some(bps), ..Default::default() }
+        crate::encode::tuning::EncodeOverrides {
+            bitrate: Some(bps),
+            ..Default::default()
+        }
     }
 
     /// A rate with `buffer=0`: no coded picture buffer declared.
     fn unbuffered(bps: u32) -> crate::encode::tuning::EncodeOverrides {
-        crate::encode::tuning::EncodeOverrides { buffer_ms: Some(0), ..bitrate(bps) }
+        crate::encode::tuning::EncodeOverrides {
+            buffer_ms: Some(0),
+            ..bitrate(bps)
+        }
     }
 
     /// A rung with no rate is the constant-QP encode it always was — the
@@ -1068,12 +1230,23 @@ mod tests {
         for codec in [VideoCodec::H264, VideoCodec::H265] {
             let (cqp, _) = encode_at(codec, SpeedTier::Draft, Default::default());
             let qp = h26x_sw_params(codec, QualityTarget::Standard, SpeedTier::Draft).qp;
-            assert_eq!((cqp.rate, cqp.cpb_ms, cqp.lookahead), (h26x::encode::RateControl::ConstantQp(qp), 0, 0), "{codec:?}");
+            assert_eq!(
+                (cqp.rate, cqp.cpb_ms, cqp.lookahead),
+                (h26x::encode::RateControl::ConstantQp(qp), 0, 0),
+                "{codec:?}"
+            );
             // A rate gets the table's one-second buffer unless it names its
             // own, and `buffer=0` declares none.
             let (abr, _) = encode_at(codec, SpeedTier::Draft, bitrate(250_000));
-            assert_eq!((abr.rate, abr.cpb_ms), (h26x::encode::RateControl::Bitrate { bps: 250_000 }, 1000), "{codec:?}");
-            let o = crate::encode::tuning::EncodeOverrides { buffer_ms: Some(500), ..bitrate(250_000) };
+            assert_eq!(
+                (abr.rate, abr.cpb_ms),
+                (h26x::encode::RateControl::Bitrate { bps: 250_000 }, 1000),
+                "{codec:?}"
+            );
+            let o = crate::encode::tuning::EncodeOverrides {
+                buffer_ms: Some(500),
+                ..bitrate(250_000)
+            };
             let (buffered, _) = encode_at(codec, SpeedTier::Draft, o);
             assert_eq!(buffered.cpb_ms, 500, "{codec:?}");
             let (none, _) = encode_at(codec, SpeedTier::Draft, unbuffered(250_000));
@@ -1096,9 +1269,15 @@ mod tests {
             };
             let (low, high) = (achieved(150_000), achieved(600_000));
             let (low_bits, high_bits) = (low * 150_000.0, high * 600_000.0);
-            assert!(high_bits > 2.0 * low_bits, "{codec:?}: 600k coded {high_bits:.0} bit/s, 150k {low_bits:.0}");
+            assert!(
+                high_bits > 2.0 * low_bits,
+                "{codec:?}: 600k coded {high_bits:.0} bit/s, 150k {low_bits:.0}"
+            );
             for (ratio, target) in [(low, "150k"), (high, "600k")] {
-                assert!((0.5..=2.0).contains(&ratio), "{codec:?} at {target}: {ratio:.3} of target");
+                assert!(
+                    (0.5..=2.0).contains(&ratio),
+                    "{codec:?} at {target}: {ratio:.3} of target"
+                );
             }
         }
     }
@@ -1110,14 +1289,28 @@ mod tests {
     #[test]
     fn a_buffered_rung_declares_its_buffer_and_conforms() {
         for codec in [VideoCodec::H264, VideoCodec::H265] {
-            let o = crate::encode::tuning::EncodeOverrides { buffer_ms: Some(1000), ..bitrate(300_000) };
+            let o = crate::encode::tuning::EncodeOverrides {
+                buffer_ms: Some(1000),
+                ..bitrate(300_000)
+            };
             let (_, stream) = encode_clip(codec, o, 60, CLIP.2);
             let report = h26x::encode::hrd::verify(&stream).expect("the stream declares an HRD");
-            assert_eq!(report.bit_rate, 300_000 / 64 * 64, "{codec:?}: declared rate");
-            assert_eq!(report.cpb_size, 300_000 / 16 * 16, "{codec:?}: a one-second buffer");
+            assert_eq!(
+                report.bit_rate,
+                300_000 / 64 * 64,
+                "{codec:?}: declared rate"
+            );
+            assert_eq!(
+                report.cpb_size,
+                300_000 / 16 * 16,
+                "{codec:?}: a one-second buffer"
+            );
             assert!(report.conforms(), "{codec:?}: {report:?}");
             let (_, abr) = encode_clip(codec, unbuffered(300_000), 60, CLIP.2);
-            assert!(h26x::encode::hrd::verify(&abr).is_err(), "{codec:?}: no buffer, no HRD");
+            assert!(
+                h26x::encode::hrd::verify(&abr).is_err(),
+                "{codec:?}: no buffer, no HRD"
+            );
         }
     }
 
@@ -1130,9 +1323,16 @@ mod tests {
         assert_eq!(encoder_bps(3_000_000, 30_000.0 / 1001.0, 30), 3_003_000);
         assert_eq!(encoder_bps(3_000_000, 24_000.0 / 1001.0, 24), 3_003_000);
         assert_eq!(encoder_bps(1_000_000, 12.5, 13), 1_040_000);
-        assert_eq!(encoder_bps(1_000_000, 0.0, 1), 1_000_000, "an unknown rate is left alone");
+        assert_eq!(
+            encoder_bps(1_000_000, 0.0, 1),
+            1_000_000,
+            "an unknown rate is left alone"
+        );
         let (cfg, _) = encode_clip(VideoCodec::H264, bitrate(1_000_000), 2, 30_000.0 / 1001.0);
-        assert_eq!((cfg.fps, cfg.rate), (30, h26x::encode::RateControl::Bitrate { bps: 1_001_000 }));
+        assert_eq!(
+            (cfg.fps, cfg.rate),
+            (30, h26x::encode::RateControl::Bitrate { bps: 1_001_000 })
+        );
     }
 
     /// A lookahead reaches an H.265 bitrate rung's encoder; H.264's rate
@@ -1141,10 +1341,17 @@ mod tests {
     #[test]
     fn a_lookahead_reaches_h265_bitrate_rungs_only() {
         use crate::encode::tuning::EncodeOverrides;
-        let la = |o: EncodeOverrides| EncodeOverrides { lookahead_frames: Some(8), ..o };
+        let la = |o: EncodeOverrides| EncodeOverrides {
+            lookahead_frames: Some(8),
+            ..o
+        };
         let (h265, _) = encode_at(VideoCodec::H265, SpeedTier::Draft, la(bitrate(250_000)));
         let (h264, _) = encode_at(VideoCodec::H264, SpeedTier::Draft, la(bitrate(250_000)));
-        let (cqp, _) = encode_at(VideoCodec::H265, SpeedTier::Draft, la(EncodeOverrides::default()));
+        let (cqp, _) = encode_at(
+            VideoCodec::H265,
+            SpeedTier::Draft,
+            la(EncodeOverrides::default()),
+        );
         assert_eq!((h265.lookahead, h264.lookahead, cqp.lookahead), (8, 0, 0));
     }
 
@@ -1157,16 +1364,31 @@ mod tests {
     fn a_forced_keyframe_lands_on_the_next_frame_sent_under_a_lookahead() {
         use crate::encode::tuning::EncodeOverrides;
         for lookahead in [0u32, 4] {
-            let o = EncodeOverrides { lookahead_frames: Some(lookahead), ..bitrate(300_000) };
+            let o = EncodeOverrides {
+                lookahead_frames: Some(lookahead),
+                ..bitrate(300_000)
+            };
             let (w, h, fps) = CLIP;
-            let cfg = EncoderConfig { width: w, height: h, frame_rate: fps, ..config_at(VideoCodec::H265, SpeedTier::Draft, o) };
+            let cfg = EncoderConfig {
+                width: w,
+                height: h,
+                frame_rate: fps,
+                ..config_at(VideoCodec::H265, SpeedTier::Draft, o)
+            };
             let mut enc = H26xEncoder::new(cfg).expect("encoder");
             let mut keyframes = Vec::new();
             for i in 0..20u32 {
                 if i == 10 {
                     enc.force_keyframe_next().expect("force");
                 }
-                let frame = VideoFrame::new(clip_picture(i).into(), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, u64::from(i));
+                let frame = VideoFrame::new(
+                    clip_picture(i).into(),
+                    w,
+                    h,
+                    PixelFormat::Yuv420p,
+                    ColorSpace::Bt709,
+                    u64::from(i),
+                );
                 enc.send_frame(&frame).expect("frame");
                 while let Some(p) = enc.receive_packet().expect("packet") {
                     if p.is_keyframe {
@@ -1180,22 +1402,43 @@ mod tests {
                     keyframes.push(p.pts);
                 }
             }
-            assert_eq!(keyframes, vec![0, 10], "lookahead {lookahead}: keyframes at {keyframes:?}");
+            assert_eq!(
+                keyframes,
+                vec![0, 10],
+                "lookahead {lookahead}: keyframes at {keyframes:?}"
+            );
         }
         // Forced within a lookahead of the end, the keyframe has no picture
         // the flush could give it to: an error, not a chunk that is wrong.
-        let o = EncodeOverrides { lookahead_frames: Some(4), ..bitrate(300_000) };
+        let o = EncodeOverrides {
+            lookahead_frames: Some(4),
+            ..bitrate(300_000)
+        };
         let (w, h, fps) = CLIP;
-        let cfg = EncoderConfig { width: w, height: h, frame_rate: fps, ..config_at(VideoCodec::H265, SpeedTier::Draft, o) };
+        let cfg = EncoderConfig {
+            width: w,
+            height: h,
+            frame_rate: fps,
+            ..config_at(VideoCodec::H265, SpeedTier::Draft, o)
+        };
         let mut enc = H26xEncoder::new(cfg).expect("encoder");
         for i in 0..12u32 {
             if i == 10 {
                 enc.force_keyframe_next().expect("force");
             }
-            let frame = VideoFrame::new(clip_picture(i).into(), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, u64::from(i));
+            let frame = VideoFrame::new(
+                clip_picture(i).into(),
+                w,
+                h,
+                PixelFormat::Yuv420p,
+                ColorSpace::Bt709,
+                u64::from(i),
+            );
             enc.send_frame(&frame).expect("frame");
         }
-        let err = enc.flush().expect_err("an unplaceable keyframe must be an error");
+        let err = enc
+            .flush()
+            .expect_err("an unplaceable keyframe must be an error");
         assert!(format!("{err:#}").contains("cannot be placed"), "{err:#}");
     }
 
@@ -1207,24 +1450,70 @@ mod tests {
         let refuse = |cfg: EncoderConfig, words: &[&str]| {
             let err = H26xEncoder::new(cfg).err().expect("must refuse");
             let msg = format!("{err:#}");
-            assert!(words.iter().all(|w| msg.contains(w)), "{words:?} not all in: {msg}");
+            assert!(
+                words.iter().all(|w| msg.contains(w)),
+                "{words:?} not all in: {msg}"
+            );
         };
         let at = |codec, o| config_at(codec, SpeedTier::Draft, o);
-        refuse(EncoderConfig { quality: 28, ..at(VideoCodec::H264, bitrate(500_000)) }, &["crf=28", "bitrate=500000"]);
-        refuse(EncoderConfig { constant_qp: true, ..at(VideoCodec::H265, bitrate(500_000)) }, &["constqp", "bitrate=500000"]);
-        refuse(at(VideoCodec::H264, EncodeOverrides { buffer_ms: Some(500), ..Default::default() }), &["buffer=500ms", "no bitrate"]);
-        refuse(at(VideoCodec::H265, EncodeOverrides { lookahead_frames: Some(251), ..bitrate(500_000) }), &["lookahead=251"]);
+        refuse(
+            EncoderConfig {
+                quality: 28,
+                ..at(VideoCodec::H264, bitrate(500_000))
+            },
+            &["crf=28", "bitrate=500000"],
+        );
+        refuse(
+            EncoderConfig {
+                constant_qp: true,
+                ..at(VideoCodec::H265, bitrate(500_000))
+            },
+            &["constqp", "bitrate=500000"],
+        );
+        refuse(
+            at(
+                VideoCodec::H264,
+                EncodeOverrides {
+                    buffer_ms: Some(500),
+                    ..Default::default()
+                },
+            ),
+            &["buffer=500ms", "no bitrate"],
+        );
+        refuse(
+            at(
+                VideoCodec::H265,
+                EncodeOverrides {
+                    lookahead_frames: Some(251),
+                    ..bitrate(500_000)
+                },
+            ),
+            &["lookahead=251"],
+        );
         refuse(at(VideoCodec::H265, bitrate(0)), &["bitrate=0"]);
         // AV1: an average rate is the software AV1 encoder's to code; a
         // buffer beside it is not.
-        assert_eq!(rate_refusal(VideoCodec::Av1, &bitrate(500_000), None, false), None);
-        let buffered = EncodeOverrides { buffer_ms: Some(1000), ..bitrate(500_000) };
+        assert_eq!(
+            rate_refusal(VideoCodec::Av1, &bitrate(500_000), None, false),
+            None
+        );
+        let buffered = EncodeOverrides {
+            buffer_ms: Some(1000),
+            ..bitrate(500_000)
+        };
         let av1 = rate_refusal(VideoCodec::Av1, &buffered, None, false).expect("no buffer model");
-        assert!(av1.contains("software AV1") && av1.contains("buffer=1000ms"), "{av1}");
-        let crf = rate_refusal(VideoCodec::Av1, &bitrate(500_000), Some(30), false).expect("crf and bitrate");
+        assert!(
+            av1.contains("software AV1") && av1.contains("buffer=1000ms"),
+            "{av1}"
+        );
+        let crf = rate_refusal(VideoCodec::Av1, &bitrate(500_000), Some(30), false)
+            .expect("crf and bitrate");
         assert!(crf.contains("crf=30"), "{crf}");
         // A buffer of 0 is no buffer, whatever else the rung names.
-        let zero = EncodeOverrides { buffer_ms: Some(0), ..Default::default() };
+        let zero = EncodeOverrides {
+            buffer_ms: Some(0),
+            ..Default::default()
+        };
         assert_eq!(rate_refusal(VideoCodec::H264, &zero, Some(28), true), None);
     }
 
@@ -1234,13 +1523,30 @@ mod tests {
     #[test]
     fn a_constant_rate_rung_is_judged_by_rate_refusal() {
         use crate::encode::tuning::{EncodeOverrides, RateMode};
-        let cbr = |bps| EncodeOverrides { rate_mode: Some(RateMode::Constant), ..bitrate(bps) };
-        assert_eq!(rate_refusal(VideoCodec::Av1, &cbr(2_000_000), None, false), None);
-        assert_eq!(rate_refusal(VideoCodec::H264, &cbr(2_000_000), None, false), None);
-        let crf = rate_refusal(VideoCodec::H264, &cbr(2_000_000), Some(23), false).expect("crf and cbr");
+        let cbr = |bps| EncodeOverrides {
+            rate_mode: Some(RateMode::Constant),
+            ..bitrate(bps)
+        };
+        assert_eq!(
+            rate_refusal(VideoCodec::Av1, &cbr(2_000_000), None, false),
+            None
+        );
+        assert_eq!(
+            rate_refusal(VideoCodec::H264, &cbr(2_000_000), None, false),
+            None
+        );
+        let crf =
+            rate_refusal(VideoCodec::H264, &cbr(2_000_000), Some(23), false).expect("crf and cbr");
         assert!(crf.contains("crf=23") && crf.contains("rate=cbr"), "{crf}");
-        let none = EncodeOverrides { rate_mode: Some(RateMode::Constant), ..Default::default() };
-        assert!(rate_refusal(VideoCodec::H265, &none, None, false).expect("no rate").contains("no bitrate"));
+        let none = EncodeOverrides {
+            rate_mode: Some(RateMode::Constant),
+            ..Default::default()
+        };
+        assert!(
+            rate_refusal(VideoCodec::H265, &none, None, false)
+                .expect("no rate")
+                .contains("no bitrate")
+        );
         const { assert!(CODES_CONSTANT_RATE) };
     }
 
@@ -1263,15 +1569,36 @@ mod tests {
             let (avg_cfg, _) = encode_at(codec, SpeedTier::Draft, bitrate(250_000));
             assert!(!avg_cfg.cbr, "{codec:?}: an average rung is not cbr");
             for (bps, buffer_ms) in [(300_000u32, None), (800_000, Some(500u32))] {
-                let o = EncodeOverrides { rate_mode: Some(RateMode::Constant), buffer_ms, ..bitrate(bps) };
+                let o = EncodeOverrides {
+                    rate_mode: Some(RateMode::Constant),
+                    buffer_ms,
+                    ..bitrate(bps)
+                };
                 let (cfg, stream) = encode_clip(codec, o, frames, CLIP.2);
                 assert!(cfg.cbr, "{codec:?}");
-                assert_eq!(cfg.cpb_ms, buffer_ms.unwrap_or(1000), "{codec:?}: the rung's buffer");
-                let report = h26x::encode::hrd::verify(&stream).unwrap_or_else(|e| panic!("{codec:?} at {bps}: {e}"));
-                assert_eq!(report.bit_rate, u64::from(bps) / 64 * 64, "{codec:?}: declared rate");
-                assert!(report.conforms(), "{codec:?} at {bps}: {:?} / {:?}", report.underflow, report.overflow);
+                assert_eq!(
+                    cfg.cpb_ms,
+                    buffer_ms.unwrap_or(1000),
+                    "{codec:?}: the rung's buffer"
+                );
+                let report = h26x::encode::hrd::verify(&stream)
+                    .unwrap_or_else(|e| panic!("{codec:?} at {bps}: {e}"));
+                assert_eq!(
+                    report.bit_rate,
+                    u64::from(bps) / 64 * 64,
+                    "{codec:?}: declared rate"
+                );
+                assert!(
+                    report.conforms(),
+                    "{codec:?} at {bps}: {:?} / {:?}",
+                    report.underflow,
+                    report.overflow
+                );
                 let bits = stream.len() as f64 * 8.0;
-                let (floor, ceiling) = (0.98 * f64::from(bps) * secs, f64::from(bps) * secs + report.cpb_size as f64);
+                let (floor, ceiling) = (
+                    0.98 * f64::from(bps) * secs,
+                    f64::from(bps) * secs + report.cpb_size as f64,
+                );
                 assert!(
                     (floor..=ceiling).contains(&bits),
                     "{codec:?} at {bps}: {bits:.0} bits over {secs} s, outside {floor:.0}..={ceiling:.0}"
@@ -1286,7 +1613,10 @@ mod tests {
     /// asked for (at the syntax's 64 bit/s unit) and kept to.
     #[test]
     fn a_rate_past_level_4_is_coded_with_its_buffer() {
-        assert_eq!(rate_refusal(VideoCodec::H265, &bitrate(20_000_000), None, false), None);
+        assert_eq!(
+            rate_refusal(VideoCodec::H265, &bitrate(20_000_000), None, false),
+            None
+        );
         let (cfg, stream) = encode_clip(VideoCodec::H265, bitrate(20_000_000), 10, CLIP.2);
         assert_eq!(cfg.cpb_ms, 1000);
         let report = h26x::encode::hrd::verify(&stream).expect("the stream declares an HRD");
@@ -1319,7 +1649,9 @@ mod tests {
         };
         let au = first_access_unit(cm);
         let sps = nals_of_type(&au, 7);
-        let [sps] = sps.as_slice() else { panic!("one SPS in the first access unit, got {}", sps.len()) };
+        let [sps] = sps.as_slice() else {
+            panic!("one SPS in the first access unit, got {}", sps.len())
+        };
         let sps = h26x::h264::Sps::parse(sps).expect("the SPS parses");
         let vui = sps.vui.as_ref().expect("the SPS carries a VUI");
         assert_eq!(vui.colour_description, Some((1, 1, 1)));
@@ -1352,7 +1684,10 @@ mod tests {
                 max_luminance: 10_000_000,
                 min_luminance: 1,
             }),
-            content_light_level: Some(ContentLightLevel { max_cll: 1000, max_fall: 400 }),
+            content_light_level: Some(ContentLightLevel {
+                max_cll: 1000,
+                max_fall: 400,
+            }),
         };
         let au = first_access_unit(cm);
         let seis: Vec<String> = nals_of_type(&au, 6)
@@ -1364,8 +1699,14 @@ mod tests {
         let mdcv = "891833c286c41d4c0bb884d03e803d134042009896800000000180".to_string();
         // payloadType 144, 4 bytes: 1000, 400.
         let cll = "900403e8019080".to_string();
-        assert!(seis.contains(&mdcv), "mastering display SEI {mdcv} not among {seis:?}");
-        assert!(seis.contains(&cll), "content light level SEI {cll} not among {seis:?}");
+        assert!(
+            seis.contains(&mdcv),
+            "mastering display SEI {mdcv} not among {seis:?}"
+        );
+        assert!(
+            seis.contains(&cll),
+            "content light level SEI {cll} not among {seis:?}"
+        );
         // And none without the metadata.
         let au = first_access_unit(ColorMetadata::default());
         assert!(nals_of_type(&au, 6).is_empty(), "no SEI for SDR metadata");

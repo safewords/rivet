@@ -71,8 +71,15 @@ fn nals(data: &[u8], limit: usize) -> Vec<Nal> {
         while end > begin && data[end - 1] == 0 {
             end -= 1;
         }
-        let start = if sc > 0 && data[sc - 1] == 0 { sc - 1 } else { sc };
-        out.push(Nal { start, body: begin..end });
+        let start = if sc > 0 && data[sc - 1] == 0 {
+            sc - 1
+        } else {
+            sc
+        };
+        out.push(Nal {
+            start,
+            body: begin..end,
+        });
     }
     if out.len() > limit {
         out.truncate(limit);
@@ -99,7 +106,11 @@ pub(super) fn sniff(data: &[u8]) -> Option<ContainerKind> {
     let head = &data[..data.len().min(SNIFF_BYTES)];
     let units = nals(head, SNIFF_NALS);
     // The last unit may be cut by the window; it is not judged.
-    let judged = if units.len() > 1 && head.len() < data.len() { &units[..units.len() - 1] } else { &units[..] };
+    let judged = if units.len() > 1 && head.len() < data.len() {
+        &units[..units.len() - 1]
+    } else {
+        &units[..]
+    };
     if judged.len() < 2 {
         return None;
     }
@@ -128,7 +139,9 @@ fn looks_h264(data: &[u8], units: &[Nal]) -> bool {
             // An IDR slice is a reference picture.
             5 if ref_idc == 0 => return false,
             7 => {
-                let Ok(s) = h26x::h264::Sps::parse(&rbsp(&body[1..], 512)) else { return false };
+                let Ok(s) = h26x::h264::Sps::parse(&rbsp(&body[1..], 512)) else {
+                    return false;
+                };
                 if s.pic_width_in_mbs == 0 {
                     return false;
                 }
@@ -145,7 +158,9 @@ fn looks_hevc(data: &[u8], units: &[Nal]) -> bool {
     let (mut vps, mut sps, mut slice_after_sps) = (false, false, false);
     for nal in units {
         let body = &data[nal.body.clone()];
-        let Some(h) = h26x::nal::HevcNalHeader::parse(body) else { return false };
+        let Some(h) = h26x::nal::HevcNalHeader::parse(body) else {
+            return false;
+        };
         // Reserved VCL types (22..=31 are reserved or IRAP-reserved, kept
         // legal up to 23) and reserved non-VCL types 41..=47.
         if (24..=31).contains(&h.unit_type) || (41..=47).contains(&h.unit_type) {
@@ -156,7 +171,9 @@ fn looks_hevc(data: &[u8], units: &[Nal]) -> bool {
             // vps_reserved_0xffff_16bits (H.265 §7.3.2.1).
             32 => vps = rbsp(&body[2..], 8).get(2..4) == Some(&[0xff, 0xff][..]),
             33 => {
-                let Ok(s) = h26x::hevc::Sps::parse(&rbsp(&body[2..], 1024)) else { return false };
+                let Ok(s) = h26x::hevc::Sps::parse(&rbsp(&body[2..], 1024)) else {
+                    return false;
+                };
                 if s.width == 0 || s.height == 0 {
                     return false;
                 }
@@ -186,7 +203,11 @@ struct SpsFields {
     separate_colour_plane: bool,
 }
 
-fn h264_slice_head(payload: &[u8], pps: &HashMap<u32, u32>, sps: &HashMap<u32, SpsFields>) -> Option<SliceHead> {
+fn h264_slice_head(
+    payload: &[u8],
+    pps: &HashMap<u32, u32>,
+    sps: &HashMap<u32, SpsFields>,
+) -> Option<SliceHead> {
     let rb = rbsp(payload, 64);
     let mut r = Bits::new(&rb);
     let first_mb = r.ue()?;
@@ -199,7 +220,12 @@ fn h264_slice_head(payload: &[u8], pps: &HashMap<u32, u32>, sps: &HashMap<u32, S
     let frame_num = r.bits(s.log2_max_frame_num)?;
     let field = !s.frame_mbs_only && r.bit()? == 1;
     let bottom = field && r.bit()? == 1;
-    Some(SliceHead { first_mb, frame_num, field, bottom })
+    Some(SliceHead {
+        first_mb,
+        frame_num,
+        field,
+        bottom,
+    })
 }
 
 /// The stream's access units as samples, from the first that carries a
@@ -225,9 +251,11 @@ pub(super) fn index(data: &[u8], codec: Codec) -> Result<Indexed> {
                     7 => {
                         if let Ok(s) = h26x::h264::Sps::parse(&rbsp(&body[1..], 512)) {
                             if frame_rate.is_none() {
-                                frame_rate = s.vui.as_ref().and_then(|v| v.timing).and_then(|(n, t)| {
-                                    (n > 0 && t > 0).then(|| f64::from(t) / (2.0 * f64::from(n)))
-                                });
+                                frame_rate =
+                                    s.vui.as_ref().and_then(|v| v.timing).and_then(|(n, t)| {
+                                        (n > 0 && t > 0)
+                                            .then(|| f64::from(t) / (2.0 * f64::from(n)))
+                                    });
                             }
                             sps_fields.insert(
                                 s.id,
@@ -254,7 +282,9 @@ pub(super) fn index(data: &[u8], codec: Codec) -> Result<Indexed> {
                         Some(sh) if sh.first_mb == 0 => {
                             // The second field of a pair continues its frame.
                             let second = sh.field
-                                && open_field.is_some_and(|(num, bottom)| num == sh.frame_num && bottom != sh.bottom);
+                                && open_field.is_some_and(|(num, bottom)| {
+                                    num == sh.frame_num && bottom != sh.bottom
+                                });
                             open_field = (sh.field && !second).then_some((sh.frame_num, sh.bottom));
                             (false, !second)
                         }
@@ -264,15 +294,18 @@ pub(super) fn index(data: &[u8], codec: Codec) -> Result<Indexed> {
                 }
             }
             Codec::Hevc => {
-                let Some(h) = h26x::nal::HevcNalHeader::parse(body) else { continue };
+                let Some(h) = h26x::nal::HevcNalHeader::parse(body) else {
+                    continue;
+                };
                 match h.unit_type {
                     33 => {
                         if frame_rate.is_none()
                             && let Ok(s) = h26x::hevc::Sps::parse(&rbsp(&body[2..], 1024))
                         {
-                            frame_rate = s.vui.as_ref().and_then(|v| v.timing).and_then(|(n, t)| {
-                                (n > 0 && t > 0).then(|| f64::from(t) / f64::from(n))
-                            });
+                            frame_rate =
+                                s.vui.as_ref().and_then(|v| v.timing).and_then(|(n, t)| {
+                                    (n > 0 && t > 0).then(|| f64::from(t) / f64::from(n))
+                                });
                         }
                         seen_sps = true;
                         (true, false)
@@ -287,7 +320,8 @@ pub(super) fn index(data: &[u8], codec: Codec) -> Result<Indexed> {
             lead.get_or_insert(nal.start);
         } else if picture_start {
             cuts.push(lead.take().unwrap_or(nal.start));
-        } else if matches!(codec, Codec::H264) && body.first().is_some_and(|h| matches!(h & 0x1f, 1 | 5))
+        } else if matches!(codec, Codec::H264)
+            && body.first().is_some_and(|h| matches!(h & 0x1f, 1 | 5))
             || matches!(codec, Codec::Hevc) && body.first().is_some_and(|h| (h >> 1) & 0x3f <= 31)
         {
             // A further slice of the picture: anything gathered before it
@@ -303,8 +337,11 @@ pub(super) fn index(data: &[u8], codec: Codec) -> Result<Indexed> {
         bail!("{label}: the stream has no sequence parameter set");
     }
     // Samples from the first access unit holding an SPS.
-    let mut spans: Vec<std::ops::Range<usize>> =
-        cuts.iter().enumerate().map(|(k, &c)| c..cuts.get(k + 1).copied().unwrap_or(data.len())).collect();
+    let mut spans: Vec<std::ops::Range<usize>> = cuts
+        .iter()
+        .enumerate()
+        .map(|(k, &c)| c..cuts.get(k + 1).copied().unwrap_or(data.len()))
+        .collect();
     let has_sps = |r: &std::ops::Range<usize>| {
         nals(&data[r.clone()], 8).iter().any(|n| {
             let b = &data[r.start + n.body.start..r.start + n.body.end];
@@ -316,7 +353,11 @@ pub(super) fn index(data: &[u8], codec: Codec) -> Result<Indexed> {
     };
     let skip = spans.iter().position(has_sps).unwrap_or(spans.len());
     if skip > 0 {
-        tracing::warn!(container = label, dropped = skip, "the stream opens before its first SPS; those access units are dropped");
+        tracing::warn!(
+            container = label,
+            dropped = skip,
+            "the stream opens before its first SPS; those access units are dropped"
+        );
     }
     spans.drain(..skip);
     Ok(Indexed {

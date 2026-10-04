@@ -346,7 +346,10 @@ mod avx2_impl {
         #[inline(always)]
         unsafe fn lookup_f32(table: &[f32], idx: __m256i) -> __m256 {
             unsafe {
-                let (lo, hi) = (_mm256_castsi256_si128(idx), _mm256_extracti128_si256::<1>(idx));
+                let (lo, hi) = (
+                    _mm256_castsi256_si128(idx),
+                    _mm256_extracti128_si256::<1>(idx),
+                );
                 let half = |v: __m128i| {
                     _mm_set_ps(
                         *table.get_unchecked(_mm_extract_epi32::<3>(v) as usize),

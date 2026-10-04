@@ -45,7 +45,11 @@ fn coverage_error(label: &str, expected: usize, indices: &[usize]) -> Option<Str
     Some(format!(
         "rung {label} chunk coverage incomplete: the scaler pushed {expected} chunks, \
          {got} came back{}",
-        if contiguous { "" } else { " (and they aren't contiguous from 0)" }
+        if contiguous {
+            ""
+        } else {
+            " (and they aren't contiguous from 0)"
+        }
     ))
 }
 
@@ -173,7 +177,8 @@ pub async fn run_multigpu_single_file(
     // Finalizers: stitch each rung's chunks (sorted, deduped) into one stream.
     let total_input_frames = params.total_input_frames;
     let codec = params.codec;
-    let (finalizer_tx, finalizer_rx) = mpsc::channel::<(usize, Result<Option<RungPackets>>)>(n.max(1));
+    let (finalizer_tx, finalizer_rx) =
+        mpsc::channel::<(usize, Result<Option<RungPackets>>)>(n.max(1));
     let mut finalizer_handles = Vec::with_capacity(n);
     for idx in 0..n {
         let ladder_h = Arc::clone(&ladder);
@@ -265,23 +270,28 @@ pub async fn run_multigpu_single_file(
          frames: &std::sync::atomic::AtomicU64,
          bytes: &std::sync::atomic::AtomicU64,
          tx: &mpsc::Sender<u64>| {
-            Ok(match encode_chunk_unit(cfg, chunk, sessions, frames, bytes, tx)? {
-                ChunkUnitOutcome::Encoded(packets) => UnitOutcome::Done(packets),
-                ChunkUnitOutcome::Rejected { chunk, diff } => UnitOutcome::Rejected { chunk, diff },
-            })
+            Ok(
+                match encode_chunk_unit(cfg, chunk, sessions, frames, bytes, tx)? {
+                    ChunkUnitOutcome::Encoded(packets) => UnitOutcome::Done(packets),
+                    ChunkUnitOutcome::Rejected { chunk, diff } => {
+                        UnitOutcome::Rejected { chunk, diff }
+                    }
+                },
+            )
         },
     );
-    let (workers, _) = match ladder::spawn_workers(&params, &ctx, rungs, shape, &ladder, encode).await {
-        Ok(w) => w,
-        Err(e) => {
-            // Stop the pumps and scalers already running in blocking threads;
-            // see the same arm in `hls.rs` for the hang this prevents.
-            ladder.abort.abort();
-            progress_stop.store(true, Ordering::Release);
-            let _ = progress_handle.await;
-            return Err(e);
-        }
-    };
+    let (workers, _) =
+        match ladder::spawn_workers(&params, &ctx, rungs, shape, &ladder, encode).await {
+            Ok(w) => w,
+            Err(e) => {
+                // Stop the pumps and scalers already running in blocking threads;
+                // see the same arm in `hls.rs` for the hang this prevents.
+                ladder.abort.abort();
+                progress_stop.store(true, Ordering::Release);
+                let _ = progress_handle.await;
+                return Err(e);
+            }
+        };
     ladder.release_setup_guard();
 
     let result = ladder::drain(Running {
@@ -331,13 +341,27 @@ mod tests {
                     EncodePolicy::SingleGpu(Some(4)),
                     VideoCodec::H265,
                 );
-                run_multigpu_single_file(params, Arc::new(NullSink)).await.map(|_| ()).map_err(|e| format!("{e:#}"))
+                run_multigpu_single_file(params, Arc::new(NullSink))
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| format!("{e:#}"))
             },
         );
         let msg = verdict.expect_err("nothing to encode on");
-        assert!(msg.contains("no encoder matches `--encode gpu:4` for H.265 on this host: there is no gpu 4."), "{msg}");
-        assert!(msg.contains("Present: synth-0 (gpu 0, NVIDIA, encodes H.265)"), "the params' host, not this machine: {msg}");
-        assert!(!msg.contains("decode"), "refused only after a decode had started: {msg}");
+        assert!(
+            msg.contains(
+                "no encoder matches `--encode gpu:4` for H.265 on this host: there is no gpu 4."
+            ),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("Present: synth-0 (gpu 0, NVIDIA, encodes H.265)"),
+            "the params' host, not this machine: {msg}"
+        );
+        assert!(
+            !msg.contains("decode"),
+            "refused only after a decode had started: {msg}"
+        );
     }
 
     #[test]

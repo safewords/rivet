@@ -1,7 +1,7 @@
 use super::*;
+use codec::frame::{ColorMetadata, PixelFormat, VideoCodec};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use codec::frame::{ColorMetadata, PixelFormat, VideoCodec};
 
 #[test]
 fn config_clone_preserves_fields() {

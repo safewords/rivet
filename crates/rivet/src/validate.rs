@@ -160,7 +160,10 @@ mod container_tests {
         data.extend_from_slice(b"ftypnvr1");
         data.extend_from_slice(&[0, 0, 0, 0]);
         data.extend_from_slice(b"isommp42");
-        assert_eq!(validate_container(&data, WEB).unwrap(), ContainerKind::IsoBmff);
+        assert_eq!(
+            validate_container(&data, WEB).unwrap(),
+            ContainerKind::IsoBmff
+        );
     }
 
     #[test]
@@ -176,7 +179,9 @@ mod container_tests {
     #[test]
     fn junk_and_short_input_are_unrecognized() {
         assert_eq!(
-            validate_container(b"hello, this is plain text, not a video", WEB).unwrap_err().kind,
+            validate_container(b"hello, this is plain text, not a video", WEB)
+                .unwrap_err()
+                .kind,
             ValidationErrorKind::UnrecognizedContainer
         );
         assert_eq!(

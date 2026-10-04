@@ -3,13 +3,13 @@
 //! All tests run without live hardware. Tests assert on struct layouts,
 //! rate-control slot mapping, constant values, and helper functions.
 
-use super::*;                                      // pub items from mod.rs
-use super::ffi::*;                                 // pub(super) ffi constants + structs
-use super::config::*;                              // pub(super) config helpers
-use super::surface::*;                             // RING_SIZE
+use super::config::*; // pub(super) config helpers
+use super::ffi::*; // pub(super) ffi constants + structs
+use super::surface::*;
+use super::*; // pub items from mod.rs // RING_SIZE
 // align_up is a private fn in mod.rs; child modules must import it explicitly.
 use super::align_up;
-use crate::encode::tuning::{self, QualityTarget, QsvRateControl, SpeedTier};
+use crate::encode::tuning::{self, QsvRateControl, QualityTarget, SpeedTier};
 use crate::frame::{ColorMetadata, PixelFormat, TransferFn};
 use crate::qsv_ffi::{MfxExtBuffer, MfxFrameInfo};
 
@@ -59,14 +59,21 @@ fn test_qsv_cqp_slots_mirror_qpi_qpp_qpb() {
 fn test_qsv_target_usage_maps_from_speed_tier() {
     let (w, h) = (1920, 1080);
     let cases = [
-        (SpeedTier::Archive, 1u16, "1 = BEST_QUALITY per mfxdefs.h:91"),
+        (
+            SpeedTier::Archive,
+            1u16,
+            "1 = BEST_QUALITY per mfxdefs.h:91",
+        ),
         (SpeedTier::Standard, 4u16, "4 = BALANCED per mfxdefs.h:92"),
         (SpeedTier::Draft, 6u16, "6 = one step from BEST_SPEED (7)"),
     ];
     for (tier, expected, reason) in cases {
         let tp = tuning::qsv_av1_params(QualityTarget::Standard, tier, w, h);
         let got = clamp_target_usage(tp.target_usage);
-        assert_eq!(got, expected, "{tier:?} → {got} (want {expected}, {reason})");
+        assert_eq!(
+            got, expected,
+            "{tier:?} → {got} (want {expected}, {reason})"
+        );
         assert!(
             (1..=7).contains(&got),
             "TargetUsage must be 1..7 per vendor/intel/mfxdefs.h:91-93"
@@ -96,6 +103,7 @@ fn test_qsv_target_usage_clamps_out_of_range() {
 #[test]
 fn a_slot_the_runtime_holds_is_never_chosen() {
     // (sync point drained?, Locked)
+    #[rustfmt::skip]
     let slots = [
         (true, 1u16),  // MORE_DATA: no sync point, still held  <- the trap
         (true, 2),     // held as a prediction reference
@@ -130,7 +138,7 @@ fn the_pool_is_larger_than_the_async_depth() {
 fn test_qsv_more_data_on_encode_returns_no_packet() {
     fn simulate_encode(rc: MfxStatus) -> std::result::Result<Option<()>, String> {
         match rc {
-            MFX_ERR_NONE => Ok(Some(())), // sync point produced
+            MFX_ERR_NONE => Ok(Some(())),  // sync point produced
             MFX_ERR_MORE_DATA => Ok(None), // no packet, no error
             err if err > 0 => Ok(None),    // warning, no packet
             err => Err(format!("encode failed: {err}")),
@@ -138,7 +146,10 @@ fn test_qsv_more_data_on_encode_returns_no_packet() {
     }
     assert_eq!(simulate_encode(MFX_ERR_MORE_DATA).unwrap(), None);
     assert_eq!(simulate_encode(MFX_ERR_NONE).unwrap(), Some(()));
-    assert!(simulate_encode(-1).is_err(), "unknown negative = hard error");
+    assert!(
+        simulate_encode(-1).is_err(),
+        "unknown negative = hard error"
+    );
 }
 
 /// `flush_drain` loops EncodeFrameAsync(NULL) and terminates on
@@ -158,13 +169,25 @@ fn test_qsv_eof_drain_ends_cleanly() {
             err => Err(format!("flush failed: {err}")),
         }
     }
-    assert_eq!(simulate_flush_tick(MFX_ERR_MORE_DATA).unwrap(), true,
-               "clean EOF: flush terminates on MORE_DATA without error");
-    assert_eq!(simulate_flush_tick(MFX_ERR_NONE).unwrap(), false,
-               "NONE: flush has more output to drain");
-    assert_eq!(simulate_flush_tick(MFX_WRN_VIDEO_PARAM_CHANGED).unwrap(), false,
-               "warning: flush keeps looping to drain the bitstream");
-    assert!(simulate_flush_tick(-5).is_err(), "hard negative error bails");
+    assert_eq!(
+        simulate_flush_tick(MFX_ERR_MORE_DATA).unwrap(),
+        true,
+        "clean EOF: flush terminates on MORE_DATA without error"
+    );
+    assert_eq!(
+        simulate_flush_tick(MFX_ERR_NONE).unwrap(),
+        false,
+        "NONE: flush has more output to drain"
+    );
+    assert_eq!(
+        simulate_flush_tick(MFX_WRN_VIDEO_PARAM_CHANGED).unwrap(),
+        false,
+        "warning: flush keeps looping to drain the bitstream"
+    );
+    assert!(
+        simulate_flush_tick(-5).is_err(),
+        "hard negative error bails"
+    );
 }
 
 /// `MFX_ERR_MORE_SURFACE` is a DECODE-path status, not an
@@ -192,7 +215,10 @@ fn test_qsv_fourcc_literals_match_macro() {
     assert_eq!(MFX_CODEC_AV1, make(b'A', b'V', b'1', b' '));
     assert_eq!(MFX_FOURCC_NV12, make(b'N', b'V', b'1', b'2'));
     assert_eq!(MFX_EXTBUFF_AV1_TILE_PARAM, make(b'A', b'1', b'T', b'L'));
-    assert_eq!(MFX_EXTBUFF_AV1_BITSTREAM_PARAM, make(b'A', b'V', b'1', b'B'));
+    assert_eq!(
+        MFX_EXTBUFF_AV1_BITSTREAM_PARAM,
+        make(b'A', b'V', b'1', b'B')
+    );
 }
 
 /// AV1 profile = MAIN = 1 per vendor/intel/mfxav1.h:24. Main
@@ -355,9 +381,18 @@ fn test_qsv_encode_ctrl_struct_size() {
 /// silently encode 1/64-amplitude noise.
 #[test]
 fn test_qsv_fourcc_dispatch_10bit() {
-    assert_eq!(qsv_fourcc_for(PixelFormat::Yuv420p).unwrap(), MFX_FOURCC_NV12);
-    assert_eq!(qsv_fourcc_for(PixelFormat::Yuv420p10le).unwrap(), MFX_FOURCC_P010);
-    assert_eq!(MFX_FOURCC_P010, 0x30313050, "P010 FOURCC = 'P','0','1','0' LE");
+    assert_eq!(
+        qsv_fourcc_for(PixelFormat::Yuv420p).unwrap(),
+        MFX_FOURCC_NV12
+    );
+    assert_eq!(
+        qsv_fourcc_for(PixelFormat::Yuv420p10le).unwrap(),
+        MFX_FOURCC_P010
+    );
+    assert_eq!(
+        MFX_FOURCC_P010, 0x30313050,
+        "P010 FOURCC = 'P','0','1','0' LE"
+    );
 }
 
 /// Unsupported pixel formats must bail with a typed error. AV1
@@ -449,7 +484,10 @@ fn test_qsv_frame_info_p010_layout() {
     assert_eq!(fi.bit_depth_chroma, 10);
     assert_eq!(fi.shift, 1, "P010 must set Shift=1");
     assert_eq!(fi.fourcc, MFX_FOURCC_P010);
-    assert_eq!(fi.chroma_format, MFX_CHROMAFORMAT_YUV420, "still 4:2:0 sub-sampling");
+    assert_eq!(
+        fi.chroma_format, MFX_CHROMAFORMAT_YUV420,
+        "still 4:2:0 sub-sampling"
+    );
 
     // Read fourcc back through raw bytes — guards against an
     // accidental field reorder during an SDK port.
@@ -486,8 +524,14 @@ fn test_qsv_coding_option3_10bit_layout() {
         _tail: [0; 348],
     };
 
-    assert_eq!(co3.target_bit_depth_luma, 10, "AV1 BitDepth=10 in seq header");
-    assert_eq!(co3.target_bit_depth_chroma, 10, "AV1 BitDepth=10 in seq header");
+    assert_eq!(
+        co3.target_bit_depth_luma, 10,
+        "AV1 BitDepth=10 in seq header"
+    );
+    assert_eq!(
+        co3.target_bit_depth_chroma, 10,
+        "AV1 BitDepth=10 in seq header"
+    );
     assert_eq!(
         co3.target_chroma_format_plus1, 2,
         "MFX_CHROMAFORMAT_YUV420 (1) + 1 = 2"
@@ -502,9 +546,7 @@ fn test_qsv_coding_option3_10bit_layout() {
 fn memoffset_target_bit_depth_luma() -> usize {
     let base = std::mem::MaybeUninit::<MfxExtCodingOption3>::uninit();
     let ptr = base.as_ptr();
-    unsafe {
-        (std::ptr::addr_of!((*ptr).target_bit_depth_luma) as usize) - (ptr as usize)
-    }
+    unsafe { (std::ptr::addr_of!((*ptr).target_bit_depth_luma) as usize) - (ptr as usize) }
 }
 
 /// `mfxExtVideoSignalInfo` for HDR10 (BT.2020 NCL primaries, PQ
@@ -517,8 +559,8 @@ fn memoffset_target_bit_depth_luma() -> usize {
 fn test_qsv_signal_info_hdr10_layout() {
     let cm = ColorMetadata {
         transfer: TransferFn::St2084,
-        matrix_coefficients: 9,  // BT.2020 NCL
-        colour_primaries: 9,     // BT.2020
+        matrix_coefficients: 9, // BT.2020 NCL
+        colour_primaries: 9,    // BT.2020
         full_range: true,
         mastering_display: None,
         content_light_level: None,
@@ -537,7 +579,10 @@ fn test_qsv_signal_info_hdr10_layout() {
         matrix_coefficients: cm.matrix_coefficients as u16,
     };
 
-    assert_eq!(signal_info.colour_description_present, 1, "must be set so codes emit");
+    assert_eq!(
+        signal_info.colour_description_present, 1,
+        "must be set so codes emit"
+    );
     assert_eq!(signal_info.colour_primaries, 9, "BT.2020");
     assert_eq!(signal_info.transfer_characteristics, 16, "ST 2084 / PQ");
     assert_eq!(signal_info.matrix_coefficients, 9, "BT.2020 NCL");
@@ -595,7 +640,11 @@ fn crf_reads_on_each_codecs_own_native_scale() {
     // H.264 / HEVC: the x264 / x265 0..51 CRF range, passed through to ICQ
     // (which is also 1..51) and to QP (0..51) unchanged.
     for c in [VideoCodec::H265, VideoCodec::H264] {
-        assert_eq!(crf_to_icq(c, 22), 22, "{c:?} CRF is already on the ICQ scale");
+        assert_eq!(
+            crf_to_icq(c, 22),
+            22,
+            "{c:?} CRF is already on the ICQ scale"
+        );
         assert_eq!(crf_to_qp(c, 22), 22, "{c:?} CRF is already on the QP scale");
         // An out-of-range CRF is clamped into the codec's legal QP band
         // rather than handed to the driver as-is.
@@ -609,8 +658,16 @@ fn crf_reads_on_each_codecs_own_native_scale() {
     // is the native 0..255 q-index at the usual 4x.
     assert_eq!(crf_to_qp(VideoCodec::Av1, 32), 128);
     assert_eq!(crf_to_qp(VideoCodec::Av1, 63), 252);
-    assert_eq!(crf_to_qp(VideoCodec::Av1, 200), 252, "clamped to the 0..63 scale first");
-    assert_eq!(crf_to_icq(VideoCodec::Av1, 63), 51, "top of scale maps to top of ICQ");
+    assert_eq!(
+        crf_to_qp(VideoCodec::Av1, 200),
+        252,
+        "clamped to the 0..63 scale first"
+    );
+    assert_eq!(
+        crf_to_icq(VideoCodec::Av1, 63),
+        51,
+        "top of scale maps to top of ICQ"
+    );
     assert!(
         (25..=27).contains(&crf_to_icq(VideoCodec::Av1, 32)),
         "libaom cq 32 should land near ICQ 26, got {}",
@@ -651,12 +708,21 @@ fn cqp_slots_carry_the_qp_that_cqp_actually_reads() {
     // in slot1 (ICQQuality) and left slot0 (QPI) at zero, so the driver used
     // its own default and `--crf` did nothing.
     let cqp = rate_slots_for_rc(QsvRateControl::Cqp, 22, 24, 0);
-    assert_eq!(cqp.slot0_qpi_or_delay, 22, "QPI must be in slot 0 under CQP");
+    assert_eq!(
+        cqp.slot0_qpi_or_delay, 22,
+        "QPI must be in slot 0 under CQP"
+    );
     assert_eq!(cqp.slot1_qpp_or_kbps_or_icq, 24);
 
     let icq = rate_slots_for_rc(QsvRateControl::Icq, 0, 0, 22);
-    assert_eq!(icq.slot0_qpi_or_delay, 0, "slot 0 is InitialDelayInKB under ICQ");
-    assert_eq!(icq.slot1_qpp_or_kbps_or_icq, 22, "ICQQuality must be in slot 1");
+    assert_eq!(
+        icq.slot0_qpi_or_delay, 0,
+        "slot 0 is InitialDelayInKB under ICQ"
+    );
+    assert_eq!(
+        icq.slot1_qpp_or_kbps_or_icq, 22,
+        "ICQQuality must be in slot 1"
+    );
 
     // The two layouts must not be interchangeable — that's the whole bug.
     assert_ne!(cqp, icq);
@@ -678,15 +744,31 @@ fn hevc_tuning_stays_inside_hevcs_qp_range() {
             let p = qsv_params(c, target, SpeedTier::Standard, 1920, 1080);
             assert!(p.qp_i <= 51, "{c:?} {target:?} QPI {} out of range", p.qp_i);
             assert!(p.qp_p <= 51, "{c:?} {target:?} QPP {} out of range", p.qp_p);
-            assert!((1..=51).contains(&p.icq_quality), "{c:?} {target:?} ICQ out of range");
-            assert!(p.qp_p >= p.qp_i, "inter frames should not be finer than intra");
+            assert!(
+                (1..=51).contains(&p.icq_quality),
+                "{c:?} {target:?} ICQ out of range"
+            );
+            assert!(
+                p.qp_p >= p.qp_i,
+                "inter frames should not be finer than intra"
+            );
             // Tiles are an AV1-only ext buffer; H.26x must not request a grid.
             assert_eq!((p.num_tile_columns, p.num_tile_rows), (0, 0));
         }
     }
     // AV1 keeps its wide q-index range.
-    let av1 = qsv_params(VideoCodec::Av1, QualityTarget::Standard, SpeedTier::Standard, 1920, 1080);
-    assert!(av1.qp_i > 51, "AV1 uses the 0..255 q-index, got {}", av1.qp_i);
+    let av1 = qsv_params(
+        VideoCodec::Av1,
+        QualityTarget::Standard,
+        SpeedTier::Standard,
+        1920,
+        1080,
+    );
+    assert!(
+        av1.qp_i > 51,
+        "AV1 uses the 0..255 q-index, got {}",
+        av1.qp_i
+    );
 }
 
 #[test]
@@ -706,15 +788,33 @@ fn better_targets_ask_for_finer_quantization() {
 #[test]
 fn test_qsv_cbr_slots_fill_the_cbr_arm() {
     use crate::encode::tuning::ConstantRate;
-    let p = cbr_params(ConstantRate { bps: 3_000_000, buffer_ms: 1000 });
-    assert_eq!(p.slots.slot1_qpp_or_kbps_or_icq, 3000, "TargetKbps in slot 1");
-    assert_eq!(p.slots.slot2_qpb_or_maxkbps, 3000, "MaxKbps = TargetKbps in slot 2");
+    let p = cbr_params(ConstantRate {
+        bps: 3_000_000,
+        buffer_ms: 1000,
+    });
+    assert_eq!(
+        p.slots.slot1_qpp_or_kbps_or_icq, 3000,
+        "TargetKbps in slot 1"
+    );
+    assert_eq!(
+        p.slots.slot2_qpb_or_maxkbps, 3000,
+        "MaxKbps = TargetKbps in slot 2"
+    );
     assert_eq!(p.buffer_size_kb, 375, "one second of 3 Mb/s is 375 kB");
-    assert_eq!(p.slots.slot0_qpi_or_delay, 282, "InitialDelayInKB: three quarters of the buffer, rounded up");
+    assert_eq!(
+        p.slots.slot0_qpi_or_delay, 282,
+        "InitialDelayInKB: three quarters of the buffer, rounded up"
+    );
     assert_eq!(p.brc_param_multiplier, 1);
 
-    let half = cbr_params(ConstantRate { bps: 800_000, buffer_ms: 500 });
-    assert_eq!((half.slots.slot1_qpp_or_kbps_or_icq, half.buffer_size_kb), (800, 50));
+    let half = cbr_params(ConstantRate {
+        bps: 800_000,
+        buffer_ms: 500,
+    });
+    assert_eq!(
+        (half.slots.slot1_qpp_or_kbps_or_icq, half.buffer_size_kb),
+        (800, 50)
+    );
 }
 
 /// A rate or buffer past a u16 in its unit is carried with
@@ -724,17 +824,37 @@ fn test_qsv_cbr_slots_fill_the_cbr_arm() {
 fn test_qsv_cbr_uses_the_multiplier_past_u16() {
     use crate::encode::tuning::ConstantRate;
     // 100 Mb/s with a 2 s buffer: 100 000 kbps and 25 000 kB.
-    let p = cbr_params(ConstantRate { bps: 100_000_000, buffer_ms: 2000 });
+    let p = cbr_params(ConstantRate {
+        bps: 100_000_000,
+        buffer_ms: 2000,
+    });
     assert_eq!(p.brc_param_multiplier, 2);
     assert_eq!(p.slots.slot1_qpp_or_kbps_or_icq, 50_000);
     assert_eq!(p.slots.slot2_qpb_or_maxkbps, 50_000);
     assert_eq!(p.buffer_size_kb, 12_500);
     assert_eq!(p.slots.slot0_qpi_or_delay, 9_375);
     // Just under the limit needs none; just over needs two.
-    assert_eq!(cbr_params(ConstantRate { bps: 65_535_000, buffer_ms: 1000 }).brc_param_multiplier, 1);
-    assert_eq!(cbr_params(ConstantRate { bps: 65_536_000, buffer_ms: 1000 }).brc_param_multiplier, 2);
+    assert_eq!(
+        cbr_params(ConstantRate {
+            bps: 65_535_000,
+            buffer_ms: 1000
+        })
+        .brc_param_multiplier,
+        1
+    );
+    assert_eq!(
+        cbr_params(ConstantRate {
+            bps: 65_536_000,
+            buffer_ms: 1000
+        })
+        .brc_param_multiplier,
+        2
+    );
     // A buffer larger than the rate drives the multiplier on its own.
-    let buffered = cbr_params(ConstantRate { bps: 60_000_000, buffer_ms: 10_000 });
+    let buffered = cbr_params(ConstantRate {
+        bps: 60_000_000,
+        buffer_ms: 10_000,
+    });
     assert_eq!(buffered.brc_param_multiplier, 2, "75 000 kB of buffer");
     assert_eq!(buffered.buffer_size_kb, 37_500);
 }
@@ -748,11 +868,19 @@ fn test_qsv_cbr_constant_and_icq_cqp_unchanged() {
     assert_eq!(MFX_RATECONTROL_ICQ, 9);
     assert_eq!(
         rate_slots_for_rc(QsvRateControl::Icq, 0, 0, 28),
-        RateSlots { slot0_qpi_or_delay: 0, slot1_qpp_or_kbps_or_icq: 28, slot2_qpb_or_maxkbps: 0 }
+        RateSlots {
+            slot0_qpi_or_delay: 0,
+            slot1_qpp_or_kbps_or_icq: 28,
+            slot2_qpb_or_maxkbps: 0
+        }
     );
     assert_eq!(
         rate_slots_for_rc(QsvRateControl::Cqp, 72, 96, 0),
-        RateSlots { slot0_qpi_or_delay: 72, slot1_qpp_or_kbps_or_icq: 96, slot2_qpb_or_maxkbps: 96 }
+        RateSlots {
+            slot0_qpi_or_delay: 72,
+            slot1_qpp_or_kbps_or_icq: 96,
+            slot2_qpb_or_maxkbps: 96
+        }
     );
 }
 
@@ -762,18 +890,41 @@ fn test_qsv_cbr_constant_and_icq_cqp_unchanged() {
 #[test]
 fn test_qsv_rate_request() {
     use crate::encode::tuning::{ConstantRate, EncodeOverrides, RateMode};
-    let cfg = |overrides| EncoderConfig { overrides, ..EncoderConfig::default() };
-    let cbr = EncodeOverrides { rate_mode: Some(RateMode::Constant), bitrate: Some(2_000_000), ..Default::default() };
+    let cfg = |overrides| EncoderConfig {
+        overrides,
+        ..EncoderConfig::default()
+    };
+    let cbr = EncodeOverrides {
+        rate_mode: Some(RateMode::Constant),
+        bitrate: Some(2_000_000),
+        ..Default::default()
+    };
     assert_eq!(
         crate::encode::constant_rate_request("QSV", &cfg(cbr)).unwrap(),
-        Some(ConstantRate { bps: 2_000_000, buffer_ms: 1000 })
+        Some(ConstantRate {
+            bps: 2_000_000,
+            buffer_ms: 1000
+        })
     );
-    assert_eq!(crate::encode::constant_rate_request("QSV", &cfg(EncodeOverrides::default())).unwrap(), None);
-    let average = EncodeOverrides { bitrate: Some(2_000_000), ..Default::default() };
-    let err = crate::encode::constant_rate_request("QSV", &cfg(average)).unwrap_err().to_string();
+    assert_eq!(
+        crate::encode::constant_rate_request("QSV", &cfg(EncodeOverrides::default())).unwrap(),
+        None
+    );
+    let average = EncodeOverrides {
+        bitrate: Some(2_000_000),
+        ..Default::default()
+    };
+    let err = crate::encode::constant_rate_request("QSV", &cfg(average))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("QSV") && err.contains("h26x"), "{err}");
-    let crf = EncoderConfig { quality: 30, ..cfg(cbr) };
-    let err = crate::encode::constant_rate_request("QSV", &crf).unwrap_err().to_string();
+    let crf = EncoderConfig {
+        quality: 30,
+        ..cfg(cbr)
+    };
+    let err = crate::encode::constant_rate_request("QSV", &crf)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("crf=30") && err.contains("rate=cbr"), "{err}");
 }
 
@@ -784,9 +935,19 @@ fn test_qsv_rate_request() {
 #[test]
 fn vp9_codec_ids_follow_the_bit_depth() {
     use crate::frame::VideoCodec;
-    assert_eq!(qsv_codec_ids(VideoCodec::Vp9, PixelFormat::Yuv420p), (0x2039_5056, 1));
-    assert_eq!(qsv_codec_ids(VideoCodec::Vp9, PixelFormat::Yuv420p10le), (0x2039_5056, 3));
-    assert_eq!(MFX_CODEC_VP9, crate::qsv_ffi::MFX_CODEC_VP9, "encoder and decoder agree on the FourCC");
+    assert_eq!(
+        qsv_codec_ids(VideoCodec::Vp9, PixelFormat::Yuv420p),
+        (0x2039_5056, 1)
+    );
+    assert_eq!(
+        qsv_codec_ids(VideoCodec::Vp9, PixelFormat::Yuv420p10le),
+        (0x2039_5056, 3)
+    );
+    assert_eq!(
+        MFX_CODEC_VP9,
+        crate::qsv_ffi::MFX_CODEC_VP9,
+        "encoder and decoder agree on the FourCC"
+    );
 }
 
 /// `mfxExtVP9Param` as Intel's header lays it out, carrying
@@ -800,7 +961,14 @@ fn vp9_param_asks_for_raw_frames() {
     assert_eq!((p.frame_width, p.frame_height), (1920, 1080));
     assert_eq!(p.write_ivf_headers, 0x20);
     assert_eq!((p.num_tile_rows, p.num_tile_columns), (0, 0));
-    assert_eq!((p.q_index_delta_luma_dc, p.q_index_delta_chroma_ac, p.q_index_delta_chroma_dc), (0, 0, 0));
+    assert_eq!(
+        (
+            p.q_index_delta_luma_dc,
+            p.q_index_delta_chroma_ac,
+            p.q_index_delta_chroma_dc
+        ),
+        (0, 0, 0)
+    );
 }
 
 /// The quality targets are a constant `base_q_idx`, the one rivet's own VP9
@@ -809,7 +977,12 @@ fn vp9_param_asks_for_raw_frames() {
 #[test]
 fn vp9_quantiser_is_constant_and_on_vp9s_scale() {
     use crate::frame::VideoCodec;
-    for target in [QualityTarget::VisuallyLossless, QualityTarget::High, QualityTarget::Standard, QualityTarget::Low] {
+    for target in [
+        QualityTarget::VisuallyLossless,
+        QualityTarget::High,
+        QualityTarget::Standard,
+        QualityTarget::Low,
+    ] {
         let p = tuning::qsv_params_with(
             VideoCodec::Vp9,
             target,
@@ -819,22 +992,39 @@ fn vp9_quantiser_is_constant_and_on_vp9s_scale() {
         );
         assert_eq!(p.rc_mode, QsvRateControl::Cqp, "{target:?}");
         let sw = tuning::native_sw_quantizer(VideoCodec::Vp9, target, &Default::default());
-        assert_eq!((p.qp_i, p.qp_p), (u16::from(sw), u16::from(sw)), "{target:?}");
+        assert_eq!(
+            (p.qp_i, p.qp_p),
+            (u16::from(sw), u16::from(sw)),
+            "{target:?}"
+        );
         assert!((1..=255).contains(&p.qp_i));
         assert_eq!(p.low_power, tuning::MFX_CODINGOPTION_ON);
         assert_eq!((p.num_tile_columns, p.num_tile_rows), (0, 0));
     }
     // A quality delta moves the quantiser (there is no ICQ to move).
     let base = tuning::qsv_params_with(
-        VideoCodec::Vp9, QualityTarget::Standard, SpeedTier::Standard,
-        &tuning::RungContext::standalone(1280, 720), &Default::default(),
+        VideoCodec::Vp9,
+        QualityTarget::Standard,
+        SpeedTier::Standard,
+        &tuning::RungContext::standalone(1280, 720),
+        &Default::default(),
     );
     let coarser = tuning::qsv_params_with(
-        VideoCodec::Vp9, QualityTarget::Standard, SpeedTier::Standard,
+        VideoCodec::Vp9,
+        QualityTarget::Standard,
+        SpeedTier::Standard,
         &tuning::RungContext::standalone(1280, 720),
-        &tuning::EncodeOverrides { quality_delta: 4, ..Default::default() },
+        &tuning::EncodeOverrides {
+            quality_delta: 4,
+            ..Default::default()
+        },
     );
-    assert!(coarser.qp_i > base.qp_i, "{} vs {}", coarser.qp_i, base.qp_i);
+    assert!(
+        coarser.qp_i > base.qp_i,
+        "{} vs {}",
+        coarser.qp_i,
+        base.qp_i
+    );
     assert_eq!(crf_to_qp(VideoCodec::Vp9, 0), 1);
     assert_eq!(crf_to_qp(VideoCodec::Vp9, 31), 124);
     assert_eq!(crf_to_qp(VideoCodec::Vp9, 63), 252);
@@ -862,16 +1052,48 @@ fn vp9_hidden_frames_fold_into_the_next_shown_frame() {
 
     let mut held = Vec::new();
     // The runtime's frame-type flag is ignored: the key frame says so.
-    let out = vp9_packet(&mut held, EncodedPacket { data: key.clone(), pts: 0, is_keyframe: false }).unwrap();
+    let out = vp9_packet(
+        &mut held,
+        EncodedPacket {
+            data: key.clone(),
+            pts: 0,
+            is_keyframe: false,
+        },
+    )
+    .unwrap();
     assert!(out.is_keyframe);
     assert_eq!(out.data, key);
-    assert!(vp9_packet(&mut held, EncodedPacket { data: hidden.clone(), pts: 1, is_keyframe: false }).is_none());
+    assert!(
+        vp9_packet(
+            &mut held,
+            EncodedPacket {
+                data: hidden.clone(),
+                pts: 1,
+                is_keyframe: false
+            }
+        )
+        .is_none()
+    );
     assert_eq!(held.len(), 1);
-    let out = vp9_packet(&mut held, EncodedPacket { data: inter.clone(), pts: 1, is_keyframe: true }).unwrap();
+    let out = vp9_packet(
+        &mut held,
+        EncodedPacket {
+            data: inter.clone(),
+            pts: 1,
+            is_keyframe: true,
+        },
+    )
+    .unwrap();
     assert!(held.is_empty());
-    assert!(!out.is_keyframe, "an inter packet is no sync sample whatever the runtime said");
+    assert!(
+        !out.is_keyframe,
+        "an inter packet is no sync sample whatever the runtime said"
+    );
     assert_eq!(out.pts, 1);
-    assert_eq!(vp9::superframe::split(&out.data), vec![&hidden[..], &inter[..]]);
+    assert_eq!(
+        vp9::superframe::split(&out.data),
+        vec![&hidden[..], &inter[..]]
+    );
 }
 
 /// The parameter sets of an access unit are found behind three- and
@@ -887,12 +1109,19 @@ fn annexb_parameter_sets_are_found_by_nal_type() {
     ];
     assert_eq!(
         super::annexb_parameter_sets(&hevc, true),
-        vec![0, 0, 0, 1, 0x40, 0x01, 0xAA, 0, 0, 0, 1, 0x42, 0x01, 0xBB, 0, 0, 0, 1, 0x44, 0x01, 0xCC]
+        vec![
+            0, 0, 0, 1, 0x40, 0x01, 0xAA, 0, 0, 0, 1, 0x42, 0x01, 0xBB, 0, 0, 0, 1, 0x44, 0x01,
+            0xCC
+        ]
     );
     // A slice alone has none.
     assert!(super::annexb_parameter_sets(&hevc[21..], true).is_empty());
     // H.264: SPS (7), PPS (8), IDR (5).
-    let avc = [0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22, 0, 0, 1, 0x65, 0x33];
-    assert_eq!(super::annexb_parameter_sets(&avc, false), vec![0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22]);
+    let avc = [
+        0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22, 0, 0, 1, 0x65, 0x33,
+    ];
+    assert_eq!(
+        super::annexb_parameter_sets(&avc, false),
+        vec![0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22]
+    );
 }
-

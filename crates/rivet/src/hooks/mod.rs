@@ -112,8 +112,8 @@ pub use builtin::{ArtifactDigest, PerceptualFingerprint, SourceDigest};
 pub use digest::DigestAlgorithm;
 pub use frame::FrameFormat;
 pub use kinds::{
-    ArtifactHook, ArtifactKind, CompletedHook, DecodedFrameHook, EncoderFrameHook, FailedHook, HookKind, ProbeHook,
-    SourceHook, StillHook,
+    ArtifactHook, ArtifactKind, CompletedHook, DecodedFrameHook, EncoderFrameHook, FailedHook,
+    HookKind, ProbeHook, SourceHook, StillHook,
 };
 pub use phash::PerceptualAlgorithm;
 
@@ -188,19 +188,21 @@ impl fmt::Display for Stage {
 impl std::str::FromStr for Stage {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self> {
-        Ok(match s.trim().to_ascii_lowercase().replace('_', "-").as_str() {
-            "source" => Stage::Source,
-            "probe" => Stage::Probe,
-            "decoded-frame" | "decoded-frames" => Stage::DecodedFrame,
-            "encoder-frame" | "encoder-frames" => Stage::EncoderFrame,
-            "still" | "stills" => Stage::Still,
-            "artifact" | "artifacts" => Stage::Artifact,
-            "completed" => Stage::Completed,
-            "failed" => Stage::Failed,
-            other => bail!(
-                "unknown hook stage `{other}` (source, probe, decoded-frame, encoder-frame, still, artifact, completed, failed)"
-            ),
-        })
+        Ok(
+            match s.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+                "source" => Stage::Source,
+                "probe" => Stage::Probe,
+                "decoded-frame" | "decoded-frames" => Stage::DecodedFrame,
+                "encoder-frame" | "encoder-frames" => Stage::EncoderFrame,
+                "still" | "stills" => Stage::Still,
+                "artifact" | "artifacts" => Stage::Artifact,
+                "completed" => Stage::Completed,
+                "failed" => Stage::Failed,
+                other => bail!(
+                    "unknown hook stage `{other}` (source, probe, decoded-frame, encoder-frame, still, artifact, completed, failed)"
+                ),
+            },
+        )
     }
 }
 
@@ -263,7 +265,9 @@ impl StageSet {
 
 impl fmt::Debug for StageSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_set().entries(self.iter().map(Stage::as_str)).finish()
+        f.debug_set()
+            .entries(self.iter().map(Stage::as_str))
+            .finish()
     }
 }
 
@@ -304,10 +308,18 @@ pub enum Subject {
     Source { clip: usize },
     /// One video frame: its source, its index in that source's frames
     /// (presentation order, before any trim), and its time in seconds.
-    Frame { clip: usize, index: u64, seconds: f64 },
+    Frame {
+        clip: usize,
+        index: u64,
+        seconds: f64,
+    },
     /// One still: its position in the job's stills, and for a still taken
     /// from a video, its time.
-    Still { clip: usize, index: u64, seconds: f64 },
+    Still {
+        clip: usize,
+        index: u64,
+        seconds: f64,
+    },
     /// One output, by label.
     Artifact { label: String },
 }
@@ -317,10 +329,18 @@ impl Subject {
         match self {
             Subject::Job => json!({ "type": "job" }),
             Subject::Source { clip } => json!({ "type": "source", "clip": clip }),
-            Subject::Frame { clip, index, seconds } => {
+            Subject::Frame {
+                clip,
+                index,
+                seconds,
+            } => {
                 json!({ "type": "frame", "clip": clip, "index": index, "seconds": seconds })
             }
-            Subject::Still { clip, index, seconds } => {
+            Subject::Still {
+                clip,
+                index,
+                seconds,
+            } => {
                 json!({ "type": "still", "clip": clip, "index": index, "seconds": seconds })
             }
             Subject::Artifact { label } => json!({ "type": "artifact", "label": label }),
@@ -333,7 +353,11 @@ impl fmt::Display for Subject {
         match self {
             Subject::Job => f.write_str("the job"),
             Subject::Source { clip } => write!(f, "source {clip}"),
-            Subject::Frame { clip, index, seconds } => write!(f, "frame {index} of source {clip} ({seconds:.3}s)"),
+            Subject::Frame {
+                clip,
+                index,
+                seconds,
+            } => write!(f, "frame {index} of source {clip} ({seconds:.3}s)"),
             Subject::Still { clip, index, .. } => write!(f, "still {index} of source {clip}"),
             Subject::Artifact { label } => write!(f, "artifact `{label}`"),
         }
@@ -400,7 +424,11 @@ impl MediaSummary {
         })
     }
 
-    pub(crate) fn of_header(container: &str, header: &container::streaming::DemuxHeader, audio_codec: Option<String>) -> Self {
+    pub(crate) fn of_header(
+        container: &str,
+        header: &container::streaming::DemuxHeader,
+        audio_codec: Option<String>,
+    ) -> Self {
         let (width, height) = header.upright_dims();
         Self {
             container: container.to_string(),
@@ -523,11 +551,19 @@ impl HookEvent {
         match self {
             HookEvent::Source(e) => Subject::Source { clip: e.clip },
             HookEvent::Probe(e) => Subject::Source { clip: e.clip },
-            HookEvent::DecodedFrame(e) | HookEvent::EncoderFrame(e) => {
-                Subject::Frame { clip: e.clip, index: e.index, seconds: e.seconds }
-            }
-            HookEvent::Still(e) => Subject::Still { clip: e.clip, index: e.index, seconds: e.seconds },
-            HookEvent::Artifact(e) => Subject::Artifact { label: e.label.clone() },
+            HookEvent::DecodedFrame(e) | HookEvent::EncoderFrame(e) => Subject::Frame {
+                clip: e.clip,
+                index: e.index,
+                seconds: e.seconds,
+            },
+            HookEvent::Still(e) => Subject::Still {
+                clip: e.clip,
+                index: e.index,
+                seconds: e.seconds,
+            },
+            HookEvent::Artifact(e) => Subject::Artifact {
+                label: e.label.clone(),
+            },
             HookEvent::Completed(_) | HookEvent::Failed(_) => Subject::Job,
         }
     }
@@ -546,9 +582,13 @@ impl HookEvent {
             })
         };
         match self {
-            HookEvent::Source(e) => json!({ "clip": e.clip, "bytes": e.bytes.len(), "sniffed": e.sniffed }),
+            HookEvent::Source(e) => {
+                json!({ "clip": e.clip, "bytes": e.bytes.len(), "sniffed": e.sniffed })
+            }
             HookEvent::Probe(e) => json!({ "clip": e.clip, "media": e.media.to_json() }),
-            HookEvent::DecodedFrame(e) | HookEvent::EncoderFrame(e) => frame_json(e.clip, e.index, e.seconds, &e.frame),
+            HookEvent::DecodedFrame(e) | HookEvent::EncoderFrame(e) => {
+                frame_json(e.clip, e.index, e.seconds, &e.frame)
+            }
             HookEvent::Still(e) => {
                 let mut v = frame_json(e.clip, e.index, e.seconds, &e.frame);
                 v["from_video"] = e.from_video.into();
@@ -557,9 +597,12 @@ impl HookEvent {
             HookEvent::Artifact(e) => {
                 let (data, bytes, path, files) = match &e.data {
                     ArtifactData::Bytes(b) => ("bytes", Some(b.len()), None, None),
-                    ArtifactData::Directory { path, files } => {
-                        ("directory", None, Some(path.display().to_string()), Some(files.clone()))
-                    }
+                    ArtifactData::Directory { path, files } => (
+                        "directory",
+                        None,
+                        Some(path.display().to_string()),
+                        Some(files.clone()),
+                    ),
                     ArtifactData::File(p) => ("file", None, Some(p.display().to_string()), None),
                 };
                 json!({
@@ -574,7 +617,9 @@ impl HookEvent {
                     "files": files,
                 })
             }
-            HookEvent::Completed(e) => json!({ "artifacts": e.artifacts, "elapsed_ms": e.elapsed.as_millis() as u64 }),
+            HookEvent::Completed(e) => {
+                json!({ "artifacts": e.artifacts, "elapsed_ms": e.elapsed.as_millis() as u64 })
+            }
             HookEvent::Failed(e) => json!({
                 "error": e.error,
                 "rejection": e.rejection.as_ref().map(HookRejection::to_json),
@@ -629,23 +674,36 @@ pub struct HookOutcome {
 impl HookOutcome {
     /// Carry on, nothing to record.
     pub fn proceed() -> Self {
-        Self { verdict: Verdict::Continue, annotations: Vec::new() }
+        Self {
+            verdict: Verdict::Continue,
+            annotations: Vec::new(),
+        }
     }
 
     /// Stop the job.
     pub fn reject(reason: impl Into<String>) -> Self {
-        Self { verdict: Verdict::Reject { reason: reason.into() }, annotations: Vec::new() }
+        Self {
+            verdict: Verdict::Reject {
+                reason: reason.into(),
+            },
+            annotations: Vec::new(),
+        }
     }
 
     /// Record `key = value` with the outcome.
     pub fn annotate(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
-        self.annotations.push(Annotation { key: key.into(), value: value.into() });
+        self.annotations.push(Annotation {
+            key: key.into(),
+            value: value.into(),
+        });
         self
     }
 
     /// The same outcome rejecting, keeping its annotations.
     pub fn rejecting(mut self, reason: impl Into<String>) -> Self {
-        self.verdict = Verdict::Reject { reason: reason.into() };
+        self.verdict = Verdict::Reject {
+            reason: reason.into(),
+        };
         self
     }
 }
@@ -675,7 +733,11 @@ impl HookRejection {
 
 impl fmt::Display for HookRejection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "rejected by {} hook `{}` ({}): {}", self.kind, self.hook, self.subject, self.reason)
+        write!(
+            f,
+            "rejected by {} hook `{}` ({}): {}",
+            self.kind, self.hook, self.subject, self.reason
+        )
     }
 }
 
@@ -707,26 +769,45 @@ pub struct FrameSampling {
 impl Default for FrameSampling {
     /// One frame a second, no limit.
     fn default() -> Self {
-        Self { every_frames: None, every_seconds: Some(1.0), max_frames: None }
+        Self {
+            every_frames: None,
+            every_seconds: Some(1.0),
+            max_frames: None,
+        }
     }
 }
 
 impl FrameSampling {
     /// Every frame.
     pub fn all() -> Self {
-        Self { every_frames: None, every_seconds: None, max_frames: None }
+        Self {
+            every_frames: None,
+            every_seconds: None,
+            max_frames: None,
+        }
     }
 
     pub fn every_frames(n: u64) -> Self {
-        Self { every_frames: Some(n.max(1)), every_seconds: None, max_frames: None }
+        Self {
+            every_frames: Some(n.max(1)),
+            every_seconds: None,
+            max_frames: None,
+        }
     }
 
     pub fn every_seconds(s: f64) -> Self {
-        Self { every_frames: None, every_seconds: Some(s), max_frames: None }
+        Self {
+            every_frames: None,
+            every_seconds: Some(s),
+            max_frames: None,
+        }
     }
 
     pub fn max_frames(self, n: u64) -> Self {
-        Self { max_frames: Some(n), ..self }
+        Self {
+            max_frames: Some(n),
+            ..self
+        }
     }
 
     /// Whether frame `index` of a stream at `fps` is selected (before
@@ -833,7 +914,11 @@ pub fn fn_hook<F>(stages: StageSet, f: F) -> FnHook<F>
 where
     F: Fn(&HookContext, &HookEvent) -> Result<HookOutcome> + Send + Sync,
 {
-    FnHook { stages, sampling: FrameSampling::default(), f }
+    FnHook {
+        stages,
+        sampling: FrameSampling::default(),
+        f,
+    }
 }
 
 /// A general hook that logs every event it is handed through `tracing`, and
@@ -902,21 +987,34 @@ pub struct HookPolicy {
 
 impl Default for HookPolicy {
     fn default() -> Self {
-        Self { mode: HookMode::Blocking, on_error: OnError::Continue, required: true }
+        Self {
+            mode: HookMode::Blocking,
+            on_error: OnError::Continue,
+            required: true,
+        }
     }
 }
 
 impl HookPolicy {
     pub fn background() -> Self {
-        Self { mode: HookMode::Background, ..Self::default() }
+        Self {
+            mode: HookMode::Background,
+            ..Self::default()
+        }
     }
 
     pub fn fail_closed(self) -> Self {
-        Self { on_error: OnError::Reject, ..self }
+        Self {
+            on_error: OnError::Reject,
+            ..self
+        }
     }
 
     pub fn optional(self) -> Self {
-        Self { required: false, ..self }
+        Self {
+            required: false,
+            ..self
+        }
     }
 }
 
@@ -944,7 +1042,14 @@ pub struct Hooks {
 impl fmt::Debug for Hooks {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut d = f.debug_struct("Hooks");
-        d.field("hooks", &self.entries.iter().map(|e| format!("{} ({})", e.name, e.kind)).collect::<Vec<_>>());
+        d.field(
+            "hooks",
+            &self
+                .entries
+                .iter()
+                .map(|e| format!("{} ({})", e.name, e.kind))
+                .collect::<Vec<_>>(),
+        );
         if let Some(s) = &self.session {
             d.field("job_id", &s.job_id);
         }
@@ -966,7 +1071,12 @@ impl Hooks {
 
     /// Add `hook` under `name` with `policy`. A name already taken is
     /// replaced.
-    pub fn with_policy(mut self, name: impl Into<String>, hook: Arc<dyn Hook>, policy: HookPolicy) -> Self {
+    pub fn with_policy(
+        mut self,
+        name: impl Into<String>,
+        hook: Arc<dyn Hook>,
+        policy: HookPolicy,
+    ) -> Self {
         let name = name.into();
         let entry = Entry {
             stages: hook.stages(),
@@ -1032,12 +1142,22 @@ impl Hooks {
     pub fn select(&self, names: &[String]) -> Result<Hooks> {
         for n in names {
             if !self.entries.iter().any(|e| &e.name == n) {
-                bail!("no hook named `{n}` is configured (configured: {})", self.names().join(", "));
+                bail!(
+                    "no hook named `{n}` is configured (configured: {})",
+                    self.names().join(", ")
+                );
             }
         }
-        let entries: Vec<Entry> =
-            self.entries.iter().filter(|e| e.policy.required || names.contains(&e.name)).cloned().collect();
-        Ok(Hooks { entries: Arc::new(entries), session: None })
+        let entries: Vec<Entry> = self
+            .entries
+            .iter()
+            .filter(|e| e.policy.required || names.contains(&e.name))
+            .cloned()
+            .collect();
+        Ok(Hooks {
+            entries: Arc::new(entries),
+            session: None,
+        })
     }
 
     /// Whether any hook runs at `stage`.
@@ -1052,7 +1172,11 @@ impl Hooks {
     pub fn session(&self, job_id: impl Into<String>, kind: JobKind) -> Hooks {
         Hooks {
             entries: Arc::clone(&self.entries),
-            session: Some(Arc::new(Session::new(job_id.into(), kind, self.entries.len()))),
+            session: Some(Arc::new(Session::new(
+                job_id.into(),
+                kind,
+                self.entries.len(),
+            ))),
         }
     }
 
@@ -1084,15 +1208,23 @@ impl Hooks {
 
     /// The session's rejection so far, when a hook stopped the job.
     pub fn rejection(&self) -> Option<HookRejection> {
-        self.session.as_deref().and_then(|s| s.rejection.lock().unwrap().clone())
+        self.session
+            .as_deref()
+            .and_then(|s| s.rejection.lock().unwrap().clone())
     }
 
     /// Whether every frame hook has been handed its `max_frames`.
     pub fn frames_exhausted(&self) -> bool {
         let Some(s) = &self.session else { return true };
-        self.entries.iter().enumerate().filter(|(_, e)| e.stages.has_sampled()).all(|(i, e)| {
-            e.sampling.max_frames.is_some_and(|max| s.frame_counts[i].load(Ordering::Relaxed) >= max)
-        })
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.stages.has_sampled())
+            .all(|(i, e)| {
+                e.sampling
+                    .max_frames
+                    .is_some_and(|max| s.frame_counts[i].load(Ordering::Relaxed) >= max)
+            })
     }
 
     // -- dispatch: what the engine calls at each stage -----------------------
@@ -1112,7 +1244,14 @@ impl Hooks {
             return self.check();
         }
         let sniffed = sniff_label(bytes);
-        self.dispatch(HookEvent::Source(SourceEvent { clip, bytes: bytes.clone(), sniffed }), |_, _| true)
+        self.dispatch(
+            HookEvent::Source(SourceEvent {
+                clip,
+                bytes: bytes.clone(),
+                sniffed,
+            }),
+            |_, _| true,
+        )
     }
 
     /// The description of source `clip`, to the probe hooks.
@@ -1127,22 +1266,47 @@ impl Hooks {
     /// selects it. `index` is its place in its source (presentation order);
     /// `fps` the source's rate, which turns the index into seconds and drives
     /// interval sampling.
-    pub fn emit_decoded_frame(&self, clip: usize, index: u64, fps: f64, frame: &VideoFrame) -> Result<()> {
+    pub fn emit_decoded_frame(
+        &self,
+        clip: usize,
+        index: u64,
+        fps: f64,
+        frame: &VideoFrame,
+    ) -> Result<()> {
         self.emit_sampled(Stage::DecodedFrame, clip, index, fps, frame)
     }
 
     /// A video frame as the encoders receive it, to the encoder-frame hooks
     /// whose sampling selects it.
-    pub fn emit_encoder_frame(&self, clip: usize, index: u64, fps: f64, frame: &VideoFrame) -> Result<()> {
+    pub fn emit_encoder_frame(
+        &self,
+        clip: usize,
+        index: u64,
+        fps: f64,
+        frame: &VideoFrame,
+    ) -> Result<()> {
         self.emit_sampled(Stage::EncoderFrame, clip, index, fps, frame)
     }
 
     /// A still picture, to every still hook.
-    pub fn emit_still(&self, clip: usize, index: u64, seconds: f64, frame: &VideoFrame, from_video: bool) -> Result<()> {
+    pub fn emit_still(
+        &self,
+        clip: usize,
+        index: u64,
+        seconds: f64,
+        frame: &VideoFrame,
+        from_video: bool,
+    ) -> Result<()> {
         if !self.wants(Stage::Still) {
             return self.check();
         }
-        let event = StillEvent { clip, index, seconds, frame: frame.clone(), from_video };
+        let event = StillEvent {
+            clip,
+            index,
+            seconds,
+            frame: frame.clone(),
+            from_video,
+        };
         self.dispatch(HookEvent::Still(event), |_, _| true)
     }
 
@@ -1152,19 +1316,26 @@ impl Hooks {
             return self.check();
         }
         let kind = event.kind;
-        self.dispatch(HookEvent::Artifact(event), |_, e| e.artifact_kinds.contains(&kind))
+        self.dispatch(HookEvent::Artifact(event), |_, e| {
+            e.artifact_kinds.contains(&kind)
+        })
     }
 
     /// The job made everything: waits for the background hooks, then runs the
     /// completed hooks. `Err` when a hook rejected the job along the way
     /// (a background one included) or rejects it here.
     pub fn emit_completed(&self, artifacts: usize) -> Result<()> {
-        let Some(session) = self.session.clone() else { return Ok(()) };
+        let Some(session) = self.session.clone() else {
+            return Ok(());
+        };
         session.background.wait_idle();
         self.check()?;
         if self.wants(Stage::Completed) {
             let elapsed = session.started.elapsed();
-            self.dispatch(HookEvent::Completed(CompletedEvent { artifacts, elapsed }), |_, _| true)?;
+            self.dispatch(
+                HookEvent::Completed(CompletedEvent { artifacts, elapsed }),
+                |_, _| true,
+            )?;
             session.background.wait_idle();
             self.check()?;
         }
@@ -1175,7 +1346,9 @@ impl Hooks {
     /// the failed hooks (whose verdicts change nothing: the job has failed).
     /// Runs once per session however many paths report the failure.
     pub fn emit_failed(&self, error: &anyhow::Error) {
-        let Some(session) = self.session.clone() else { return };
+        let Some(session) = self.session.clone() else {
+            return;
+        };
         if session.failed_reported.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -1184,16 +1357,28 @@ impl Hooks {
             return;
         }
         let rejection = rejection_of(error).cloned().or_else(|| self.rejection());
-        let event = HookEvent::Failed(FailedEvent { error: format!("{error:#}"), rejection });
+        let event = HookEvent::Failed(FailedEvent {
+            error: format!("{error:#}"),
+            rejection,
+        });
         self.dispatch_unchecked(event, |_, _| true);
         session.background.wait_idle();
     }
 
-    fn emit_sampled(&self, stage: Stage, clip: usize, index: u64, fps: f64, frame: &VideoFrame) -> Result<()> {
+    fn emit_sampled(
+        &self,
+        stage: Stage,
+        clip: usize,
+        index: u64,
+        fps: f64,
+        frame: &VideoFrame,
+    ) -> Result<()> {
         if !self.wants(stage) {
             return self.check();
         }
-        let Some(session) = self.session.clone() else { return Ok(()) };
+        let Some(session) = self.session.clone() else {
+            return Ok(());
+        };
         // Who takes this frame, decided (and counted against `max_frames`)
         // before the event is built, so a frame nobody wants costs nothing.
         let mut takers = vec![false; self.entries.len()];
@@ -1214,8 +1399,17 @@ impl Hooks {
             return self.check();
         }
         let seconds = index as f64 / if fps > 0.0 { fps } else { 30.0 };
-        let event = FrameEvent { clip, index, seconds, frame: frame.clone() };
-        let event = if stage == Stage::DecodedFrame { HookEvent::DecodedFrame(event) } else { HookEvent::EncoderFrame(event) };
+        let event = FrameEvent {
+            clip,
+            index,
+            seconds,
+            frame: frame.clone(),
+        };
+        let event = if stage == Stage::DecodedFrame {
+            HookEvent::DecodedFrame(event)
+        } else {
+            HookEvent::EncoderFrame(event)
+        };
         self.dispatch(event, |i, _| takers[i])
     }
 
@@ -1223,7 +1417,11 @@ impl Hooks {
     /// caller, its artifacts and completed / failed hooks run here at the end,
     /// and any rejection — however the pipeline reported it — returned as the
     /// job's error.
-    pub(crate) async fn run<T, F>(&self, artifacts_of: impl FnOnce(&T) -> Vec<ArtifactEvent>, job: F) -> Result<T>
+    pub(crate) async fn run<T, F>(
+        &self,
+        artifacts_of: impl FnOnce(&T) -> Vec<ArtifactEvent>,
+        job: F,
+    ) -> Result<T>
     where
         F: std::future::Future<Output = Result<T>>,
     {
@@ -1234,13 +1432,20 @@ impl Hooks {
                 Ok(()) => {
                     // Built only when a hook wants them: an event holds the
                     // artifact's bytes.
-                    let events = if self.wants(Stage::Artifact) { artifacts_of(&out) } else { Vec::new() };
+                    let events = if self.wants(Stage::Artifact) {
+                        artifacts_of(&out)
+                    } else {
+                        Vec::new()
+                    };
                     let count = events.len();
                     let artifacts = self
                         .offload(move |h| events.into_iter().try_for_each(|e| h.emit_artifact(e)))
                         .await;
                     match artifacts {
-                        Ok(()) => self.offload(move |h| h.emit_completed(count)).await.map(|_| out),
+                        Ok(()) => self
+                            .offload(move |h| h.emit_completed(count))
+                            .await
+                            .map(|_| out),
                         Err(e) => Err(e),
                     }
                 }
@@ -1276,7 +1481,11 @@ impl Hooks {
     ) -> Result<T> {
         let result = job().and_then(|out| {
             self.check()?;
-            let events = if self.wants(Stage::Artifact) { artifacts_of(&out) } else { Vec::new() };
+            let events = if self.wants(Stage::Artifact) {
+                artifacts_of(&out)
+            } else {
+                Vec::new()
+            };
             let count = events.len();
             events.into_iter().try_for_each(|e| self.emit_artifact(e))?;
             self.emit_completed(count)?;
@@ -1300,12 +1509,17 @@ impl Hooks {
 
     /// Run `f` on these hooks off the async runtime (hooks may block: a
     /// digest of a large source, an integration's network call).
-    pub(crate) async fn offload(&self, f: impl FnOnce(&Hooks) -> Result<()> + Send + 'static) -> Result<()> {
+    pub(crate) async fn offload(
+        &self,
+        f: impl FnOnce(&Hooks) -> Result<()> + Send + 'static,
+    ) -> Result<()> {
         if self.is_empty() || self.session.is_none() {
             return Ok(());
         }
         let hooks = self.clone();
-        tokio::task::spawn_blocking(move || f(&hooks)).await.map_err(|e| anyhow::anyhow!("hook task: {e}"))?
+        tokio::task::spawn_blocking(move || f(&hooks))
+            .await
+            .map_err(|e| anyhow::anyhow!("hook task: {e}"))?
     }
 
     fn dispatch(&self, event: HookEvent, take: impl Fn(usize, &Entry) -> bool) -> Result<()> {
@@ -1315,7 +1529,9 @@ impl Hooks {
     }
 
     fn dispatch_unchecked(&self, event: HookEvent, take: impl Fn(usize, &Entry) -> bool) {
-        let Some(session) = self.session.clone() else { return };
+        let Some(session) = self.session.clone() else {
+            return;
+        };
         let stage = event.stage();
         let event = Arc::new(event);
         for (i, entry) in self.entries.iter().enumerate() {
@@ -1332,8 +1548,11 @@ impl Hooks {
                     }
                 }
                 HookMode::Background => {
-                    let (session2, entry2, event2) = (Arc::clone(&session), entry.clone(), Arc::clone(&event));
-                    session.background.submit(Box::new(move || run_one(&session2, &entry2, &event2, true)));
+                    let (session2, entry2, event2) =
+                        (Arc::clone(&session), entry.clone(), Arc::clone(&event));
+                    session
+                        .background
+                        .submit(Box::new(move || run_one(&session2, &entry2, &event2, true)));
                 }
             }
         }
@@ -1342,7 +1561,11 @@ impl Hooks {
 
 /// Run one hook on one event and record what it said.
 fn run_one(session: &Session, entry: &Entry, event: &HookEvent, background: bool) {
-    let ctx = HookContext { job_id: session.job_id.clone(), job_kind: session.kind, hook: entry.name.clone() };
+    let ctx = HookContext {
+        job_id: session.job_id.clone(),
+        job_kind: session.kind,
+        hook: entry.name.clone(),
+    };
     let stage = event.stage();
     let subject = event.subject();
     let started = Instant::now();
@@ -1355,7 +1578,9 @@ fn run_one(session: &Session, entry: &Entry, event: &HookEvent, background: bool
             tracing::warn!(hook = %entry.name, kind = %entry.kind, error = %message, "hook failed");
             let verdict = match entry.policy.on_error {
                 OnError::Continue => None,
-                OnError::Reject => Some(Verdict::Reject { reason: format!("the hook failed: {message}") }),
+                OnError::Reject => Some(Verdict::Reject {
+                    reason: format!("the hook failed: {message}"),
+                }),
             };
             (verdict, Vec::new(), Some(message))
         }
@@ -1505,7 +1730,11 @@ pub(crate) fn sniff_label(bytes: &[u8]) -> String {
         return f.label().to_string();
     }
     let kind = container::sniff_container(bytes);
-    if kind.is_known() { kind.label().to_string() } else { "unknown".to_string() }
+    if kind.is_known() {
+        kind.label().to_string()
+    } else {
+        "unknown".to_string()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1529,8 +1758,11 @@ pub struct HookRecord {
 
 impl HookRecord {
     pub fn to_json(&self) -> Value {
-        let annotations: serde_json::Map<String, Value> =
-            self.annotations.iter().map(|a| (a.key.clone(), a.value.clone())).collect();
+        let annotations: serde_json::Map<String, Value> = self
+            .annotations
+            .iter()
+            .map(|a| (a.key.clone(), a.value.clone()))
+            .collect();
         json!({
             "hook": self.hook,
             "kind": self.kind.as_str(),
@@ -1547,7 +1779,10 @@ impl HookRecord {
 
     /// The annotation under `key`, if this record has one.
     pub fn annotation(&self, key: &str) -> Option<&Value> {
-        self.annotations.iter().find(|a| a.key == key).map(|a| &a.value)
+        self.annotations
+            .iter()
+            .find(|a| a.key == key)
+            .map(|a| &a.value)
     }
 }
 
@@ -1582,8 +1817,13 @@ impl HookReport {
     }
 
     /// Every `(record, value)` with an annotation under `key`.
-    pub fn annotations<'a>(&'a self, key: &'a str) -> impl Iterator<Item = (&'a HookRecord, &'a Value)> + 'a {
-        self.records.iter().filter_map(move |r| r.annotation(key).map(|v| (r, v)))
+    pub fn annotations<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> impl Iterator<Item = (&'a HookRecord, &'a Value)> + 'a {
+        self.records
+            .iter()
+            .filter_map(move |r| r.annotation(key).map(|v| (r, v)))
     }
 
     /// Records with an error.

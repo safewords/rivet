@@ -50,9 +50,15 @@ pub(crate) fn effort(speed: u8) -> u8 {
 }
 
 /// Encode lossy at `quality` (1-100) or lossless, with the ICC profile.
-pub(crate) fn encode(pixels: &Pixels<'_>, quality: u8, lossless: bool, speed: u8) -> Result<Vec<u8>> {
+pub(crate) fn encode(
+    pixels: &Pixels<'_>,
+    quality: u8,
+    lossless: bool,
+    speed: u8,
+) -> Result<Vec<u8>> {
     let (w, h) = pixels.image.dimensions();
-    let image = webp::Image::new(w, h, pixels.image.as_raw().to_vec()).map_err(|e| anyhow!("{e}"))?;
+    let image =
+        webp::Image::new(w, h, pixels.image.as_raw().to_vec()).map_err(|e| anyhow!("{e}"))?;
     let config = webp::EncoderConfig {
         lossless,
         quality: quality.clamp(1, 100),

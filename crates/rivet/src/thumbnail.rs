@@ -74,7 +74,8 @@ pub fn generate_thumbnail(
     let (rgb, width, height) =
         frame_to_rgb8(&captured.frame, captured.color).context("converting YUV → RGB")?;
     let quality = quality.round().clamp(1.0, 100.0) as u8;
-    let avif = crate::avif::encode_rgb(&rgb, width, height, quality).context("encoding AVIF still")?;
+    let avif =
+        crate::avif::encode_rgb(&rgb, width, height, quality).context("encoding AVIF still")?;
     Ok(ThumbnailOutput {
         bytes: avif,
         width,
@@ -106,9 +107,14 @@ pub(crate) struct StillSource {
 
 fn capture_frame_at_fraction(input_data: &Bytes, fraction: f64) -> Result<CapturedFrame> {
     let (_, mut frames) = capture_frames(input_data, |source| {
-        Ok(vec![((source.total_frames as f64) * fraction.clamp(0.0, 0.999)) as u64])
+        Ok(vec![
+            ((source.total_frames as f64) * fraction.clamp(0.0, 0.999)) as u64,
+        ])
     })?;
-    frames.pop().map(|(_, frame)| frame).ok_or_else(|| anyhow!("frame slot vanished"))
+    frames
+        .pop()
+        .map(|(_, frame)| frame)
+        .ok_or_else(|| anyhow!("frame slot vanished"))
 }
 
 /// Decode the source one sample at a time, keeping the frames at the indices
@@ -204,7 +210,13 @@ pub(crate) fn capture_frames(
             produced = true;
             let frame = colour_tag.apply(frame);
             while wanted.next_if_eq(&current_idx).is_some() {
-                kept.push((current_idx, CapturedFrame { frame: frame.clone(), color }));
+                kept.push((
+                    current_idx,
+                    CapturedFrame {
+                        frame: frame.clone(),
+                        color,
+                    },
+                ));
             }
             if wanted.peek().is_none() {
                 break 'decode;

@@ -1,4 +1,4 @@
-use super::super::{detect_packet_layout, demux_ts, STREAM_TYPE_MPEG2_VIDEO, TS_PACKET};
+use super::super::{STREAM_TYPE_MPEG2_VIDEO, TS_PACKET, demux_ts, detect_packet_layout};
 use super::ts_pkt;
 
 #[test]
@@ -19,11 +19,21 @@ fn detects_bdav_and_parity_layouts() {
         plain.extend_from_slice(&ts_pkt(0x1FFF, false, 0b01, &[]));
     }
     // 192-byte BDAV source packets: TP_extra_header, then the packet.
-    let m2ts: Vec<u8> = plain.chunks(TS_PACKET).flat_map(|p| [0x0E, 0xBF, 0x46, 0x22].into_iter().chain(p.iter().copied())).collect();
+    let m2ts: Vec<u8> = plain
+        .chunks(TS_PACKET)
+        .flat_map(|p| {
+            [0x0E, 0xBF, 0x46, 0x22]
+                .into_iter()
+                .chain(p.iter().copied())
+        })
+        .collect();
     assert_eq!(detect_packet_layout(&m2ts).unwrap(), (3, 192, 4));
     // 204-byte packets, parity after each; a last one cut in its parity
     // still counts, its 188 bytes being there.
-    let mut rs: Vec<u8> = plain.chunks(TS_PACKET).flat_map(|p| p.iter().copied().chain([0u8; 16])).collect();
+    let mut rs: Vec<u8> = plain
+        .chunks(TS_PACKET)
+        .flat_map(|p| p.iter().copied().chain([0u8; 16]))
+        .collect();
     assert_eq!(detect_packet_layout(&rs).unwrap(), (3, 204, 0));
     rs.truncate(rs.len() - 10);
     assert_eq!(detect_packet_layout(&rs).unwrap(), (3, 204, 0));

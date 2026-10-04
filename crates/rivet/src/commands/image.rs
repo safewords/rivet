@@ -53,7 +53,11 @@ pub(crate) struct ImageArgs {
     pub frames: Option<String>,
     /// A video input: take stills at these times, in seconds
     /// (comma-separated).
-    #[arg(long = "frames-at", value_name = "SECONDS", conflicts_with = "frames_count")]
+    #[arg(
+        long = "frames-at",
+        value_name = "SECONDS",
+        conflicts_with = "frames_count"
+    )]
     pub frames_at: Option<String>,
     /// A video input: take this many stills, evenly spaced.
     #[arg(long = "frames-count", value_name = "N")]
@@ -66,13 +70,17 @@ pub(crate) struct ImageArgs {
 pub(crate) fn run(args: ImageArgs) -> Result<()> {
     let mut settings = TranscodeSettings::default();
     settings.apply_kv("mode", "image")?;
-    settings.apply_kv("image-format", &args.format).context("parsing --format")?;
+    settings
+        .apply_kv("image-format", &args.format)
+        .context("parsing --format")?;
     for rung in &args.rungs {
         settings.apply_kv("rung", rung).context("parsing --rung")?;
     }
     args.fit.apply(&mut settings)?;
     if let Some(q) = &args.quality {
-        settings.apply_kv("image-quality", q).context("parsing --quality")?;
+        settings
+            .apply_kv("image-quality", q)
+            .context("parsing --quality")?;
     }
     settings.image_lossless = args.lossless;
     settings.image_keep_icc = args.keep_icc;
@@ -81,22 +89,28 @@ pub(crate) fn run(args: ImageArgs) -> Result<()> {
         settings.apply_kv("frames", f).context("parsing --frames")?;
     }
     if let Some(at) = &args.frames_at {
-        settings.apply_kv("frames-at", at).context("parsing --frames-at")?;
+        settings
+            .apply_kv("frames-at", at)
+            .context("parsing --frames-at")?;
     }
     if let Some(n) = args.frames_count {
         settings.apply_kv("frames-count", &n.to_string())?;
     }
     if let Some(deny) = &args.decode_deny {
-        settings.apply_kv("image-decode-deny", deny).context("parsing --image-decode-deny")?;
+        settings
+            .apply_kv("image-decode-deny", deny)
+            .context("parsing --image-decode-deny")?;
     }
     let spec = settings.into_image_spec()?;
 
     // The output directory cannot be the input file; each still is checked
     // against the input as it is written below.
     rivet::output_guard::refuse_input_in_dir(&args.output, &[&args.input], |_| false)?;
-    let input = std::fs::read(&args.input).with_context(|| format!("reading {}", args.input.display()))?;
+    let input =
+        std::fs::read(&args.input).with_context(|| format!("reading {}", args.input.display()))?;
     let out = rivet::image::run_image_job(&bytes::Bytes::from(input), &spec)?;
-    std::fs::create_dir_all(&args.output).with_context(|| format!("creating {}", args.output.display()))?;
+    std::fs::create_dir_all(&args.output)
+        .with_context(|| format!("creating {}", args.output.display()))?;
     for m in &out.merged {
         eprintln!(
             "rendition {} comes out {}x{}, the same as rendition {}: made once",
@@ -107,9 +121,15 @@ pub(crate) fn run(args: ImageArgs) -> Result<()> {
         let name = a.file_name(out.several_frames);
         let path = args.output.join(&name);
         rivet::output_guard::refuse_input_as_output(&path, &[&args.input])?;
-        rivet::output_guard::write_atomic(&path, &a.bytes).with_context(|| format!("writing {}", path.display()))?;
+        rivet::output_guard::write_atomic(&path, &a.bytes)
+            .with_context(|| format!("writing {}", path.display()))?;
         match a.frame {
-            Some((_, t)) => println!("{name}  {}x{}  {} bytes  at {t:.3}s", a.width, a.height, a.bytes.len()),
+            Some((_, t)) => println!(
+                "{name}  {}x{}  {} bytes  at {t:.3}s",
+                a.width,
+                a.height,
+                a.bytes.len()
+            ),
             None => println!("{name}  {}x{}  {} bytes", a.width, a.height, a.bytes.len()),
         }
     }

@@ -180,7 +180,11 @@ impl RotatingDecoder {
             std::mem::swap(&mut info.width, &mut info.height);
         }
 
-        Box::new(Self { inner, degrees, info })
+        Box::new(Self {
+            inner,
+            degrees,
+            info,
+        })
     }
 }
 
@@ -198,7 +202,9 @@ impl Decoder for RotatingDecoder {
     }
 
     fn decode_next(&mut self) -> Result<Option<VideoFrame>> {
-        let Some(frame) = self.inner.decode_next()? else { return Ok(None) };
+        let Some(frame) = self.inner.decode_next()? else {
+            return Ok(None);
+        };
         let rotated =
             crate::filter::apply(&frame, &crate::filter::VideoFilter::Rotate(self.degrees))
                 .context("rotating a decoded frame")?;
@@ -410,7 +416,9 @@ pub fn decode_capabilities() -> Vec<DecodeSupport> {
 /// explicit `env` count is per decoder and is taken as it is.
 pub(crate) fn sw_decode_threads(env: &str, share: usize) -> usize {
     shared_decode_threads(
-        std::env::var(env).ok().and_then(|v| v.trim().parse::<usize>().ok()),
+        std::env::var(env)
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok()),
         std::thread::available_parallelism().map_or(1, |n| n.get()),
         share,
     )
@@ -419,8 +427,14 @@ pub(crate) fn sw_decode_threads(env: &str, share: usize) -> usize {
 /// [`sw_decode_threads`] from its inputs: an explicit count as it is, else
 /// the machine divided `share` ways and held to this thread's
 /// [budget](crate::threads) — never below one.
-pub(crate) fn shared_decode_threads(explicit: Option<usize>, machine: usize, share: usize) -> usize {
-    explicit.filter(|&n| n > 0).unwrap_or_else(|| crate::threads::cap((machine / share.max(1)).max(1)))
+pub(crate) fn shared_decode_threads(
+    explicit: Option<usize>,
+    machine: usize,
+    share: usize,
+) -> usize {
+    explicit
+        .filter(|&n| n > 0)
+        .unwrap_or_else(|| crate::threads::cap((machine / share.max(1)).max(1)))
 }
 
 pub fn create_decoder(codec: &str, info: StreamInfo) -> Result<Box<dyn Decoder>> {
@@ -542,7 +556,10 @@ pub fn create_decoder_shared(
                         &codec_lower,
                         &info,
                         vp9_hw_guard::AMF_POLICY,
-                        Box::new(move |i| Ok(Box::new(amf_dec::AmfDecoder::new(i.clone(), vendor_index)?) as Box<dyn Decoder>)),
+                        Box::new(move |i| {
+                            Ok(Box::new(amf_dec::AmfDecoder::new(i.clone(), vendor_index)?)
+                                as Box<dyn Decoder>)
+                        }),
                     );
                     return Ok(guarded(decoder, &codec_lower, info, share));
                 }
@@ -595,7 +612,10 @@ pub fn create_decoder_shared(
                         &codec_lower,
                         &info,
                         vp9_hw_guard::QSV_POLICY,
-                        Box::new(move |i| Ok(Box::new(qsv_dec::QsvDecoder::new(i.clone(), vendor_index)?) as Box<dyn Decoder>)),
+                        Box::new(move |i| {
+                            Ok(Box::new(qsv_dec::QsvDecoder::new(i.clone(), vendor_index)?)
+                                as Box<dyn Decoder>)
+                        }),
                     );
                     return Ok(guarded(decoder, &codec_lower, info, share));
                 }
@@ -618,13 +638,20 @@ pub fn create_decoder_shared(
 /// being chosen can still reach them — see [`HardwareThenSoftware`]. Inline,
 /// they were reachable only by falling off the end of the tier list, which a
 /// decoder that has already been returned can never do.
-fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) -> Result<Box<dyn Decoder>> {
+fn create_software_decoder(
+    codec_lower: &str,
+    info: StreamInfo,
+    share: usize,
+) -> Result<Box<dyn Decoder>> {
     // ProRes: no hardware tier takes it, and nothing below decodes it.
     if prores_sw::supports(codec_lower) {
         let mut prores_info = info;
         prores_info.codec = codec_lower.to_string();
         let dec = prores_sw::ProresDecoder::new_shared(prores_info, share)?;
-        tracing::info!(backend = "prores", "ProRes software decode engaged (rivet's own decoder)");
+        tracing::info!(
+            backend = "prores",
+            "ProRes software decode engaged (rivet's own decoder)"
+        );
         return Ok(Box::new(dec));
     }
     // VP8: behind NVDEC, the only software decoder for it.
@@ -632,7 +659,10 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) ->
         let mut vp8_info = info;
         vp8_info.codec = codec_lower.to_string();
         let dec = vp8_sw::Vp8Decoder::new_shared(vp8_info, share)?;
-        tracing::info!(backend = "vp8", "VP8 software decode engaged (rivet's own decoder)");
+        tracing::info!(
+            backend = "vp8",
+            "VP8 software decode engaged (rivet's own decoder)"
+        );
         return Ok(Box::new(dec));
     }
     // VP9: behind the hardware tiers, the only software decoder for it.
@@ -640,7 +670,10 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) ->
         let mut vp9_info = info;
         vp9_info.codec = codec_lower.to_string();
         let dec = vp9_sw::Vp9Decoder::new_shared(vp9_info, share)?;
-        tracing::info!(backend = "vp9", "VP9 software decode engaged (rivet's own decoder)");
+        tracing::info!(
+            backend = "vp9",
+            "VP9 software decode engaged (rivet's own decoder)"
+        );
         return Ok(Box::new(dec));
     }
     // MPEG-2 / MPEG-1 video: behind NVDEC, the only software decoder for it.
@@ -648,7 +681,10 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) ->
         let mut mpeg2_info = info;
         mpeg2_info.codec = codec_lower.to_string();
         let dec = mpeg2_sw::Mpeg2Decoder::new_shared(mpeg2_info, share)?;
-        tracing::info!(backend = "mpeg2", "MPEG-2 software decode engaged (rivet's own decoder)");
+        tracing::info!(
+            backend = "mpeg2",
+            "MPEG-2 software decode engaged (rivet's own decoder)"
+        );
         return Ok(Box::new(dec));
     }
     // MPEG-4 Part 2: behind NVDEC, the only software decoder for it.
@@ -656,7 +692,10 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) ->
         let mut mpeg4_info = info;
         mpeg4_info.codec = codec_lower.to_string();
         let dec = mpeg4_sw::Mpeg4Decoder::new(mpeg4_info)?;
-        tracing::info!(backend = "mpeg4", "MPEG-4 Part 2 software decode engaged (rivet's own decoder)");
+        tracing::info!(
+            backend = "mpeg4",
+            "MPEG-4 Part 2 software decode engaged (rivet's own decoder)"
+        );
         return Ok(Box::new(dec));
     }
     // AV1: behind NVDEC, AMF and QSV, the only software decoder for it. It
@@ -697,7 +736,10 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) ->
 /// `RIVET_DISABLE_H26X=1` takes the native tier out of the chain.
 fn h26x_disabled() -> bool {
     matches!(
-        std::env::var("RIVET_DISABLE_H26X").as_deref().map(str::to_ascii_lowercase).as_deref(),
+        std::env::var("RIVET_DISABLE_H26X")
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
         Ok("1" | "true" | "yes" | "on" | "y" | "t")
     )
 }
@@ -721,7 +763,10 @@ fn h26x_disabled() -> bool {
 fn amf_takes(codec_lower: &str) -> bool {
     !vp9_sw::supports(codec_lower)
         || matches!(
-            std::env::var("RIVET_AMF_VP9").as_deref().map(str::to_ascii_lowercase).as_deref(),
+            std::env::var("RIVET_AMF_VP9")
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
             Ok("1" | "true" | "yes" | "on")
         )
 }
@@ -738,7 +783,10 @@ fn vp9_guarded(
     rebuild: vp9_hw_guard::Rebuild,
 ) -> Box<dyn Decoder> {
     if vp9_sw::supports(codec_lower) {
-        Box::new(vp9_hw_guard::Vp9HardwareGuard::new(label, decoder, info.clone(), policy).with_rebuild(rebuild))
+        Box::new(
+            vp9_hw_guard::Vp9HardwareGuard::new(label, decoder, info.clone(), policy)
+                .with_rebuild(rebuild),
+        )
     } else {
         decoder
     }
@@ -764,9 +812,18 @@ fn vp9_guarded(
 /// is a real failure, not a capability question, and pretending otherwise
 /// would silently re-decode a whole video.
 #[cfg(any(feature = "nvidia", feature = "amd", feature = "qsv"))]
-fn guarded(primary: Box<dyn Decoder>, codec_lower: &str, info: StreamInfo, share: usize) -> Box<dyn Decoder> {
+fn guarded(
+    primary: Box<dyn Decoder>,
+    codec_lower: &str,
+    info: StreamInfo,
+    share: usize,
+) -> Box<dyn Decoder> {
     let codec = codec_lower.to_string();
-    Box::new(HardwareThenSoftware::new("hardware", primary, Box::new(move || create_software_decoder(&codec, info, share))))
+    Box::new(HardwareThenSoftware::new(
+        "hardware",
+        primary,
+        Box::new(move || create_software_decoder(&codec, info, share)),
+    ))
 }
 
 /// Builds the next decoder tier down, once.
@@ -799,7 +856,14 @@ struct HardwareThenSoftware {
 #[cfg(any(test, feature = "nvidia", feature = "amd", feature = "qsv"))]
 impl HardwareThenSoftware {
     fn new(label: &'static str, primary: Box<dyn Decoder>, fallback: FallbackBuilder) -> Self {
-        Self { label, primary, fallback: Some(fallback), replay: Vec::new(), replay_bytes: 0, finished: false }
+        Self {
+            label,
+            primary,
+            fallback: Some(fallback),
+            replay: Vec::new(),
+            replay_bytes: 0,
+            finished: false,
+        }
     }
 
     /// Swap in the fallback and replay what the primary was given. Without a
@@ -1010,7 +1074,10 @@ mod rotating_decoder_tests {
                 bitrate: 0,
                 color_metadata: crate::frame::ColorMetadata::default(),
             };
-            Box::new(Self { info, yielded: false })
+            Box::new(Self {
+                info,
+                yielded: false,
+            })
         }
     }
 
@@ -1054,7 +1121,10 @@ mod rotating_decoder_tests {
         assert_eq!((frame.width, frame.height), (w, h), "180 must not resize");
         let last = (w * h - 1) as usize;
         assert_eq!(frame.data[last], 200, "the marked corner did not move");
-        assert_eq!(frame.data[0], 0, "the original corner still carries the mark");
+        assert_eq!(
+            frame.data[0], 0,
+            "the original corner still carries the mark"
+        );
     }
 
     #[test]
@@ -1063,7 +1133,10 @@ mod rotating_decoder_tests {
         // above all. If it keeps reporting the container's dimensions, every
         // rung is computed for a picture the decoder will never hand over.
         let d = RotatingDecoder::new(OneFrame::boxed(1920, 1080), 90);
-        assert_eq!((d.stream_info().width, d.stream_info().height), (1080, 1920));
+        assert_eq!(
+            (d.stream_info().width, d.stream_info().height),
+            (1080, 1920)
+        );
     }
 
     #[test]
@@ -1071,7 +1144,10 @@ mod rotating_decoder_tests {
         // The overwhelmingly common case pays nothing: same dimensions, and no
         // per-frame copy in the path.
         let d = RotatingDecoder::new(OneFrame::boxed(1920, 1080), 0);
-        assert_eq!((d.stream_info().width, d.stream_info().height), (1920, 1080));
+        assert_eq!(
+            (d.stream_info().width, d.stream_info().height),
+            (1920, 1080)
+        );
     }
 }
 
@@ -1103,7 +1179,14 @@ mod fallback_guard_tests {
     fn frame(tag: u8) -> VideoFrame {
         let mut data = vec![0u8; 16 * 16 * 3 / 2];
         data[0] = tag;
-        VideoFrame::new(bytes::Bytes::from(data), 16, 16, PixelFormat::Yuv420p, ColorSpace::Bt709, 0)
+        VideoFrame::new(
+            bytes::Bytes::from(data),
+            16,
+            16,
+            PixelFormat::Yuv420p,
+            ColorSpace::Bt709,
+            0,
+        )
     }
 
     /// What the scripted hardware decoder does.
@@ -1188,9 +1271,20 @@ mod fallback_guard_tests {
     fn guard(script: Script, software: bool) -> (HardwareThenSoftware, Arc<Mutex<Vec<Vec<u8>>>>) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let seen2 = Arc::clone(&seen);
-        let hw = Box::new(Hardware { script, pushed: 0, ready: Default::default(), info: info() });
+        let hw = Box::new(Hardware {
+            script,
+            pushed: 0,
+            ready: Default::default(),
+            info: info(),
+        });
         let fallback: FallbackBuilder = if software {
-            Box::new(move || Ok(Box::new(Software { seen: seen2, ready: Default::default(), info: info() }) as Box<dyn Decoder>))
+            Box::new(move || {
+                Ok(Box::new(Software {
+                    seen: seen2,
+                    ready: Default::default(),
+                    info: info(),
+                }) as Box<dyn Decoder>)
+            })
         } else {
             Box::new(|| bail!("no decoder available for codec 'h264' on this host"))
         };
@@ -1219,7 +1313,13 @@ mod fallback_guard_tests {
     /// software tier gets every sample from the first and decodes them all.
     #[test]
     fn a_refusal_before_the_first_frame_falls_back_with_every_sample() {
-        let (mut g, seen) = guard(Script { refuse_push: Some(1), ..Default::default() }, true);
+        let (mut g, seen) = guard(
+            Script {
+                refuse_push: Some(1),
+                ..Default::default()
+            },
+            true,
+        );
         assert_eq!(run(&mut g, 3).unwrap(), [1, 2, 3]);
         assert_eq!(*seen.lock().unwrap(), [vec![1u8], vec![2], vec![3]]);
     }
@@ -1237,9 +1337,21 @@ mod fallback_guard_tests {
     /// Refusals surfaced by `finish` or `decode_next` fall back too.
     #[test]
     fn a_refusal_from_finish_or_decode_next_falls_back() {
-        let (mut g, _) = guard(Script { refuse_finish: true, ..Default::default() }, true);
+        let (mut g, _) = guard(
+            Script {
+                refuse_finish: true,
+                ..Default::default()
+            },
+            true,
+        );
         assert_eq!(run(&mut g, 2).unwrap(), [1, 2]);
-        let (mut g, _) = guard(Script { refuse_decode: true, ..Default::default() }, true);
+        let (mut g, _) = guard(
+            Script {
+                refuse_decode: true,
+                ..Default::default()
+            },
+            true,
+        );
         assert_eq!(run(&mut g, 2).unwrap(), [1, 2]);
     }
 
@@ -1247,20 +1359,42 @@ mod fallback_guard_tests {
     /// failure is an error, not a silent re-decode.
     #[test]
     fn a_failure_after_the_first_frame_is_an_error() {
-        let (mut g, seen) = guard(Script { yields: true, refuse_after_frames: Some(2), ..Default::default() }, true);
+        let (mut g, seen) = guard(
+            Script {
+                yields: true,
+                refuse_after_frames: Some(2),
+                ..Default::default()
+            },
+            true,
+        );
         let err = run(&mut g, 3).expect_err("no fallback after a frame");
-        assert!(format!("{err:#}").contains("scripted refusal at sample 2"), "{err:#}");
-        assert!(seen.lock().unwrap().is_empty(), "the software tier was never built");
+        assert!(
+            format!("{err:#}").contains("scripted refusal at sample 2"),
+            "{err:#}"
+        );
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "the software tier was never built"
+        );
     }
 
     /// A build with no software tier for the codec fails naming both the
     /// hardware's refusal and the missing software decoder.
     #[test]
     fn with_no_software_tier_the_refusal_is_named() {
-        let (mut g, _) = guard(Script { refuse_push: Some(1), ..Default::default() }, false);
+        let (mut g, _) = guard(
+            Script {
+                refuse_push: Some(1),
+                ..Default::default()
+            },
+            false,
+        );
         let err = format!("{:#}", run(&mut g, 3).expect_err("nothing to fall back to"));
         assert!(err.contains("the hardware decoder refused this stream (NVDEC reject: scripted refusal at sample 1)"), "{err}");
         assert!(err.contains("no software decoder can take it"), "{err}");
-        assert!(err.contains("no decoder available for codec 'h264'"), "{err}");
+        assert!(
+            err.contains("no decoder available for codec 'h264'"),
+            "{err}"
+        );
     }
 }

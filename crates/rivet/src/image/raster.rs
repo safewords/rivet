@@ -18,7 +18,11 @@ pub(crate) struct RgbaImage {
 impl RgbaImage {
     /// Transparent black.
     pub(crate) fn new(width: u32, height: u32) -> Self {
-        Self { width, height, data: vec![0; width as usize * height as usize * 4] }
+        Self {
+            width,
+            height,
+            data: vec![0; width as usize * height as usize * 4],
+        }
     }
 
     /// Every pixel `px`.
@@ -28,7 +32,11 @@ impl RgbaImage {
         for _ in 0..n {
             data.extend_from_slice(&px);
         }
-        Self { width, height, data }
+        Self {
+            width,
+            height,
+            data,
+        }
     }
 
     /// Each pixel from `f(x, y)`.
@@ -40,13 +48,21 @@ impl RgbaImage {
                 data.extend_from_slice(&f(x, y));
             }
         }
-        Self { width, height, data }
+        Self {
+            width,
+            height,
+            data,
+        }
     }
 
     /// `data` as the picture's pixels, or `None` when it is not
     /// `width * height * 4` bytes.
     pub(crate) fn from_raw(width: u32, height: u32, data: Vec<u8>) -> Option<Self> {
-        (data.len() == width as usize * height as usize * 4).then_some(Self { width, height, data })
+        (data.len() == width as usize * height as usize * 4).then_some(Self {
+            width,
+            height,
+            data,
+        })
     }
 
     /// RGB triplets, opaque.
@@ -58,7 +74,11 @@ impl RgbaImage {
         for p in rgb.chunks_exact(3) {
             data.extend_from_slice(&[p[0], p[1], p[2], u8::MAX]);
         }
-        Some(Self { width, height, data })
+        Some(Self {
+            width,
+            height,
+            data,
+        })
     }
 
     pub(crate) fn width(&self) -> u32 {
@@ -92,14 +112,23 @@ impl RgbaImage {
     }
 
     /// Every pixel with its position.
-    pub(crate) fn enumerate_pixels_mut(&mut self) -> impl Iterator<Item = (u32, u32, &mut [u8; 4])> {
+    pub(crate) fn enumerate_pixels_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (u32, u32, &mut [u8; 4])> {
         let w = self.width.max(1);
-        self.pixels_mut().enumerate().map(move |(i, p)| (i as u32 % w, i as u32 / w, p))
+        self.pixels_mut()
+            .enumerate()
+            .map(move |(i, p)| (i as u32 % w, i as u32 / w, p))
     }
 
     pub(crate) fn get_pixel(&self, x: u32, y: u32) -> [u8; 4] {
         let at = (y as usize * self.width as usize + x as usize) * 4;
-        [self.data[at], self.data[at + 1], self.data[at + 2], self.data[at + 3]]
+        [
+            self.data[at],
+            self.data[at + 1],
+            self.data[at + 2],
+            self.data[at + 3],
+        ]
     }
 
     /// Whether any pixel is less than opaque.
@@ -116,7 +145,11 @@ impl RgbaImage {
             let at = (row as usize * self.width as usize + x as usize) * 4;
             data.extend_from_slice(&self.data[at..at + w as usize * 4]);
         }
-        Self { width: w, height: h, data }
+        Self {
+            width: w,
+            height: h,
+            data,
+        }
     }
 
     /// Copy `top` over this picture with its top-left at (`x`, `y`), clipped
@@ -148,7 +181,11 @@ impl RgbaImage {
                 data.extend_from_slice(&self.get_pixel(sx, sy));
             }
         }
-        Self { width: w, height: h, data }
+        Self {
+            width: w,
+            height: h,
+            data,
+        }
     }
 
     /// Turned a quarter turn clockwise.
@@ -241,7 +278,11 @@ impl RgbaImage {
                 }
             }
         }
-        Self { width: w, height: h, data }
+        Self {
+            width: w,
+            height: h,
+            data,
+        }
     }
 }
 
@@ -268,7 +309,9 @@ fn weights(src: usize, dst: usize) -> Vec<(usize, Vec<f32>)> {
             let centre = (i as f32 + 0.5) * ratio;
             let lo = ((centre - support).floor() as i64).max(0) as usize;
             let hi = ((centre + support).ceil() as i64).min(src as i64) as usize;
-            let mut taps: Vec<f32> = (lo..hi).map(|j| lanczos3((j as f32 + 0.5 - centre) / scale)).collect();
+            let mut taps: Vec<f32> = (lo..hi)
+                .map(|j| lanczos3((j as f32 + 0.5 - centre) / scale))
+                .collect();
             let sum: f32 = taps.iter().sum();
             if sum.abs() > 1e-6 {
                 for t in &mut taps {
@@ -328,7 +371,13 @@ mod tests {
         assert!(small.pixels().all(|p| *p == [10, 200, 90, 255]));
         let big = flat.resize(80, 41);
         assert!(big.pixels().all(|p| *p == [10, 200, 90, 255]));
-        let edge = RgbaImage::from_fn(64, 8, |x, _| if x < 32 { [0, 0, 0, 255] } else { [255, 255, 255, 255] });
+        let edge = RgbaImage::from_fn(64, 8, |x, _| {
+            if x < 32 {
+                [0, 0, 0, 255]
+            } else {
+                [255, 255, 255, 255]
+            }
+        });
         let half = edge.resize(32, 4);
         assert!(half.get_pixel(4, 2)[0] < 10 && half.get_pixel(28, 2)[0] > 245);
     }

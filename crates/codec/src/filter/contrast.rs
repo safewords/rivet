@@ -11,7 +11,9 @@ use crate::frame::VideoFrame;
 pub(super) fn apply(frame: &VideoFrame, factor: f32) -> Result<VideoFrame> {
     let (mut y, u, v) = planes_8bit(frame, "contrast")?;
     for p in y.iter_mut() {
-        *p = (((*p as f32 - 128.0) * factor) + 128.0).round().clamp(0.0, 255.0) as u8;
+        *p = (((*p as f32 - 128.0) * factor) + 128.0)
+            .round()
+            .clamp(0.0, 255.0) as u8;
     }
     Ok(assemble(frame, frame.width, frame.height, y, u, v))
 }

@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rivet::manifest;
 
 pub(crate) fn run(manifest_path: &Path, dry_run: bool, stop_on_error: bool) -> Result<()> {
@@ -40,7 +40,12 @@ pub(crate) fn run(manifest_path: &Path, dry_run: bool, stop_on_error: bool) -> R
             if let Some(o) = &s.output {
                 bits.push(format!("output={o}"));
             }
-            eprintln!("  [{}] {}  ({})", i + 1, job.input.display(), bits.join(" "));
+            eprintln!(
+                "  [{}] {}  ({})",
+                i + 1,
+                job.input.display(),
+                bits.join(" ")
+            );
         }
         eprintln!("\n(dry run — nothing converted)");
         return Ok(());
@@ -59,7 +64,10 @@ pub(crate) fn run(manifest_path: &Path, dry_run: bool, stop_on_error: bool) -> R
             manifest::JobStatus::Ok => println!(
                 "  ok    {} -> {}",
                 o.input.display(),
-                o.output.as_ref().map(|p| p.display().to_string()).unwrap_or_default()
+                o.output
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
             ),
             manifest::JobStatus::Failed(e) => {
                 println!("  FAIL  {}: {}", o.input.display(), e)

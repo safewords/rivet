@@ -21,7 +21,8 @@ mod synth;
 fn main() {
     let mut args = std::env::args().skip(1);
     let mut out = None;
-    let (mut w, mut h, mut fps, mut seconds, mut noise, mut bitrate, mut audio) = (320, 240, 25, 4.0, 0u8, 0u32, false);
+    let (mut w, mut h, mut fps, mut seconds, mut noise, mut bitrate, mut audio) =
+        (320, 240, 25, 4.0, 0u8, 0u32, false);
     let mut tones = false;
     while let Some(a) = args.next() {
         let mut value = || args.next().unwrap_or_else(|| panic!("{a} needs a value"));
@@ -50,5 +51,8 @@ fn main() {
     }
     let mp4 = synth::clip(w, h, fps, seconds, noise, bitrate, audio);
     std::fs::write(&out, &mp4).unwrap_or_else(|e| panic!("{out}: {e}"));
-    println!("{out}: {w}x{h} at {fps} fps, {seconds} s, {} bytes", mp4.len());
+    println!(
+        "{out}: {w}x{h} at {fps} fps, {seconds} s, {} bytes",
+        mp4.len()
+    );
 }

@@ -83,7 +83,8 @@ impl SoundEntry<'_> {
 /// 14496-12 §12.2.2), or a `soun` handler.
 pub(crate) fn trak_is_audio(trak: &[u8]) -> bool {
     find_box_body(trak, &[b"mdia", b"minf", b"smhd"]).is_some()
-        || find_box_body(trak, &[b"mdia", b"hdlr"]).is_some_and(|h| h.len() >= 12 && &h[8..12] == b"soun")
+        || find_box_body(trak, &[b"mdia", b"hdlr"])
+            .is_some_and(|h| h.len() >= 12 && &h[8..12] == b"soun")
 }
 
 /// The first audio `trak` of the file, in file order.
@@ -113,7 +114,11 @@ pub(crate) fn stsd_entries(stsd: &[u8]) -> impl Iterator<Item = ([u8; 4], &[u8])
 fn opens_a_box(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && {
         let size = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
-        size >= 8 && size <= bytes.len() && bytes[4..8].iter().all(|b| b.is_ascii_graphic() || *b == b' ')
+        size >= 8
+            && size <= bytes.len()
+            && bytes[4..8]
+                .iter()
+                .all(|b| b.is_ascii_graphic() || *b == b' ')
     }
 }
 
@@ -136,12 +141,15 @@ pub(crate) fn parse_sound_entry(fourcc: [u8; 4], body: &[u8]) -> Option<SoundEnt
         boxes: &body[28..],
     };
     match version {
-        1 if body.len() >= 44 && (opens_a_box(&body[44..]) || body.len() == 44 || !opens_a_box(&body[28..])) => {
+        1 if body.len() >= 44
+            && (opens_a_box(&body[44..]) || body.len() == 44 || !opens_a_box(&body[28..])) =>
+        {
             entry.bytes_per_frame = u32_at(36);
             entry.boxes = &body[44..];
         }
         2 if body.len() >= 64 => {
-            entry.sample_rate = f64::from_bits(u64::from_be_bytes(body[32..40].try_into().unwrap()));
+            entry.sample_rate =
+                f64::from_bits(u64::from_be_bytes(body[32..40].try_into().unwrap()));
             entry.channels = u16::try_from(u32_at(40)).unwrap_or(0);
             entry.sample_size = u16::try_from(u32_at(48)).unwrap_or(0);
             entry.lpcm_flags = u32_at(52);
@@ -174,7 +182,11 @@ pub(crate) fn audio_entry_config(data: &[u8], entry: &[u8; 4], cfg: &[u8; 4]) ->
         let stsd = find_box_body(trak, &[b"mdia", b"minf", b"stbl", b"stsd"])?;
         stsd_entries(stsd)
             .filter(|(fourcc, _)| fourcc == entry)
-            .find_map(|(fourcc, body)| parse_sound_entry(fourcc, body)?.config(cfg).map(<[u8]>::to_vec))
+            .find_map(|(fourcc, body)| {
+                parse_sound_entry(fourcc, body)?
+                    .config(cfg)
+                    .map(<[u8]>::to_vec)
+            })
     })
 }
 
@@ -226,16 +238,53 @@ impl PcmLayout {
 pub(crate) fn pcm_layout(entry: &SoundEntry<'_>) -> Option<PcmLayout> {
     // `enda`: a 16-bit flag, 1 = little-endian (QuickTime File Format,
     // "Sound sample description extensions").
-    let little = entry.config(b"enda").is_some_and(|b| b.len() >= 2 && u16::from_be_bytes([b[0], b[1]]) & 1 == 1);
+    let little = entry
+        .config(b"enda")
+        .is_some_and(|b| b.len() >= 2 && u16::from_be_bytes([b[0], b[1]]) & 1 == 1);
     let bits = |b: u16| usize::from(b).div_ceil(8);
     let layout = match &entry.fourcc {
-        b"raw " => PcmLayout { bytes: bits(entry.sample_size.max(8)), float: false, big_endian: true, signed: entry.sample_size > 8 },
-        b"twos" | b"NONE" => PcmLayout { bytes: bits(entry.sample_size.max(8)), float: false, big_endian: !little, signed: true },
-        b"sowt" => PcmLayout { bytes: bits(entry.sample_size.max(8)), float: false, big_endian: false, signed: true },
-        b"in24" => PcmLayout { bytes: 3, float: false, big_endian: !little, signed: true },
-        b"in32" => PcmLayout { bytes: 4, float: false, big_endian: !little, signed: true },
-        b"fl32" => PcmLayout { bytes: 4, float: true, big_endian: !little, signed: true },
-        b"fl64" => PcmLayout { bytes: 8, float: true, big_endian: !little, signed: true },
+        b"raw " => PcmLayout {
+            bytes: bits(entry.sample_size.max(8)),
+            float: false,
+            big_endian: true,
+            signed: entry.sample_size > 8,
+        },
+        b"twos" | b"NONE" => PcmLayout {
+            bytes: bits(entry.sample_size.max(8)),
+            float: false,
+            big_endian: !little,
+            signed: true,
+        },
+        b"sowt" => PcmLayout {
+            bytes: bits(entry.sample_size.max(8)),
+            float: false,
+            big_endian: false,
+            signed: true,
+        },
+        b"in24" => PcmLayout {
+            bytes: 3,
+            float: false,
+            big_endian: !little,
+            signed: true,
+        },
+        b"in32" => PcmLayout {
+            bytes: 4,
+            float: false,
+            big_endian: !little,
+            signed: true,
+        },
+        b"fl32" => PcmLayout {
+            bytes: 4,
+            float: true,
+            big_endian: !little,
+            signed: true,
+        },
+        b"fl64" => PcmLayout {
+            bytes: 8,
+            float: true,
+            big_endian: !little,
+            signed: true,
+        },
         b"lpcm" => {
             // kAudioFormatFlagIsFloat 1, IsBigEndian 2, IsSignedInteger 4,
             // IsNonInterleaved 32 (CoreAudioBaseTypes, as the QuickTime spec
@@ -247,15 +296,29 @@ pub(crate) fn pcm_layout(entry: &SoundEntry<'_>) -> Option<PcmLayout> {
             let float = flags & 1 != 0;
             let frame = entry.bytes_per_frame as usize;
             let channels = usize::from(entry.channels.max(1));
-            let bytes = if frame > 0 && frame.is_multiple_of(channels) { frame / channels } else { bits(entry.sample_size) };
-            PcmLayout { bytes, float, big_endian: flags & 2 != 0, signed: float || flags & 4 != 0 }
+            let bytes = if frame > 0 && frame.is_multiple_of(channels) {
+                frame / channels
+            } else {
+                bits(entry.sample_size)
+            };
+            PcmLayout {
+                bytes,
+                float,
+                big_endian: flags & 2 != 0,
+                signed: float || flags & 4 != 0,
+            }
         }
         b"ipcm" | b"fpcm" => {
             // ISO/IEC 23003-5 `pcmC`: FullBox, format_flags (bit 0 set =
             // little-endian), PCM_sample_size in bits.
             let pcmc = entry.config(b"pcmC")?;
             let (flags, size) = (*pcmc.get(4)?, *pcmc.get(5)?);
-            PcmLayout { bytes: bits(u16::from(size)), float: &entry.fourcc == b"fpcm", big_endian: flags & 1 == 0, signed: true }
+            PcmLayout {
+                bytes: bits(u16::from(size)),
+                float: &entry.fourcc == b"fpcm",
+                big_endian: flags & 1 == 0,
+                signed: true,
+            }
         }
         _ => return None,
     };
@@ -275,13 +338,27 @@ fn sample_tables(trak: &[u8]) -> Option<SampleTables<'_>> {
     let stts = find_direct_child(stbl, b"stts")?;
     let offsets = if let Some(stco) = find_direct_child(stbl, b"stco") {
         let n = u32::from_be_bytes(stco.get(4..8)?.try_into().ok()?) as usize;
-        (0..n).map(|i| stco.get(8 + 4 * i..12 + 4 * i).map(|b| u64::from(u32::from_be_bytes(b.try_into().unwrap())))).collect::<Option<Vec<_>>>()?
+        (0..n)
+            .map(|i| {
+                stco.get(8 + 4 * i..12 + 4 * i)
+                    .map(|b| u64::from(u32::from_be_bytes(b.try_into().unwrap())))
+            })
+            .collect::<Option<Vec<_>>>()?
     } else {
         let co64 = find_direct_child(stbl, b"co64")?;
         let n = u32::from_be_bytes(co64.get(4..8)?.try_into().ok()?) as usize;
-        (0..n).map(|i| co64.get(8 + 8 * i..16 + 8 * i).map(|b| u64::from_be_bytes(b.try_into().unwrap()))).collect::<Option<Vec<_>>>()?
+        (0..n)
+            .map(|i| {
+                co64.get(8 + 8 * i..16 + 8 * i)
+                    .map(|b| u64::from_be_bytes(b.try_into().unwrap()))
+            })
+            .collect::<Option<Vec<_>>>()?
     };
-    Some(SampleTables { stsc, offsets, stts })
+    Some(SampleTables {
+        stsc,
+        offsets,
+        stts,
+    })
 }
 
 /// The `mdhd` timescale of a `trak`.
@@ -296,14 +373,23 @@ fn chunk_frames(t: &SampleTables<'_>) -> Option<Vec<(u64, u64)>> {
     let entries = u32::from_be_bytes(t.stsc.get(4..8)?.try_into().ok()?) as usize;
     let entry = |i: usize| -> Option<(u64, u64)> {
         let b = t.stsc.get(8 + 12 * i..20 + 12 * i)?;
-        Some((u64::from(u32::from_be_bytes(b[0..4].try_into().unwrap())), u64::from(u32::from_be_bytes(b[4..8].try_into().unwrap()))))
+        Some((
+            u64::from(u32::from_be_bytes(b[0..4].try_into().unwrap())),
+            u64::from(u32::from_be_bytes(b[4..8].try_into().unwrap())),
+        ))
     };
     let mut out = Vec::with_capacity(t.offsets.len());
     for i in 0..entries {
         let (first, per_chunk) = entry(i)?;
-        let next_first = if i + 1 < entries { entry(i + 1)?.0 } else { t.offsets.len() as u64 + 1 };
+        let next_first = if i + 1 < entries {
+            entry(i + 1)?.0
+        } else {
+            t.offsets.len() as u64 + 1
+        };
         for chunk in first..next_first {
-            let offset = *t.offsets.get(usize::try_from(chunk.checked_sub(1)?).ok()?)?;
+            let offset = *t
+                .offsets
+                .get(usize::try_from(chunk.checked_sub(1)?).ok()?)?;
             out.push((offset, per_chunk));
         }
     }
@@ -324,7 +410,11 @@ pub(crate) fn extract_mp4_pcm(data: &[u8]) -> Option<AudioTrack> {
     }
     let frame_bytes = layout.bytes * usize::from(channels);
     let timescale = media_timescale(trak)?;
-    let sample_rate = if entry.sample_rate >= 1.0 { entry.sample_rate.round() as u32 } else { timescale };
+    let sample_rate = if entry.sample_rate >= 1.0 {
+        entry.sample_rate.round() as u32
+    } else {
+        timescale
+    };
     let tables = sample_tables(trak)?;
     let chunks = chunk_frames(&tables)?;
     // stts as (count, delta) runs, consumed frame by frame.
@@ -332,17 +422,32 @@ pub(crate) fn extract_mp4_pcm(data: &[u8]) -> Option<AudioTrack> {
     let mut stts: Vec<(u64, u64)> = (0..runs)
         .filter_map(|i| {
             let b = tables.stts.get(8 + 8 * i..16 + 8 * i)?;
-            Some((u64::from(u32::from_be_bytes(b[0..4].try_into().unwrap())), u64::from(u32::from_be_bytes(b[4..8].try_into().unwrap()))))
+            Some((
+                u64::from(u32::from_be_bytes(b[0..4].try_into().unwrap())),
+                u64::from(u32::from_be_bytes(b[4..8].try_into().unwrap())),
+            ))
         })
         .collect();
     stts.reverse();
     let mut samples = Vec::with_capacity(chunks.len());
     let mut durations = Vec::with_capacity(chunks.len());
     for (offset, frames) in chunks {
-        let Some(bytes) = usize::try_from(frames).ok().and_then(|f| f.checked_mul(frame_bytes)) else { break };
+        let Some(bytes) = usize::try_from(frames)
+            .ok()
+            .and_then(|f| f.checked_mul(frame_bytes))
+        else {
+            break;
+        };
         let start = usize::try_from(offset).ok()?;
-        let Some(chunk) = start.checked_add(bytes).and_then(|end| data.get(start..end)) else {
-            tracing::warn!(offset, bytes, "MP4 PCM: a chunk runs past the end of the file; truncating the track");
+        let Some(chunk) = start
+            .checked_add(bytes)
+            .and_then(|end| data.get(start..end))
+        else {
+            tracing::warn!(
+                offset,
+                bytes,
+                "MP4 PCM: a chunk runs past the end of the file; truncating the track"
+            );
             break;
         };
         let mut packet = chunk.to_vec();
@@ -371,7 +476,10 @@ pub(crate) fn extract_mp4_pcm(data: &[u8]) -> Option<AudioTrack> {
         durations.push(u32::try_from(ticks).unwrap_or(u32::MAX).max(1));
     }
     if samples.is_empty() {
-        tracing::warn!(codec, "MP4 PCM: the track's sample tables locate no samples");
+        tracing::warn!(
+            codec,
+            "MP4 PCM: the track's sample tables locate no samples"
+        );
         return None;
     }
     Some(AudioTrack {
@@ -409,7 +517,16 @@ pub(crate) fn unsupported_codec_name(fourcc: &[u8; 4]) -> String {
         b"mlpa" => "truehd".into(),
         b"enca" => "encrypted_audio".into(),
         other => {
-            let name: String = other.iter().map(|&b| if b.is_ascii_alphanumeric() { char::from(b).to_ascii_lowercase() } else { '_' }).collect();
+            let name: String = other
+                .iter()
+                .map(|&b| {
+                    if b.is_ascii_alphanumeric() {
+                        char::from(b).to_ascii_lowercase()
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
             format!("mp4_audio_{}", name.trim_end_matches('_'))
         }
     }
@@ -451,7 +568,10 @@ mod tests {
         wave.extend(boxed(b"enda", &[0, 1]));
         let body = v1_entry(2, 24, 48_000, &boxed(b"wave", &wave));
         let e = parse_sound_entry(*b"in24", &body).unwrap();
-        assert_eq!((e.channels, e.sample_rate as u32, e.bytes_per_frame), (2, 48_000, 6));
+        assert_eq!(
+            (e.channels, e.sample_rate as u32, e.bytes_per_frame),
+            (2, 48_000, 6)
+        );
         assert_eq!(e.config(b"enda"), Some(&[0u8, 1][..]));
         let l = pcm_layout(&e).unwrap();
         assert_eq!((l.codec(), l.big_endian), (Some("pcm_s24le"), false));
@@ -459,11 +579,21 @@ mod tests {
 
     #[test]
     fn big_endian_and_signed_8_bit_pcm_normalise_to_the_decoders_forms() {
-        let twos16 = PcmLayout { bytes: 2, float: false, big_endian: true, signed: true };
+        let twos16 = PcmLayout {
+            bytes: 2,
+            float: false,
+            big_endian: true,
+            signed: true,
+        };
         let mut s = vec![0x12, 0x34, 0xFF, 0xFE];
         twos16.normalise(&mut s);
         assert_eq!(s, [0x34, 0x12, 0xFE, 0xFF]);
-        let twos8 = PcmLayout { bytes: 1, float: false, big_endian: true, signed: true };
+        let twos8 = PcmLayout {
+            bytes: 1,
+            float: false,
+            big_endian: true,
+            signed: true,
+        };
         let mut s = vec![0x00, 0x80, 0x7F];
         twos8.normalise(&mut s);
         assert_eq!(s, [0x80, 0x00, 0xFF], "signed 0 is unsigned 128");

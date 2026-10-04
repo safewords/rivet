@@ -23,8 +23,9 @@
 //!   says mono and only mono; it is still `mp4a.40.5`.
 
 pub use aac::encode::{
-    ENCODER_DELAY, FRAME_SAMPLES, HE_AAC_DELAY, HE_AAC_RATES, Profile, SUPPORTED_RATES, adts_frame, adts_header,
-    audio_specific_config, bitrate_range, coding_rate, default_bitrate, default_he_aac_bitrate,
+    ENCODER_DELAY, FRAME_SAMPLES, HE_AAC_DELAY, HE_AAC_RATES, Profile, SUPPORTED_RATES, adts_frame,
+    adts_header, audio_specific_config, bitrate_range, coding_rate, default_bitrate,
+    default_he_aac_bitrate,
 };
 
 use crate::audio::resample::AlignedResampler;
@@ -69,9 +70,16 @@ pub fn lc_rate(input: u32, channels: u8, bitrate: u32) -> u32 {
     if bitrate == 0 || bitrate <= bitrate_range(rate, channels).1 {
         return rate;
     }
-    let mut higher: Vec<u32> = SUPPORTED_RATES.iter().copied().filter(|&r| r > rate).collect();
+    let mut higher: Vec<u32> = SUPPORTED_RATES
+        .iter()
+        .copied()
+        .filter(|&r| r > rate)
+        .collect();
     higher.sort_unstable();
-    higher.into_iter().find(|&r| bitrate <= bitrate_range(r, channels).1).unwrap_or(rate)
+    higher
+        .into_iter()
+        .find(|&r| bitrate <= bitrate_range(r, channels).1)
+        .unwrap_or(rate)
 }
 
 /// The bit rates an HE-AAC profile takes for `channels` (the whole
@@ -131,7 +139,11 @@ impl AacEncoder {
             _ => he_aac_rate(config.sample_rate),
         };
         let inner = aac::encode::Encoder::with_profile(
-            aac::encode::EncoderConfig { sample_rate: rate, channels: config.channels, bitrate: config.bitrate },
+            aac::encode::EncoderConfig {
+                sample_rate: rate,
+                channels: config.channels,
+                bitrate: config.bitrate,
+            },
             profile,
         )
         .map_err(encode_error)?;
@@ -156,12 +168,16 @@ impl AacEncoder {
     /// (`sbrPresentFlag = 0`).
     pub fn audio_specific_config(&self) -> Vec<u8> {
         match self.inner.profile() {
-            Profile::Lc if self.inner.coding_rate() <= 24_000 => lc_without_sbr(self.inner.audio_specific_config()),
-            Profile::Lc => self.inner.audio_specific_config().to_vec(),
-            Profile::HeAac if self.inner.channel_configuration() == 1 => {
-                self.inner.audio_specific_config_with(aac::encode::Signalling::BackwardCompatible)
+            Profile::Lc if self.inner.coding_rate() <= 24_000 => {
+                lc_without_sbr(self.inner.audio_specific_config())
             }
-            _ => self.inner.audio_specific_config_with(aac::encode::Signalling::Hierarchical),
+            Profile::Lc => self.inner.audio_specific_config().to_vec(),
+            Profile::HeAac if self.inner.channel_configuration() == 1 => self
+                .inner
+                .audio_specific_config_with(aac::encode::Signalling::BackwardCompatible),
+            _ => self
+                .inner
+                .audio_specific_config_with(aac::encode::Signalling::Hierarchical),
         }
     }
 
@@ -194,7 +210,11 @@ impl AacEncoder {
             .map(|data| {
                 let pts = first + (self.frames_out * step * 1_000_000 / rate) as i64;
                 self.frames_out += 1;
-                EncodedAudioPacket { data, pts, duration: step as i64 }
+                EncodedAudioPacket {
+                    data,
+                    pts,
+                    duration: step as i64,
+                }
             })
             .collect()
     }
@@ -259,7 +279,9 @@ mod tests {
     use std::f64::consts::PI;
 
     fn sine(freq: f64, amp: f64, rate: u32, len: usize) -> Vec<f32> {
-        (0..len).map(|i| (amp * (2.0 * PI * freq * i as f64 / f64::from(rate)).sin()) as f32).collect()
+        (0..len)
+            .map(|i| (amp * (2.0 * PI * freq * i as f64 / f64::from(rate)).sin()) as f32)
+            .collect()
     }
 
     fn snr_db(reference: &[f32], decoded: &[f32]) -> f64 {
@@ -273,11 +295,27 @@ mod tests {
 
     #[test]
     fn config_errors_keep_their_kinds() {
-        let cfg = |sample_rate, channels, bitrate| AacConfig { sample_rate, channels, bitrate };
-        assert!(matches!(AacEncoder::new(cfg(0, 2, 0)), Err(AudioError::Encode(_))));
-        assert!(matches!(AacEncoder::new(cfg(48_000, 7, 0)), Err(AudioError::Unsupported(_))));
-        assert!(matches!(AacEncoder::new(cfg(48_000, 2, 4_000)), Err(AudioError::Unsupported(_))));
-        assert!(matches!(AacEncoder::with_profile(cfg(48_000, 6, 0), Profile::HeAacV2), Err(AudioError::Unsupported(_))));
+        let cfg = |sample_rate, channels, bitrate| AacConfig {
+            sample_rate,
+            channels,
+            bitrate,
+        };
+        assert!(matches!(
+            AacEncoder::new(cfg(0, 2, 0)),
+            Err(AudioError::Encode(_))
+        ));
+        assert!(matches!(
+            AacEncoder::new(cfg(48_000, 7, 0)),
+            Err(AudioError::Unsupported(_))
+        ));
+        assert!(matches!(
+            AacEncoder::new(cfg(48_000, 2, 4_000)),
+            Err(AudioError::Unsupported(_))
+        ));
+        assert!(matches!(
+            AacEncoder::with_profile(cfg(48_000, 6, 0), Profile::HeAacV2),
+            Err(AudioError::Unsupported(_))
+        ));
         let e = AacEncoder::new(cfg(96_000, 2, 0)).unwrap();
         assert_eq!(e.coding_rate(), 48_000);
         assert_eq!(e.extra_data(), vec![0x11, 0x90]);
@@ -296,11 +334,21 @@ mod tests {
         for input_rate in [7_000u32, 14_000, 96_000, 88_200] {
             let len = input_rate as usize * 3 / 2;
             let x = sine(440.0, 0.5, input_rate, len);
-            let mut enc = AacEncoder::new(AacConfig { sample_rate: input_rate, channels: 1, bitrate: 0 }).unwrap();
+            let mut enc = AacEncoder::new(AacConfig {
+                sample_rate: input_rate,
+                channels: 1,
+                bitrate: 0,
+            })
+            .unwrap();
             let rate = enc.coding_rate();
             let mut aus = Vec::new();
             for (i, chunk) in x.chunks(999).enumerate() {
-                let frame = AudioFrame { samples: chunk.to_vec(), sample_rate: input_rate, channels: 1, pts: i as i64 };
+                let frame = AudioFrame {
+                    samples: chunk.to_vec(),
+                    sample_rate: input_rate,
+                    channels: 1,
+                    pts: i as i64,
+                };
                 aus.extend(enc.encode(&frame).unwrap());
             }
             aus.extend(enc.flush().unwrap());
@@ -310,7 +358,10 @@ mod tests {
             assert_eq!(aus[0].pts, 0);
             assert_eq!(aus[1].pts, (1024 * 1_000_000 / u64::from(rate)) as i64);
             let mut dec = aac::decode::Decoder::new_raw(&enc.audio_specific_config()).unwrap();
-            let mut out: Vec<f32> = aus.iter().flat_map(|p| dec.decode(&p.data).unwrap().remove(0).samples).collect();
+            let mut out: Vec<f32> = aus
+                .iter()
+                .flat_map(|p| dec.decode(&p.data).unwrap().remove(0).samples)
+                .collect();
             out.drain(..ENCODER_DELAY as usize);
             let (lag, snr) = (-40..=40)
                 .map(|q| {
@@ -323,14 +374,25 @@ mod tests {
                     // Clear of the last frames, where the input's abrupt end is
                     // a transient the encoder spreads back a frame or two.
                     let end = coded_len - 3072;
-                    (f64::from(q) * 0.025, snr_db(&shifted[2048..end], &out[2048..end]))
+                    (
+                        f64::from(q) * 0.025,
+                        snr_db(&shifted[2048..end], &out[2048..end]),
+                    )
                 })
-                .fold((0.0, f64::NEG_INFINITY), |a, b| if b.1 > a.1 { b } else { a });
-            eprintln!("{input_rate} Hz input coded at {rate} Hz: SNR {snr:.1} dB, {lag:+.3} samples off the tone");
+                .fold(
+                    (0.0, f64::NEG_INFINITY),
+                    |a, b| if b.1 > a.1 { b } else { a },
+                );
+            eprintln!(
+                "{input_rate} Hz input coded at {rate} Hz: SNR {snr:.1} dB, {lag:+.3} samples off the tone"
+            );
             // At 8 kHz the resampler's fractional delay (0.15 sample) is a
             // larger phase error at 440 Hz than at 48 kHz.
             let floor = if rate < 22_050 { 40.0 } else { 50.0 };
-            assert!(snr > floor && lag.abs() <= 0.5, "{input_rate}: {snr} dB at {lag}");
+            assert!(
+                snr > floor && lag.abs() <= 0.5,
+                "{input_rate}: {snr} dB at {lag}"
+            );
         }
     }
 
@@ -345,12 +407,27 @@ mod tests {
             assert_eq!(coding_rate(rate), rate);
             let len = rate as usize * 2;
             let x = sine(440.0, 0.5, rate, len);
-            let mut enc = AacEncoder::new(AacConfig { sample_rate: rate, channels: 1, bitrate: 0 }).unwrap();
+            let mut enc = AacEncoder::new(AacConfig {
+                sample_rate: rate,
+                channels: 1,
+                bitrate: 0,
+            })
+            .unwrap();
             assert_eq!((enc.coding_rate(), enc.sample_rate()), (rate, rate));
-            let mut aus = enc.encode(&AudioFrame { samples: x.clone(), sample_rate: rate, channels: 1, pts: 0 }).unwrap();
+            let mut aus = enc
+                .encode(&AudioFrame {
+                    samples: x.clone(),
+                    sample_rate: rate,
+                    channels: 1,
+                    pts: 0,
+                })
+                .unwrap();
             aus.extend(enc.flush().unwrap());
             let mut dec = aac::decode::Decoder::new_raw(&enc.audio_specific_config()).unwrap();
-            let mut out: Vec<f32> = aus.iter().flat_map(|p| dec.decode(&p.data).unwrap().remove(0).samples).collect();
+            let mut out: Vec<f32> = aus
+                .iter()
+                .flat_map(|p| dec.decode(&p.data).unwrap().remove(0).samples)
+                .collect();
             out.drain(..ENCODER_DELAY as usize);
             let snr = snr_db(&x[2048..len - 3072], &out[2048..len - 3072]);
             eprintln!("{rate} Hz coded at its own rate: SNR {snr:.1} dB");
@@ -369,13 +446,30 @@ mod tests {
     /// `HE_AAC_DELAY` samples late, the length covering every input sample.
     #[test]
     fn he_aac_profiles_round_trip_at_the_full_rate() {
-        for (profile, channels, aot) in [(Profile::HeAac, 2u8, 5u8), (Profile::HeAacV2, 2, 29), (Profile::HeAac, 1, 5)] {
+        for (profile, channels, aot) in [
+            (Profile::HeAac, 2u8, 5u8),
+            (Profile::HeAacV2, 2, 29),
+            (Profile::HeAac, 1, 5),
+        ] {
             let n = 44_100;
             let tone = sine(1000.0, 0.4, 44_100, n);
-            let pcm: Vec<f32> = tone.iter().flat_map(|&v| std::iter::repeat_n(v, usize::from(channels))).collect();
-            let mut enc =
-                AacEncoder::with_profile(AacConfig { sample_rate: 44_100, channels, bitrate: 0 }, profile).unwrap();
-            assert_eq!((enc.sample_rate(), enc.pre_skip()), (44_100, HE_AAC_DELAY as u16));
+            let pcm: Vec<f32> = tone
+                .iter()
+                .flat_map(|&v| std::iter::repeat_n(v, usize::from(channels)))
+                .collect();
+            let mut enc = AacEncoder::with_profile(
+                AacConfig {
+                    sample_rate: 44_100,
+                    channels,
+                    bitrate: 0,
+                },
+                profile,
+            )
+            .unwrap();
+            assert_eq!(
+                (enc.sample_rate(), enc.pre_skip()),
+                (44_100, HE_AAC_DELAY as u16)
+            );
             let asc = enc.extra_data();
             if channels == 1 {
                 // Backward compatible, so it can say there is no PS.
@@ -387,9 +481,20 @@ mod tests {
                 let c = container::aac_asc::parse_aac_asc(&asc).unwrap();
                 assert!(!c.ps_present && c.sbr_present, "{c:?}");
             } else {
-                assert_eq!(asc[0] >> 3, aot, "{profile:?}: explicit hierarchical signalling");
+                assert_eq!(
+                    asc[0] >> 3,
+                    aot,
+                    "{profile:?}: explicit hierarchical signalling"
+                );
             }
-            let mut aus = enc.encode(&AudioFrame { samples: pcm, sample_rate: 44_100, channels, pts: 0 }).unwrap();
+            let mut aus = enc
+                .encode(&AudioFrame {
+                    samples: pcm,
+                    sample_rate: 44_100,
+                    channels,
+                    pts: 0,
+                })
+                .unwrap();
             aus.extend(enc.flush().unwrap());
             assert!(aus.iter().all(|p| p.duration == 2048));
             assert!(aus.len() * 2048 >= n + HE_AAC_DELAY as usize);
@@ -397,7 +502,11 @@ mod tests {
             let mut out = Vec::new();
             for p in &aus {
                 for f in dec.decode(&p.data).unwrap() {
-                    assert_eq!((f.sample_rate, f.channels), (44_100, usize::from(channels)), "{profile:?}");
+                    assert_eq!(
+                        (f.sample_rate, f.channels),
+                        (44_100, usize::from(channels)),
+                        "{profile:?}"
+                    );
                     out.extend(f.samples.into_iter().step_by(usize::from(channels)));
                 }
             }

@@ -35,8 +35,14 @@ fn segments(playlist: &Path) -> Vec<(f64, u64)> {
         .iter()
         .enumerate()
         .filter_map(|(i, l)| {
-            let secs: f64 = l.strip_prefix("#EXTINF:")?.trim_end_matches(',').parse().ok()?;
-            let bytes = std::fs::metadata(dir.join(lines[i + 1].trim())).expect("segment file").len();
+            let secs: f64 = l
+                .strip_prefix("#EXTINF:")?
+                .trim_end_matches(',')
+                .parse()
+                .ok()?;
+            let bytes = std::fs::metadata(dir.join(lines[i + 1].trim()))
+                .expect("segment file")
+                .len();
             Some((secs, bytes))
         })
         .collect()
@@ -44,8 +50,13 @@ fn segments(playlist: &Path) -> Vec<(f64, u64)> {
 
 /// `(average, peak)` bit rate of `segments`, the way the master is measured.
 fn rates(segments: &[(f64, u64)]) -> (f64, f64) {
-    let (secs, bytes): (f64, u64) = segments.iter().fold((0.0, 0), |(s, b), &(ss, bb)| (s + ss, b + bb));
-    let peak = segments.iter().map(|&(s, b)| b as f64 * 8.0 / s).fold(0.0, f64::max);
+    let (secs, bytes): (f64, u64) = segments
+        .iter()
+        .fold((0.0, 0), |(s, b), &(ss, bb)| (s + ss, b + bb));
+    let peak = segments
+        .iter()
+        .map(|&(s, b)| b as f64 * 8.0 / s)
+        .fold(0.0, f64::max);
     (bytes as f64 * 8.0 / secs, peak)
 }
 
@@ -74,7 +85,10 @@ fn segment_annexb(segment: &[u8]) -> Vec<u8> {
 /// `(BANDWIDTH, AVERAGE-BANDWIDTH)` the master declares for `uri`.
 fn declared(master: &str, uri: &str) -> (f64, f64) {
     let lines: Vec<&str> = master.lines().collect();
-    let at = lines.iter().position(|l| l.trim() == uri).expect("variant in the master");
+    let at = lines
+        .iter()
+        .position(|l| l.trim() == uri)
+        .expect("variant in the master");
     let inf = lines[at - 1];
     let attr = |name: &str| -> f64 {
         let from = inf.find(&format!("{name}=")).expect("attribute") + name.len() + 1;
@@ -87,10 +101,21 @@ fn declared(master: &str, uri: &str) -> (f64, f64) {
 fn an_hls_bitrate_ladder_spends_its_targets_and_declares_its_renditions() {
     let work = tempfile::tempdir().expect("temp dir");
     let input = make_input();
-    let rate = |bps: u32| Quality::default().with_overrides(EncodeOverrides { bitrate: Some(bps), ..Default::default() });
+    let rate = |bps: u32| {
+        Quality::default().with_overrides(EncodeOverrides {
+            bitrate: Some(bps),
+            ..Default::default()
+        })
+    };
     let targets = [(320, 180, 400_000u32), (160, 90, 120_000)];
-    let rungs = targets.iter().map(|&(w, h, bps)| Rung::new(w, h).with_quality(rate(bps))).collect();
-    let one_second = EncodeOverrides { buffer_ms: Some(1000), ..Default::default() };
+    let rungs = targets
+        .iter()
+        .map(|&(w, h, bps)| Rung::new(w, h).with_quality(rate(bps)))
+        .collect();
+    let one_second = EncodeOverrides {
+        buffer_ms: Some(1000),
+        ..Default::default()
+    };
     let spec = OutputSpec::hls(rungs, 2.0)
         .with_video_codec(VideoCodecPolicy::H264)
         .with_rung_policy(RungPolicy::new().with_global(one_second));
@@ -126,7 +151,10 @@ fn an_hls_bitrate_ladder_spends_its_targets_and_declares_its_renditions() {
         let video = segments(&dir.join("playlist.m3u8"));
         let (avg, peak) = rates(&video);
         let achieved = avg / f64::from(target);
-        assert!((0.85..=1.15).contains(&achieved), "{label}: {avg:.0} bit/s against {target} ({achieved:.3})");
+        assert!(
+            (0.85..=1.15).contains(&achieved),
+            "{label}: {avg:.0} bit/s against {target} ({achieved:.3})"
+        );
 
         // Every segment is a stream of its own and keeps to the buffer it
         // declares, at the rate it was asked for (snapped down to the
@@ -140,8 +168,13 @@ fn an_hls_bitrate_ladder_spends_its_targets_and_declares_its_renditions() {
         assert_eq!(names.len(), video.len());
         for name in &names {
             let annexb = segment_annexb(&std::fs::read(dir.join(name)).unwrap());
-            let report = h26x::encode::hrd::verify(&annexb).unwrap_or_else(|e| panic!("{label}/{name}: {e}"));
-            assert_eq!(report.bit_rate, u64::from(target) / 64 * 64, "{label}/{name}: declared rate");
+            let report = h26x::encode::hrd::verify(&annexb)
+                .unwrap_or_else(|e| panic!("{label}/{name}: {e}"));
+            assert_eq!(
+                report.bit_rate,
+                u64::from(target) / 64 * 64,
+                "{label}/{name}: declared rate"
+            );
             assert!(report.conforms(), "{label}/{name}: {report:?}");
         }
 
@@ -149,8 +182,14 @@ fn an_hls_bitrate_ladder_spends_its_targets_and_declares_its_renditions() {
         // peak with peak and average with average.
         let (bandwidth, average) = declared(&master, &format!("video/{label}/playlist.m3u8"));
         let close = |got: f64, want: f64| (got - want).abs() <= (want * 0.001).max(3.0);
-        assert!(close(bandwidth, peak + audio_peak), "{label}: BANDWIDTH {bandwidth} vs {peak:.0} + {audio_peak:.0}");
-        assert!(close(average, avg + audio_avg), "{label}: AVERAGE-BANDWIDTH {average} vs {avg:.0} + {audio_avg:.0}");
+        assert!(
+            close(bandwidth, peak + audio_peak),
+            "{label}: BANDWIDTH {bandwidth} vs {peak:.0} + {audio_peak:.0}"
+        );
+        assert!(
+            close(average, avg + audio_avg),
+            "{label}: AVERAGE-BANDWIDTH {average} vs {avg:.0} + {audio_avg:.0}"
+        );
         assert!(average < bandwidth, "{label}: the average is not the peak");
     }
 }

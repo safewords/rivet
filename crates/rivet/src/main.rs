@@ -214,7 +214,11 @@ enum Command {
         /// across GPUs, the chunk grid. HLS: the segment grid stays
         /// `--segment-seconds`; a shorter GOP adds keyframes inside each
         /// segment, a longer one changes nothing.
-        #[arg(long, visible_alias = "keyframe-interval", value_name = "FRAMES|SECONDSs")]
+        #[arg(
+            long,
+            visible_alias = "keyframe-interval",
+            value_name = "FRAMES|SECONDSs"
+        )]
         gop: Option<String>,
         /// Video bitrate for every rung that does not name its own
         /// (`--rung WxH@RATE`) or get one from `--encode-policy`, e.g. `3M`:
@@ -459,7 +463,11 @@ enum Command {
         target: Option<rivet::codec::encode::tuning::QualityTarget>,
         /// GOP length: frames (`48`) or seconds (`2s`, `1.5s`); default two
         /// seconds, which `2s` states.
-        #[arg(long, visible_alias = "keyframe-interval", value_name = "FRAMES|SECONDSs")]
+        #[arg(
+            long,
+            visible_alias = "keyframe-interval",
+            value_name = "FRAMES|SECONDSs"
+        )]
         gop: Option<String>,
         /// Video bitrate, e.g. `3M`: code to a rate rather than to `--target`
         /// (software H.264 / H.265) — see `rivet transcode --help`.
@@ -584,7 +592,9 @@ enum Command {
 fn main() -> ExitCode {
     quiet_libva();
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .with_writer(std::io::stderr)
         .init();
 
@@ -781,7 +791,9 @@ fn run() -> Result<()> {
             stop_on_error,
         } => commands::batch::run(&manifest, dry_run, stop_on_error),
         #[cfg(feature = "server")]
-        Command::Serve { addr, jobs } => commands::serve::run(addr, jobs.map(std::num::NonZeroUsize::get)),
+        Command::Serve { addr, jobs } => {
+            commands::serve::run(addr, jobs.map(std::num::NonZeroUsize::get))
+        }
     }
 }
 
@@ -801,8 +813,9 @@ mod tests {
             for v in T::value_variants() {
                 let name = value_name(*v);
                 let mut s = TranscodeSettings::default();
-                s.apply_kv(key, &name)
-                    .unwrap_or_else(|e| panic!("`--{key} {name}` is not in the settings vocabulary: {e:#}"));
+                s.apply_kv(key, &name).unwrap_or_else(|e| {
+                    panic!("`--{key} {name}` is not in the settings vocabulary: {e:#}")
+                });
             }
         }
         check::<ModeArg>("mode");
@@ -822,32 +835,53 @@ mod tests {
         use rivet::spec::SubtitlePolicy;
         let parse = |v: &str| {
             let mut s = TranscodeSettings::default();
-            s.apply_kv("subtitles", v).unwrap_or_else(|e| panic!("`--subtitles {v}`: {e:#}"));
+            s.apply_kv("subtitles", v)
+                .unwrap_or_else(|e| panic!("`--subtitles {v}`: {e:#}"));
             s.subtitles.unwrap()
         };
         assert_eq!(parse("all"), SubtitlePolicy::All);
         assert_eq!(parse("none"), SubtitlePolicy::Drop);
-        assert_eq!(parse("eng,deu"), SubtitlePolicy::Only(vec!["eng".into(), "deu".into()]));
+        assert_eq!(
+            parse("eng,deu"),
+            SubtitlePolicy::Only(vec!["eng".into(), "deu".into()])
+        );
         assert_eq!(parse("en"), SubtitlePolicy::Only(vec!["en".into()]));
         // The older spellings still mean what they meant.
         assert_eq!(parse("copy"), SubtitlePolicy::All);
         assert_eq!(parse("drop"), SubtitlePolicy::Drop);
         let mut s = TranscodeSettings::default();
-        assert!(s.apply_kv("subtitles", "english").is_err(), "not a language code");
+        assert!(
+            s.apply_kv("subtitles", "english").is_err(),
+            "not a language code"
+        );
     }
 
     /// `--video-bitrate` / `--video-buffer` are on every subcommand that
     /// encodes, and land in the field its implementation reads.
     #[test]
     fn every_encoding_subcommand_takes_the_video_rate_flags() {
-        let rate = ["--video-bitrate", "3M", "--video-buffer", "500ms", "--rate-mode", "cbr"];
+        let rate = [
+            "--video-bitrate",
+            "3M",
+            "--video-buffer",
+            "500ms",
+            "--rate-mode",
+            "cbr",
+        ];
         let parse = |head: &[&str]| {
             let args: Vec<&str> = head.iter().chain(rate.iter()).copied().collect();
-            Cli::try_parse_from(&args).unwrap_or_else(|e| panic!("{args:?}: {e}")).command
+            Cli::try_parse_from(&args)
+                .unwrap_or_else(|e| panic!("{args:?}: {e}"))
+                .command
         };
         let want = (Some("3M".to_string()), Some("500ms".to_string()));
         match parse(&["rivet", "transcode", "in.mp4"]) {
-            Command::Transcode { video_bitrate, video_buffer, rate_mode, .. } => {
+            Command::Transcode {
+                video_bitrate,
+                video_buffer,
+                rate_mode,
+                ..
+            } => {
                 assert_eq!((video_bitrate, video_buffer), want);
                 assert_eq!(rate_mode.as_deref(), Some("cbr"));
             }
@@ -855,16 +889,33 @@ mod tests {
         }
         match parse(&["rivet", "splice", "-o", "out.mp4", "a.mp4"]) {
             Command::Splice(args) => {
-                assert_eq!((args.shaping.video_bitrate.clone(), args.shaping.video_buffer.clone()), want);
+                assert_eq!(
+                    (
+                        args.shaping.video_bitrate.clone(),
+                        args.shaping.video_buffer.clone()
+                    ),
+                    want
+                );
                 // And the settings splice runs with carry them.
                 let s = args.settings().expect("the splice settings build");
-                assert_eq!((s.video_bitrate, s.video_buffer_ms), (Some(3_000_000), Some(500)));
-                assert_eq!(s.rate_mode, Some(rivet::codec::encode::tuning::RateMode::Constant));
+                assert_eq!(
+                    (s.video_bitrate, s.video_buffer_ms),
+                    (Some(3_000_000), Some(500))
+                );
+                assert_eq!(
+                    s.rate_mode,
+                    Some(rivet::codec::encode::tuning::RateMode::Constant)
+                );
             }
             _ => unreachable!(),
         }
         match parse(&["rivet", "pipe"]) {
-            Command::Pipe { video_bitrate, video_buffer, rate_mode, .. } => {
+            Command::Pipe {
+                video_bitrate,
+                video_buffer,
+                rate_mode,
+                ..
+            } => {
                 assert_eq!((video_bitrate, video_buffer), want);
                 assert_eq!(rate_mode.as_deref(), Some("cbr"));
             }
@@ -890,7 +941,10 @@ mod tests {
         // …and alone, the legacy spelling is `single`.
         let mut c = TranscodeSettings::default();
         c.apply_kv("seam", "serial").unwrap();
-        assert_eq!(c.into_spec(1280, 720).unwrap().encode_policy, rivet::EncodePolicy::SingleGpu(None));
+        assert_eq!(
+            c.into_spec(1280, 720).unwrap().encode_policy,
+            rivet::EncodePolicy::SingleGpu(None)
+        );
     }
 
     /// `rivet splice` takes transcode's output-shaping flags, and they build
@@ -900,6 +954,7 @@ mod tests {
     /// (nor `--color`), so for a splice the remedy was unusable.
     #[test]
     fn splice_takes_the_output_shaping_flags_transcode_takes() {
+        #[rustfmt::skip]
         let shaping = [
             "--pixel-format", "8bit", "--color", "passthrough", "--chroma-downsample", "lanczos",
             "--target", "high", "--gop", "48", "--audio-bitrate", "96k", "--audio-filter",
@@ -907,12 +962,21 @@ mod tests {
             "500ms", "--rate-mode", "cbr",
         ];
         let splice = Cli::try_parse_from(
-            ["rivet", "splice", "-o", "out.mp4", "--codec", "h264"].into_iter().chain(shaping).chain(["a.mp4@0-2", "b.mp4"]),
+            ["rivet", "splice", "-o", "out.mp4", "--codec", "h264"]
+                .into_iter()
+                .chain(shaping)
+                .chain(["a.mp4@0-2", "b.mp4"]),
         )
         .unwrap_or_else(|e| panic!("splice refuses the flags: {e}"));
-        let transcode = Cli::try_parse_from(["rivet", "transcode", "in.mp4", "--codec", "h264"].into_iter().chain(shaping))
-            .unwrap_or_else(|e| panic!("transcode refuses the flags: {e}"));
-        let Command::Splice(splice) = splice.command else { unreachable!() };
+        let transcode = Cli::try_parse_from(
+            ["rivet", "transcode", "in.mp4", "--codec", "h264"]
+                .into_iter()
+                .chain(shaping),
+        )
+        .unwrap_or_else(|e| panic!("transcode refuses the flags: {e}"));
+        let Command::Splice(splice) = splice.command else {
+            unreachable!()
+        };
         let from_splice = splice.settings().expect("the splice settings build");
         let from_transcode = match transcode.command {
             Command::Transcode {
@@ -921,7 +985,7 @@ mod tests {
                 video_bitrate,
                 video_buffer,
                 rate_mode,
-            video_speed,
+                video_speed,
                 audio_bitrate,
                 audio_channels,
                 audio_filter,
@@ -938,7 +1002,7 @@ mod tests {
                     video_bitrate,
                     video_buffer,
                     rate_mode,
-            video_speed,
+                    video_speed,
                     audio_bitrate,
                     audio_channels,
                     audio_filter,
@@ -948,7 +1012,7 @@ mod tests {
                     filter,
                 }
                 .apply(&mut s)
-                    .expect("the settings vocabulary takes every flag");
+                .expect("the settings vocabulary takes every flag");
                 s
             }
             _ => unreachable!(),
@@ -978,8 +1042,16 @@ mod tests {
         assert_eq!(spec.color, rivet::spec::ColorPolicy::Passthrough);
         assert_eq!(spec.gop, Some(48));
         assert_eq!(
-            (spec.rung_policy.global.bitrate, spec.rung_policy.global.buffer_ms, spec.rung_policy.global.rate_mode),
-            (Some(2_000_000), Some(500), Some(rivet::codec::encode::tuning::RateMode::Constant)),
+            (
+                spec.rung_policy.global.bitrate,
+                spec.rung_policy.global.buffer_ms,
+                spec.rung_policy.global.rate_mode
+            ),
+            (
+                Some(2_000_000),
+                Some(500),
+                Some(rivet::codec::encode::tuning::RateMode::Constant)
+            ),
             "the rate reaches every rung"
         );
     }

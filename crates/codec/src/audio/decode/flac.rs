@@ -26,8 +26,15 @@ impl FlacDecoder {
     /// `extra_data` is the codec configuration: an MP4 `dfLa` body or a
     /// Matroska CodecPrivate (`fLaC` + metadata blocks). Without it, every
     /// frame header has to be self-describing.
-    pub fn new(extra_data: Option<&[u8]>, sample_rate: u32, channels: u8) -> Result<Self, AudioError> {
-        Ok(Self { inner: lossless::flac::Decoder::new(extra_data, sample_rate, channels)?, first_pts_us: None })
+    pub fn new(
+        extra_data: Option<&[u8]>,
+        sample_rate: u32,
+        channels: u8,
+    ) -> Result<Self, AudioError> {
+        Ok(Self {
+            inner: lossless::flac::Decoder::new(extra_data, sample_rate, channels)?,
+            first_pts_us: None,
+        })
     }
 
     /// The stream's STREAMINFO, when the configuration carried one.
@@ -59,7 +66,12 @@ impl AudioDecoder for FlacDecoder {
         }
         let sample_rate = self.inner.sample_rate();
         let pts = first_pts_us + (before as i64 * 1_000_000) / i64::from(sample_rate.max(1));
-        Ok(vec![AudioFrame { samples: lossless::pcm::ints_to_f32(&samples, bits), sample_rate, channels, pts }])
+        Ok(vec![AudioFrame {
+            samples: lossless::pcm::ints_to_f32(&samples, bits),
+            sample_rate,
+            channels,
+            pts,
+        }])
     }
 
     fn flush(&mut self) -> Result<Vec<AudioFrame>, AudioError> {

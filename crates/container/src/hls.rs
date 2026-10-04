@@ -376,7 +376,11 @@ fn render_master_playlist_to_string(
     for (i, a) in audio.iter().enumerate() {
         let _ = write!(out, "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\"");
         let _ = write!(out, ",NAME=\"{}\"", escape_attr(&a.name));
-        let _ = write!(out, ",DEFAULT={},AUTOSELECT=YES", if i == 0 { "YES" } else { "NO" });
+        let _ = write!(
+            out,
+            ",DEFAULT={},AUTOSELECT=YES",
+            if i == 0 { "YES" } else { "NO" }
+        );
         let _ = write!(out, ",LANGUAGE=\"{}\"", escape_attr(&a.language));
         let _ = write!(out, ",CHANNELS=\"{}\"", a.channels);
         let _ = writeln!(out, ",URI=\"{}/audio.m3u8\"", a.relative_dir);
@@ -561,7 +565,13 @@ mod tests {
         };
 
         // Pass them in REVERSE bandwidth order to verify sorting.
-        write_master_playlist(&path, &[v1080, v720, v480], std::slice::from_ref(&audio), &[]).unwrap();
+        write_master_playlist(
+            &path,
+            &[v1080, v720, v480],
+            std::slice::from_ref(&audio),
+            &[],
+        )
+        .unwrap();
         let body = fs::read_to_string(&path).unwrap();
 
         // Find 480p, 720p, 1080p positions; assert ascending order.
@@ -674,7 +684,11 @@ mod tests {
         assert!(paths.master_path.exists());
         assert_eq!(paths.video_playlist_paths.len(), 1);
         assert!(paths.video_playlist_paths[0].exists());
-        let audio_pl_path = paths.audio_playlist_paths.first().cloned().expect("audio playlist set");
+        let audio_pl_path = paths
+            .audio_playlist_paths
+            .first()
+            .cloned()
+            .expect("audio playlist set");
         assert!(audio_pl_path.exists());
 
         // Spot-check the audio playlist.
@@ -769,7 +783,9 @@ mod tests {
     }
 
     fn attr<'a>(attrs: &'a str, key: &str) -> Option<&'a str> {
-        attrs.split(',').find_map(|kv| kv.strip_prefix(key).and_then(|v| v.strip_prefix('=')))
+        attrs
+            .split(',')
+            .find_map(|kv| kv.strip_prefix(key).and_then(|v| v.strip_prefix('=')))
     }
 
     fn synth_vtt(timescale: u32, durations_ticks: &[u64]) -> WebVttManifest {
@@ -828,7 +844,11 @@ mod tests {
                 manifest: synth_vtt(30000, &[120_000, 120_000]),
             },
         ];
-        let body = render_master_playlist_to_string(&[mk(720, 2_000_000), mk(360, 800_000)], std::slice::from_ref(&audio), &subs);
+        let body = render_master_playlist_to_string(
+            &[mk(720, 2_000_000), mk(360, 800_000)],
+            std::slice::from_ref(&audio),
+            &subs,
+        );
         let (tags, uris) = parse_playlist(&body);
 
         let media: Vec<&(String, String)> = tags
@@ -851,13 +871,28 @@ mod tests {
         let names: Vec<_> = media.iter().map(|(_, a)| attr(a, "NAME")).collect();
         assert_ne!(names[0], names[1]);
 
-        let variants: Vec<&(String, String)> = tags.iter().filter(|(n, _)| n == "EXT-X-STREAM-INF").collect();
+        let variants: Vec<&(String, String)> = tags
+            .iter()
+            .filter(|(n, _)| n == "EXT-X-STREAM-INF")
+            .collect();
         assert_eq!(variants.len(), 2);
         for (_, a) in &variants {
-            assert_eq!(attr(a, "SUBTITLES"), Some("\"subs\""), "every variant names the group: {a}");
-            assert_eq!(attr(a, "AUDIO"), Some("\"aac\""), "the audio group survives: {a}");
+            assert_eq!(
+                attr(a, "SUBTITLES"),
+                Some("\"subs\""),
+                "every variant names the group: {a}"
+            );
+            assert_eq!(
+                attr(a, "AUDIO"),
+                Some("\"aac\""),
+                "the audio group survives: {a}"
+            );
         }
-        assert_eq!(uris.len(), 2, "one URI line per variant (the media URIs are attributes)");
+        assert_eq!(
+            uris.len(),
+            2,
+            "one URI line per variant (the media URIs are attributes)"
+        );
     }
 
     #[test]
@@ -883,16 +918,33 @@ mod tests {
     fn subtitle_media_playlist_has_no_map_and_mirrors_the_grid() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("subtitles.m3u8");
-        write_subtitle_media_playlist(&path, &synth_vtt(30000, &[120_000, 120_000, 87_500]), 4).unwrap();
+        write_subtitle_media_playlist(&path, &synth_vtt(30000, &[120_000, 120_000, 87_500]), 4)
+            .unwrap();
         let body = fs::read_to_string(&path).unwrap();
         let (tags, uris) = parse_playlist(&body);
         assert_eq!(tags[0].0, "EXTM3U");
-        assert!(tags.iter().any(|(n, a)| n == "EXT-X-TARGETDURATION" && a == "4"));
-        assert!(tags.iter().any(|(n, a)| n == "EXT-X-PLAYLIST-TYPE" && a == "VOD"));
-        assert!(!tags.iter().any(|(n, _)| n == "EXT-X-MAP"), "WebVTT segments take no init segment");
-        let extinf: Vec<&str> = tags.iter().filter(|(n, _)| n == "EXT-X-MAP" || n == "EXTINF").map(|(_, a)| a.as_str()).collect();
+        assert!(
+            tags.iter()
+                .any(|(n, a)| n == "EXT-X-TARGETDURATION" && a == "4")
+        );
+        assert!(
+            tags.iter()
+                .any(|(n, a)| n == "EXT-X-PLAYLIST-TYPE" && a == "VOD")
+        );
+        assert!(
+            !tags.iter().any(|(n, _)| n == "EXT-X-MAP"),
+            "WebVTT segments take no init segment"
+        );
+        let extinf: Vec<&str> = tags
+            .iter()
+            .filter(|(n, _)| n == "EXT-X-MAP" || n == "EXTINF")
+            .map(|(_, a)| a.as_str())
+            .collect();
         assert_eq!(extinf, vec!["4.000000,", "4.000000,", "2.916667,"]);
-        assert_eq!(uris, vec!["seg-00001.vtt", "seg-00002.vtt", "seg-00003.vtt"]);
+        assert_eq!(
+            uris,
+            vec!["seg-00001.vtt", "seg-00002.vtt", "seg-00003.vtt"]
+        );
         assert_eq!(tags.last().unwrap().0, "EXT-X-ENDLIST");
     }
 
@@ -938,10 +990,16 @@ mod tests {
         ];
         let paths = write_hls_package(dir.path(), &[v], &[], &subs, 4).unwrap();
         assert_eq!(paths.subtitle_playlist_paths.len(), 2);
-        assert_eq!(paths.subtitle_playlist_paths[0], dir.path().join("subs/en/subtitles.m3u8"));
+        assert_eq!(
+            paths.subtitle_playlist_paths[0],
+            dir.path().join("subs/en/subtitles.m3u8")
+        );
         assert!(paths.subtitle_playlist_paths.iter().all(|p| p.exists()));
         let master = fs::read_to_string(&paths.master_path).unwrap();
-        assert!(master.contains("URI=\"subs/de/subtitles.m3u8\""), "{master}");
+        assert!(
+            master.contains("URI=\"subs/de/subtitles.m3u8\""),
+            "{master}"
+        );
     }
 
     #[test]
@@ -978,7 +1036,10 @@ mod tests {
             name: name.into(),
             manifest: synth_manifest(48_000, &[192_000]),
         };
-        let audio = [rendition("audio-stereo", "Stereo", 2), rendition("audio", "Surround", 6)];
+        let audio = [
+            rendition("audio-stereo", "Stereo", 2),
+            rendition("audio", "Surround", 6),
+        ];
         let body = render_master_playlist_to_string(&[v], &audio, &[]);
         assert!(body.contains(
             "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\",NAME=\"Stereo\",DEFAULT=YES,AUTOSELECT=YES,LANGUAGE=\"und\",CHANNELS=\"2\",URI=\"audio-stereo/audio.m3u8\""
@@ -987,6 +1048,10 @@ mod tests {
             "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\",NAME=\"Surround\",DEFAULT=NO,AUTOSELECT=YES,LANGUAGE=\"und\",CHANNELS=\"6\",URI=\"audio/audio.m3u8\""
         ), "{body}");
         assert!(body.contains("CODECS=\"av01.0.05M.08,opus\""), "{body}");
-        assert_eq!(body.matches("AUDIO=\"aac\"").count(), 1, "one variant, one group");
+        assert_eq!(
+            body.matches("AUDIO=\"aac\"").count(),
+            1,
+            "one variant, one group"
+        );
     }
 }

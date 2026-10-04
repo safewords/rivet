@@ -19,7 +19,9 @@ use container::streaming::demux_streaming;
 use frame::{EncodedPacket, VideoCodec};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/multi_pps").join(name);
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/multi_pps")
+        .join(name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
@@ -68,13 +70,24 @@ fn sets_in(data: &[u8], codec: NalMuxCodec, kind: u8) -> Vec<Vec<u8>> {
 
 fn mux(name: &str, codec: VideoCodec, nal_codec: NalMuxCodec) -> Bytes {
     let mut m = Av1Mp4Muxer::new_with_codec(64, 64, 25.0, codec).unwrap();
-    for (i, au) in access_units(&fixture(name), nal_codec).into_iter().enumerate() {
+    for (i, au) in access_units(&fixture(name), nal_codec)
+        .into_iter()
+        .enumerate()
+    {
         let is_keyframe = sample_is_keyframe(&au, nal_codec);
-        m.add_packet(EncodedPacket { data: Bytes::from(au), pts: i as u64, is_keyframe })
-            .unwrap();
+        m.add_packet(EncodedPacket {
+            data: Bytes::from(au),
+            pts: i as u64,
+            is_keyframe,
+        })
+        .unwrap();
     }
     let mp4 = m.finalize().unwrap();
-    std::fs::write(Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.mp4")), &mp4).unwrap();
+    std::fs::write(
+        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.mp4")),
+        &mp4,
+    )
+    .unwrap();
     mp4
 }
 
@@ -130,7 +143,10 @@ fn later_samples_carry(mp4: &[u8], codec: NalMuxCodec, kind: u8) -> bool {
     let mut n = 0;
     let mut found = false;
     while let Some(s) = d.next_video_sample().expect("next_video_sample") {
-        found |= n > 0 && split_annexb_nals(&s.data).iter().any(|nal| nal_type(nal, codec) == kind);
+        found |= n > 0
+            && split_annexb_nals(&s.data)
+                .iter()
+                .any(|nal| nal_type(nal, codec) == kind);
         n += 1;
     }
     assert_eq!(n, 12, "every access unit is a sample");
@@ -143,8 +159,15 @@ fn a_second_h264_pps_goes_in_avcc_after_the_first() {
     // The IDR's access unit brings PPS 1 before PPS 0.
     let arrived = sets_in(&fixture("two_pps.h264"), NalMuxCodec::H264, 8);
     assert_eq!(arrived.len(), 2);
-    assert_eq!(avcc_pps(&mp4), vec![arrived[1].clone(), arrived[0].clone()], "id order, both ids");
-    assert!(!later_samples_carry(&mp4, NalMuxCodec::H264, 8), "avc1: the re-sent PPS 1 is out of band");
+    assert_eq!(
+        avcc_pps(&mp4),
+        vec![arrived[1].clone(), arrived[0].clone()],
+        "id order, both ids"
+    );
+    assert!(
+        !later_samples_carry(&mp4, NalMuxCodec::H264, 8),
+        "avc1: the re-sent PPS 1 is out of band"
+    );
 }
 
 #[test]
@@ -152,7 +175,11 @@ fn a_changed_h264_pps_keeps_the_first_under_its_id() {
     let mp4 = mux("conflict.h264", VideoCodec::H264, NalMuxCodec::H264);
     let arrived = sets_in(&fixture("conflict.h264"), NalMuxCodec::H264, 8);
     assert_eq!(arrived.len(), 2, "PPS 0 and its changed re-send");
-    assert_eq!(avcc_pps(&mp4), vec![arrived[0].clone()], "one PPS per id: the first");
+    assert_eq!(
+        avcc_pps(&mp4),
+        vec![arrived[0].clone()],
+        "one PPS per id: the first"
+    );
 }
 
 #[test]
@@ -160,8 +187,15 @@ fn a_second_h265_pps_goes_in_hvcc_after_the_first() {
     let mp4 = mux("two_pps.h265", VideoCodec::H265, NalMuxCodec::H265);
     let arrived = sets_in(&fixture("two_pps.h265"), NalMuxCodec::H265, 34);
     assert_eq!(arrived.len(), 2);
-    assert_eq!(hvcc_array(&mp4, 34), vec![arrived[1].clone(), arrived[0].clone()], "id order, both ids");
+    assert_eq!(
+        hvcc_array(&mp4, 34),
+        vec![arrived[1].clone(), arrived[0].clone()],
+        "id order, both ids"
+    );
     assert_eq!(hvcc_array(&mp4, 32).len(), 1);
     assert_eq!(hvcc_array(&mp4, 33).len(), 1);
-    assert!(!later_samples_carry(&mp4, NalMuxCodec::H265, 34), "hvc1: array_completeness=1");
+    assert!(
+        !later_samples_carry(&mp4, NalMuxCodec::H265, 34),
+        "hvc1: array_completeness=1"
+    );
 }

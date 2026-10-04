@@ -43,8 +43,8 @@ pub(super) const MFX_WRN_PARTIAL_ACCELERATION: MfxStatus = 4;
 
 // ─── Codec / format / IO constants ───────────────────────────────────────────
 // Four-character codec codes (little-endian u32).
-pub(super) const MFX_CODEC_AV1: u32  = 0x20315641; // 'A','V','1',' '
-pub(super) const MFX_CODEC_AVC: u32  = 0x20435641; // 'A','V','C',' ' (H.264)
+pub(super) const MFX_CODEC_AV1: u32 = 0x20315641; // 'A','V','1',' '
+pub(super) const MFX_CODEC_AVC: u32 = 0x20435641; // 'A','V','C',' ' (H.264)
 pub(super) const MFX_CODEC_HEVC: u32 = 0x43564548; // 'H','E','V','C' (H.265)
 /// `MFX_CODEC_VP9 = MFX_MAKEFOURCC('V','P','9',' ')` (mfxstructures.h).
 pub(super) const MFX_CODEC_VP9: u32 = 0x20395056;
@@ -57,7 +57,7 @@ pub(super) const MFX_CHROMAFORMAT_YUV420: u16 = 1;
 pub(super) const MFX_IOPATTERN_IN_SYSTEM_MEMORY: u16 = 0x02;
 pub(super) const MFX_PICSTRUCT_PROGRESSIVE: u16 = 1;
 // Frame-type flags on mfxBitstream. vendor/intel/mfxstructs.h:185-188.
-pub(super) const MFX_FRAMETYPE_I: u16   = 0x0001;
+pub(super) const MFX_FRAMETYPE_I: u16 = 0x0001;
 /// `MFX_FRAMETYPE_REF` — the frame is a reference. Paired with `I`+`IDR` when
 /// forcing a random-access point that later frames may predict from.
 pub(super) const MFX_FRAMETYPE_REF: u16 = 0x0040;
@@ -122,7 +122,7 @@ pub(super) struct MfxExtAv1TileParam {
 /// put them at @58/60/62 (after 3 NumRef arrays) — wrong by 100 bytes.
 #[repr(C)]
 pub(super) struct MfxExtCodingOption3 {
-    pub(super) header: MfxExtBuffer,             // @0 (8 bytes)
+    pub(super) header: MfxExtBuffer,            // @0 (8 bytes)
     pub(super) _pad_to_158: [u8; 150],          // @8 → @158
     pub(super) target_chroma_format_plus1: u16, // @158
     pub(super) target_bit_depth_luma: u16,      // @160
@@ -180,7 +180,10 @@ impl MfxExtVp9Param {
     /// runtime's default (zero: no quantiser deltas, the tile grid its own).
     pub(super) fn raw_frames(width: u16, height: u16) -> Self {
         Self {
-            header: MfxExtBuffer { buffer_id: MFX_EXTBUFF_VP9_PARAM, buffer_sz: std::mem::size_of::<Self>() as u32 },
+            header: MfxExtBuffer {
+                buffer_id: MFX_EXTBUFF_VP9_PARAM,
+                buffer_sz: std::mem::size_of::<Self>() as u32,
+            },
             frame_width: width,
             frame_height: height,
             write_ivf_headers: MFX_CODINGOPTION_OFF,
@@ -200,8 +203,13 @@ const _: () = assert!(std::mem::offset_of!(MfxExtVp9Param, write_ivf_headers) ==
 const _: () = assert!(std::mem::offset_of!(MfxExtVp9Param, q_index_delta_luma_dc) == 26);
 const _: () = assert!(std::mem::offset_of!(MfxExtVp9Param, num_tile_rows) == 32);
 const _: () = assert!(std::mem::offset_of!(MfxExtVp9Param, num_tile_columns) == 34);
-const _: () = assert!(MFX_EXTBUFF_VP9_PARAM == (b'9' as u32) | (b'P' as u32) << 8 | (b'A' as u32) << 16 | (b'R' as u32) << 24);
-const _: () = assert!(MFX_CODEC_VP9 == (b'V' as u32) | (b'P' as u32) << 8 | (b'9' as u32) << 16 | (b' ' as u32) << 24);
+const _: () = assert!(
+    MFX_EXTBUFF_VP9_PARAM
+        == (b'9' as u32) | (b'P' as u32) << 8 | (b'A' as u32) << 16 | (b'R' as u32) << 24
+);
+const _: () = assert!(
+    MFX_CODEC_VP9 == (b'V' as u32) | (b'P' as u32) << 8 | (b'9' as u32) << 16 | (b' ' as u32) << 24
+);
 
 /// oneVPL `mfxEncodeCtrl` — per-frame encode control, the second argument to
 /// `MFXVideoENCODE_EncodeFrameAsync`. Passing null (the long-standing default
@@ -253,7 +261,10 @@ impl MfxEncodeCtrl {
     /// random-access point later frames may predict from.
     pub(super) fn force_idr() -> Self {
         Self {
-            header: MfxExtBuffer { buffer_id: 0, buffer_sz: 0 },
+            header: MfxExtBuffer {
+                buffer_id: 0,
+                buffer_sz: 0,
+            },
             reserved: [0; 4],
             reserved1: 0,
             mfx_nal_unit_type: 0,
@@ -273,7 +284,7 @@ impl MfxEncodeCtrl {
 
 pub(super) type FnMfxClose = unsafe extern "C" fn(MfxSession) -> MfxStatus;
 
-pub(super) type FnMfxLoad   = unsafe extern "C" fn() -> MfxLoader;
+pub(super) type FnMfxLoad = unsafe extern "C" fn() -> MfxLoader;
 pub(super) type FnMfxUnload = unsafe extern "C" fn(MfxLoader);
 pub(super) type FnMfxCreateConfig = unsafe extern "C" fn(MfxLoader) -> MfxConfig;
 /// `MFXInit` — the pre-dispatcher entry point. Takes an implementation mask
@@ -292,16 +303,14 @@ pub(super) type FnMfxCreateSession =
 
 pub(super) type FnEncodeQuery =
     unsafe extern "C" fn(MfxSession, *mut MfxVideoParam, *mut MfxVideoParam) -> MfxStatus;
-pub(super) type FnEncodeInit =
-    unsafe extern "C" fn(MfxSession, *mut MfxVideoParam) -> MfxStatus;
+pub(super) type FnEncodeInit = unsafe extern "C" fn(MfxSession, *mut MfxVideoParam) -> MfxStatus;
 pub(super) type FnEncodeClose = unsafe extern "C" fn(MfxSession) -> MfxStatus;
 /// `MFXVideoENCODE_Reset(session, par)` — stop the current stream and start a
 /// new one on the same session with `par`. Handed the *same* `mfxVideoParam`
 /// the session was initialised with, it is the documented way to restart the
 /// GOP and the rate control without `Close` + `Init`: the next frame is an
 /// IDR and a new sequence begins. `Encoder::reset` is built on it.
-pub(super) type FnEncodeReset =
-    unsafe extern "C" fn(MfxSession, *mut MfxVideoParam) -> MfxStatus;
+pub(super) type FnEncodeReset = unsafe extern "C" fn(MfxSession, *mut MfxVideoParam) -> MfxStatus;
 pub(super) type FnEncodeFrameAsync = unsafe extern "C" fn(
     MfxSession,
     *mut c_void,
@@ -309,8 +318,7 @@ pub(super) type FnEncodeFrameAsync = unsafe extern "C" fn(
     *mut MfxBitstream,
     *mut MfxSyncPoint,
 ) -> MfxStatus;
-pub(super) type FnSyncOperation =
-    unsafe extern "C" fn(MfxSession, MfxSyncPoint, u32) -> MfxStatus;
+pub(super) type FnSyncOperation = unsafe extern "C" fn(MfxSession, MfxSyncPoint, u32) -> MfxStatus;
 
 // ─── oneVPL dispatcher variant ────────────────────────────────────────────────
 

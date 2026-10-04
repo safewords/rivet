@@ -49,9 +49,16 @@ pub(super) fn append_clip_subtitles(
 ) {
     let offset_ticks = (offset_seconds.max(0.0) * REBASE_TIMESCALE as f64).round() as u64;
     for (i, t) in clip.iter().enumerate() {
-        let ordinal = clip[..i].iter().filter(|o| same_language(&o.language, &t.language)).count();
+        let ordinal = clip[..i]
+            .iter()
+            .filter(|o| same_language(&o.language, &t.language))
+            .count();
         let placed = t.rescaled(REBASE_TIMESCALE).shifted(offset_ticks);
-        match joined.iter_mut().filter(|j| same_language(&j.language, &t.language)).nth(ordinal) {
+        match joined
+            .iter_mut()
+            .filter(|j| same_language(&j.language, &t.language))
+            .nth(ordinal)
+        {
             Some(j) => j.append(&placed),
             None => joined.push(placed),
         }
@@ -75,11 +82,17 @@ pub(super) fn build_subtitle_renditions(
     let mut specs = Vec::with_capacity(tracks.len());
     for (i, t) in tracks.iter().enumerate() {
         let tag = bcp47_tag(&t.language);
-        let dup = tracks[..i].iter().filter(|o| bcp47_tag(&o.language) == tag).count();
+        let dup = tracks[..i]
+            .iter()
+            .filter(|o| bcp47_tag(&o.language) == tag)
+            .count();
         let (name, dir_key) = if dup == 0 {
             (display_name(&t.language), tag.clone())
         } else {
-            (format!("{} ({})", display_name(&t.language), dup + 1), format!("{tag}-{}", dup + 1))
+            (
+                format!("{} ({})", display_name(&t.language), dup + 1),
+                format!("{tag}-{}", dup + 1),
+            )
         };
         let relative_dir = format!("subs/{dir_key}");
         let manifest = write_webvtt_rendition(&root.join(&relative_dir), t, grid)
@@ -92,7 +105,13 @@ pub(super) fn build_subtitle_renditions(
             dir = %relative_dir,
             "HLS subtitle rendition written on the video segment grid"
         );
-        specs.push(SubtitleVariantSpec { language: tag, name, relative_dir, default: i == 0, manifest });
+        specs.push(SubtitleVariantSpec {
+            language: tag,
+            name,
+            relative_dir,
+            default: i == 0,
+            manifest,
+        });
     }
     Ok(specs)
 }
@@ -103,30 +122,55 @@ mod tests {
     use container::demux::subtitle::SubtitleCue;
 
     fn cue(start: u64, duration: u32, text: &str) -> SubtitleCue {
-        SubtitleCue { start, duration, text: text.into() }
+        SubtitleCue {
+            start,
+            duration,
+            text: text.into(),
+        }
     }
 
     fn track(lang: &str, cues: Vec<SubtitleCue>) -> SubtitleTrack {
-        SubtitleTrack { codec: "subrip".into(), cues, timescale: 1_000, language: lang.into() }
+        SubtitleTrack {
+            codec: "subrip".into(),
+            cues,
+            timescale: 1_000,
+            language: lang.into(),
+        }
     }
 
     #[test]
     fn trim_subtitles_clips_to_the_window_and_rebases_to_zero() {
-        let t = track("eng", vec![cue(1_000, 1_000, "a"), cue(3_000, 2_000, "b"), cue(6_000, 1_000, "c")]);
+        let t = track(
+            "eng",
+            vec![
+                cue(1_000, 1_000, "a"),
+                cue(3_000, 2_000, "b"),
+                cue(6_000, 1_000, "c"),
+            ],
+        );
         let out = trim_subtitles(&[&t], Some(2.5), Some(6.5));
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].cues, vec![cue(500, 2_000, "b"), cue(3_500, 500, "c")]);
+        assert_eq!(
+            out[0].cues,
+            vec![cue(500, 2_000, "b"), cue(3_500, 500, "c")]
+        );
         // No window: unchanged.
         assert_eq!(trim_subtitles(&[&t], None, None)[0], t);
         // Open end.
-        assert_eq!(trim_subtitles(&[&t], Some(5.0), None)[0].cues, vec![cue(1_000, 1_000, "c")]);
+        assert_eq!(
+            trim_subtitles(&[&t], Some(5.0), None)[0].cues,
+            vec![cue(1_000, 1_000, "c")]
+        );
     }
 
     /// The splice re-basing: clip 2's cues must be moved by clip 1's length.
     /// This is the test that fails when the shift is dropped.
     #[test]
     fn spliced_cues_land_at_clip_offset_plus_their_own_time() {
-        let clip1 = vec![track("eng", vec![cue(500, 1_000, "one"), cue(3_000, 1_000, "two")])];
+        let clip1 = vec![track(
+            "eng",
+            vec![cue(500, 1_000, "one"), cue(3_000, 1_000, "two")],
+        )];
         let clip2 = vec![track("eng", vec![cue(250, 1_000, "three")])];
         let mut joined = Vec::new();
         append_clip_subtitles(&mut joined, &clip1, 0.0);
@@ -135,7 +179,11 @@ mod tests {
         assert_eq!(joined.len(), 1, "same language joins one track");
         assert_eq!(
             joined[0].cues,
-            vec![cue(500, 1_000, "one"), cue(3_000, 1_000, "two"), cue(8_250, 1_000, "three")],
+            vec![
+                cue(500, 1_000, "one"),
+                cue(3_000, 1_000, "two"),
+                cue(8_250, 1_000, "three")
+            ],
             "clip 2's cue is 8 s + 0.25 s in, not 0.25 s"
         );
         assert_eq!(joined[0].timescale, REBASE_TIMESCALE);
@@ -143,29 +191,58 @@ mod tests {
 
     #[test]
     fn languages_join_by_language_and_new_ones_start_new_tracks() {
-        let clip1 = vec![track("eng", vec![cue(0, 500, "e1")]), track("deu", vec![cue(0, 500, "d1")])];
+        let clip1 = vec![
+            track("eng", vec![cue(0, 500, "e1")]),
+            track("deu", vec![cue(0, 500, "d1")]),
+        ];
         // Clip 2 spells English the BCP-47 way and has no German.
-        let clip2 = vec![track("en", vec![cue(100, 500, "e2")]), track("fra", vec![cue(100, 500, "f2")])];
+        let clip2 = vec![
+            track("en", vec![cue(100, 500, "e2")]),
+            track("fra", vec![cue(100, 500, "f2")]),
+        ];
         let mut joined = Vec::new();
         append_clip_subtitles(&mut joined, &clip1, 0.0);
         append_clip_subtitles(&mut joined, &clip2, 4.0);
         let langs: Vec<&str> = joined.iter().map(|t| t.language.as_str()).collect();
         assert_eq!(langs, vec!["eng", "deu", "fra"]);
-        assert_eq!(joined[0].cues, vec![cue(0, 500, "e1"), cue(4_100, 500, "e2")]);
+        assert_eq!(
+            joined[0].cues,
+            vec![cue(0, 500, "e1"), cue(4_100, 500, "e2")]
+        );
         assert_eq!(joined[1].cues, vec![cue(0, 500, "d1")]);
         assert_eq!(joined[2].cues, vec![cue(4_100, 500, "f2")]);
     }
 
     #[test]
     fn two_tracks_of_one_language_pair_up_by_ordinal() {
-        let clip1 = vec![track("eng", vec![cue(0, 500, "a1")]), track("eng", vec![cue(0, 500, "b1")])];
-        let clip2 = vec![track("eng", vec![cue(0, 500, "a2")]), track("eng", vec![cue(0, 500, "b2")])];
+        let clip1 = vec![
+            track("eng", vec![cue(0, 500, "a1")]),
+            track("eng", vec![cue(0, 500, "b1")]),
+        ];
+        let clip2 = vec![
+            track("eng", vec![cue(0, 500, "a2")]),
+            track("eng", vec![cue(0, 500, "b2")]),
+        ];
         let mut joined = Vec::new();
         append_clip_subtitles(&mut joined, &clip1, 0.0);
         append_clip_subtitles(&mut joined, &clip2, 1.0);
         assert_eq!(joined.len(), 2);
-        assert_eq!(joined[0].cues.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["a1", "a2"]);
-        assert_eq!(joined[1].cues.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["b1", "b2"]);
+        assert_eq!(
+            joined[0]
+                .cues
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<Vec<_>>(),
+            ["a1", "a2"]
+        );
+        assert_eq!(
+            joined[1]
+                .cues
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<Vec<_>>(),
+            ["b1", "b2"]
+        );
     }
 
     #[test]
@@ -212,9 +289,30 @@ mod tests {
         ];
         let specs = build_subtitle_renditions(dir.path(), &tracks, &video).unwrap();
         assert_eq!(specs.len(), 3);
-        assert_eq!((specs[0].language.as_str(), specs[0].name.as_str(), specs[0].relative_dir.as_str()), ("en", "English", "subs/en"));
-        assert_eq!((specs[1].language.as_str(), specs[1].name.as_str(), specs[1].relative_dir.as_str()), ("de", "German", "subs/de"));
-        assert_eq!((specs[2].language.as_str(), specs[2].name.as_str(), specs[2].relative_dir.as_str()), ("en", "English (2)", "subs/en-2"));
+        assert_eq!(
+            (
+                specs[0].language.as_str(),
+                specs[0].name.as_str(),
+                specs[0].relative_dir.as_str()
+            ),
+            ("en", "English", "subs/en")
+        );
+        assert_eq!(
+            (
+                specs[1].language.as_str(),
+                specs[1].name.as_str(),
+                specs[1].relative_dir.as_str()
+            ),
+            ("de", "German", "subs/de")
+        );
+        assert_eq!(
+            (
+                specs[2].language.as_str(),
+                specs[2].name.as_str(),
+                specs[2].relative_dir.as_str()
+            ),
+            ("en", "English (2)", "subs/en-2")
+        );
         assert_eq!(specs.iter().filter(|s| s.default).count(), 1);
         assert!(specs[0].default);
         for s in &specs {
@@ -222,6 +320,10 @@ mod tests {
             assert!(s.manifest.segments[0].path.exists());
         }
         // No video grid: nothing to segment on.
-        assert!(build_subtitle_renditions(dir.path(), &tracks, &[]).unwrap().is_empty());
+        assert!(
+            build_subtitle_renditions(dir.path(), &tracks, &[])
+                .unwrap()
+                .is_empty()
+        );
     }
 }

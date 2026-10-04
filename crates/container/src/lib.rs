@@ -1,11 +1,11 @@
 pub mod aac_asc;
 pub mod ac3_sync;
-pub mod dts_sync;
 pub(crate) mod annexb;
 pub mod atomic;
 pub mod avi;
 pub mod cmaf;
 pub mod demux;
+pub mod dts_sync;
 pub mod edit;
 pub mod es;
 pub mod hls;
@@ -263,11 +263,17 @@ impl AudioInfo {
             SyncInfo::Ac3(s) => {
                 let rate = ac3_sync::ac3_sample_rate_hz(s.fscod);
                 let channels = ac3_sync::channel_count(s.acmod, s.lfeon);
-                Ok(Self::ac3(rate, channels, mux::dac3_body_from_sync(&s).to_vec()))
+                Ok(Self::ac3(
+                    rate,
+                    channels,
+                    mux::dac3_body_from_sync(&s).to_vec(),
+                ))
             }
             SyncInfo::Eac3(_) => {
-                let (dec3, rate, channels) =
-                    anyhow::Context::context(mux::eac3_config_from_access_unit(frame), "an E-AC-3 access unit that does not parse")?;
+                let (dec3, rate, channels) = anyhow::Context::context(
+                    mux::eac3_config_from_access_unit(frame),
+                    "an E-AC-3 access unit that does not parse",
+                )?;
                 Ok(Self::eac3(rate, channels, dec3))
             }
         }
@@ -278,7 +284,11 @@ impl AudioInfo {
     pub fn from_dts_frame(frame: &[u8]) -> anyhow::Result<Self> {
         let core = dts_sync::parse_core_sync(frame)?;
         let hd = dts_sync::has_hd_extension(frame, &core);
-        Ok(Self::dts(core.sample_rate, core.channels, mux::ddts_body_from_sync(&core, hd)))
+        Ok(Self::dts(
+            core.sample_rate,
+            core.channels,
+            mux::ddts_body_from_sync(&core, hd),
+        ))
     }
 }
 

@@ -25,7 +25,7 @@ use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Whether `a` and `b` are the same file on disk (the same file-system
 /// object: device and inode on Unix, volume and file index on Windows).
@@ -61,7 +61,10 @@ fn aliases(out: &Path, input: &Path) -> bool {
 
 /// `dir/name.ext` → `dir/name.rivet.ext`; `dir/name` → `dir/name.rivet`.
 fn with_rivet_infix(path: &Path) -> PathBuf {
-    let stem = path.file_stem().map(|s| s.to_os_string()).unwrap_or_else(|| OsString::from("output"));
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_os_string())
+        .unwrap_or_else(|| OsString::from("output"));
     let mut name = stem;
     name.push(".rivet");
     if let Some(ext) = path.extension() {
@@ -92,7 +95,11 @@ pub fn refuse_input_as_output(output: &Path, inputs: &[&Path]) -> Result<()> {
 /// input's path relative to `dir`, whether the job writes there (an HLS
 /// package writes `master.m3u8` and everything in its subdirectories). A
 /// directory that does not exist yet holds nothing and passes.
-pub fn refuse_input_in_dir(dir: &Path, inputs: &[&Path], writes_at: impl Fn(&Path) -> bool) -> Result<()> {
+pub fn refuse_input_in_dir(
+    dir: &Path,
+    inputs: &[&Path],
+    writes_at: impl Fn(&Path) -> bool,
+) -> Result<()> {
     for input in inputs {
         if aliases(dir, input) {
             bail!(
@@ -172,18 +179,27 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("x.mp3");
         std::fs::write(&input, b"source").unwrap();
-        assert_eq!(default_beside_input(input.clone(), &input), dir.path().join("x.rivet.mp3"));
+        assert_eq!(
+            default_beside_input(input.clone(), &input),
+            dir.path().join("x.rivet.mp3")
+        );
         // A name that is not the input is kept.
         let flac = dir.path().join("x.flac");
         assert_eq!(default_beside_input(flac.clone(), &input), flac);
         // An input already called `.rivet.` gets another.
         let again = dir.path().join("x.rivet.mp3");
         std::fs::write(&again, b"source").unwrap();
-        assert_eq!(default_beside_input(again.clone(), &again), dir.path().join("x.rivet.rivet.mp3"));
+        assert_eq!(
+            default_beside_input(again.clone(), &again),
+            dir.path().join("x.rivet.rivet.mp3")
+        );
         // A directory default with the input's name (`clip.hls` the file).
         let hls_file = dir.path().join("clip.hls");
         std::fs::write(&hls_file, b"source").unwrap();
-        assert_eq!(default_beside_input(hls_file.clone(), &hls_file), dir.path().join("clip.rivet.hls"));
+        assert_eq!(
+            default_beside_input(hls_file.clone(), &hls_file),
+            dir.path().join("clip.rivet.hls")
+        );
     }
 
     #[test]
@@ -208,9 +224,18 @@ mod tests {
         let upper = sub.join("SONG.MP3");
         let lower = dir.path().join("SUB").join("song.mp3");
         if case_insensitive(dir.path()) {
-            assert!(refuse_input_as_output(&upper, &[&input]).is_err(), "case variant");
-            assert!(refuse_input_as_output(&lower, &[&input]).is_err(), "case variant of the directory");
-            assert_eq!(default_beside_input(upper, &input), sub.join("SONG.rivet.MP3"));
+            assert!(
+                refuse_input_as_output(&upper, &[&input]).is_err(),
+                "case variant"
+            );
+            assert!(
+                refuse_input_as_output(&lower, &[&input]).is_err(),
+                "case variant of the directory"
+            );
+            assert_eq!(
+                default_beside_input(upper, &input),
+                sub.join("SONG.rivet.MP3")
+            );
         } else {
             assert!(refuse_input_as_output(&upper, &[&input]).is_ok());
         }
@@ -262,10 +287,15 @@ mod tests {
         // The directory is the input file itself.
         assert!(refuse_input_in_dir(&top, &[&top], hls_package_writes_at).is_err());
         // A directory not made yet holds nothing.
-        assert!(refuse_input_in_dir(&dir.path().join("new"), &[&deep], hls_package_writes_at).is_ok());
+        assert!(
+            refuse_input_in_dir(&dir.path().join("new"), &[&deep], hls_package_writes_at).is_ok()
+        );
         if case_insensitive(dir.path()) {
             let upper = dir.path().join("PKG");
-            assert!(refuse_input_in_dir(&upper, &[&deep], hls_package_writes_at).is_err(), "case variant");
+            assert!(
+                refuse_input_in_dir(&upper, &[&deep], hls_package_writes_at).is_err(),
+                "case variant"
+            );
         }
     }
 
@@ -276,8 +306,15 @@ mod tests {
         std::fs::write(&path, b"old contents, longer than the new").unwrap();
         write_atomic(&path, b"new").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"new");
-        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
-        assert_eq!(names, vec![OsString::from("out.mp4")], "no .part left behind");
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(
+            names,
+            vec![OsString::from("out.mp4")],
+            "no .part left behind"
+        );
         // A target in a directory that is not there fails, writing nothing.
         assert!(write_atomic(&dir.path().join("missing/out.mp4"), b"x").is_err());
     }

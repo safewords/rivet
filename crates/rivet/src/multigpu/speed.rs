@@ -85,7 +85,11 @@ fn process_rates() -> &'static Mutex<HashMap<(String, DeviceKey), f64>> {
 /// The rate this process has measured for `key` in `role` (`"decode:h264"`,
 /// `"encode:av1"`), in that role's units per second.
 pub(crate) fn cached_rate(role: &str, key: DeviceKey) -> Option<f64> {
-    process_rates().lock().unwrap_or_else(|p| p.into_inner()).get(&(role.to_string(), key)).copied()
+    process_rates()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&(role.to_string(), key))
+        .copied()
 }
 
 /// Fold a measurement into the process-wide record.
@@ -114,7 +118,9 @@ pub(crate) fn static_weight(key: DeviceKey) -> f64 {
         DeviceKey::Gpu(index) => codec::gpu::detect_gpus_cached()
             .iter()
             .find(|d| d.index == index)
-            .map_or(1.0, |d| weight_from_properties(d.vram_mib, codec::gpu::pcie_report(d).map(|r| r.bottleneck))),
+            .map_or(1.0, |d| {
+                weight_from_properties(d.vram_mib, codec::gpu::pcie_report(d).map(|r| r.bottleneck))
+            }),
     }
 }
 
@@ -122,7 +128,11 @@ pub(crate) fn static_weight(key: DeviceKey) -> f64 {
 /// against 8 GiB (an integrated GPU, with none of its own, counts as 2 GiB),
 /// times a penalty for a link under 4 GB/s (x2 at 3.0) or 8 GB/s (x4 at 3.0).
 pub(crate) fn weight_from_properties(vram_mib: u64, link: Option<codec::gpu::PcieLink>) -> f64 {
-    let gib = if vram_mib == 0 { 2.0 } else { vram_mib as f64 / 1024.0 };
+    let gib = if vram_mib == 0 {
+        2.0
+    } else {
+        vram_mib as f64 / 1024.0
+    };
     let memory = (gib / 8.0).clamp(0.25, 4.0).sqrt();
     let link = match link.map(|l| l.gbytes_per_s()) {
         Some(bw) if bw < 4.0 => 0.5,
@@ -146,7 +156,10 @@ pub(crate) struct Prior {
 /// floored at [`MIN_PRIOR_RATIO`].
 pub(crate) fn priors_for(role: &str, keys: &[DeviceKey]) -> Vec<Prior> {
     let weights: Vec<f64> = keys.iter().map(|&k| static_weight(k)).collect();
-    normalise_priors(weights, keys.iter().map(|&k| cached_rate(role, k)).collect())
+    normalise_priors(
+        weights,
+        keys.iter().map(|&k| cached_rate(role, k)).collect(),
+    )
 }
 
 pub(crate) fn normalise_priors(weights: Vec<f64>, measured: Vec<Option<f64>>) -> Vec<Prior> {
@@ -155,7 +168,11 @@ pub(crate) fn normalise_priors(weights: Vec<f64>, measured: Vec<Option<f64>>) ->
         .into_iter()
         .zip(measured)
         .map(|(w, measured)| Prior {
-            weight: if best > 0.0 { (w / best).clamp(MIN_PRIOR_RATIO, 1.0) } else { 1.0 },
+            weight: if best > 0.0 {
+                (w / best).clamp(MIN_PRIOR_RATIO, 1.0)
+            } else {
+                1.0
+            },
             measured,
         })
         .collect()
@@ -192,7 +209,15 @@ pub(crate) struct SpeedBoard {
 impl SpeedBoard {
     pub(crate) fn new(priors: Vec<Prior>) -> Self {
         Self {
-            devices: priors.into_iter().map(|prior| Device { prior, rate: None, busy: None, alive: true }).collect(),
+            devices: priors
+                .into_iter()
+                .map(|prior| Device {
+                    prior,
+                    rate: None,
+                    busy: None,
+                    alive: true,
+                })
+                .collect(),
         }
     }
 
@@ -212,9 +237,17 @@ impl SpeedBoard {
         let known: Vec<f64> = self
             .devices
             .iter()
-            .filter_map(|o| o.rate.or(o.prior.measured).map(|r| r / o.prior.weight.max(1e-9)))
+            .filter_map(|o| {
+                o.rate
+                    .or(o.prior.measured)
+                    .map(|r| r / o.prior.weight.max(1e-9))
+            })
             .collect();
-        let scale = if known.is_empty() { 1.0 } else { known.iter().sum::<f64>() / known.len() as f64 };
+        let scale = if known.is_empty() {
+            1.0
+        } else {
+            known.iter().sum::<f64>() / known.len() as f64
+        };
         dev.prior.weight * scale
     }
 
@@ -254,7 +287,10 @@ impl SpeedBoard {
         // Until some device has been timed, rates are relative weights, not
         // work per second, and cannot be set against the clock: a unit in
         // hand then counts as all still to do.
-        let timed = self.devices.iter().any(|o| o.rate.or(o.prior.measured).is_some());
+        let timed = self
+            .devices
+            .iter()
+            .any(|o| o.rate.or(o.prior.measured).is_some());
         let mut free_at: Vec<(f64, f64)> = Vec::new();
         for (o, dev) in self.devices.iter().enumerate() {
             if o == d || !dev.alive || !eligible(o) {
@@ -406,7 +442,11 @@ mod tests {
                     break;
                 }
             }
-            let next_event = busy_until.iter().flatten().map(|&(end, _, _)| end).fold(f64::INFINITY, f64::min);
+            let next_event = busy_until
+                .iter()
+                .flatten()
+                .map(|&(end, _, _)| end)
+                .fold(f64::INFINITY, f64::min);
             assert!(
                 next_event.is_finite(),
                 "stall at t={now}: {} units left, every device free and none would take the next",
@@ -414,7 +454,11 @@ mod tests {
             );
             now = next_event;
         }
-        Outcome { makespan, taken, per_device }
+        Outcome {
+            makespan,
+            taken,
+            per_device,
+        }
     }
 
     /// The best a schedule of identical units can do on devices of these
@@ -450,10 +494,27 @@ mod tests {
         // Priors that know nothing: both cards alike until measured.
         let gated = simulate(&devices, priors(&[1.0, 1.0]), &units, true);
         let ungated = simulate(&devices, priors(&[1.0, 1.0]), &units, false);
-        assert!(gated.makespan <= best + 1e-9 + 1.0 / 3.0, "gated {} vs optimum {best}", gated.makespan);
-        assert!(gated.makespan < fast_alone, "two cards {} must beat the fast one alone {fast_alone}", gated.makespan);
-        assert!(ungated.makespan >= gated.makespan, "ungated {} gated {}", ungated.makespan, gated.makespan);
-        assert!(gated.per_device[1] > gated.per_device[0] * 2, "{:?}", gated.per_device);
+        assert!(
+            gated.makespan <= best + 1e-9 + 1.0 / 3.0,
+            "gated {} vs optimum {best}",
+            gated.makespan
+        );
+        assert!(
+            gated.makespan < fast_alone,
+            "two cards {} must beat the fast one alone {fast_alone}",
+            gated.makespan
+        );
+        assert!(
+            ungated.makespan >= gated.makespan,
+            "ungated {} gated {}",
+            ungated.makespan,
+            gated.makespan
+        );
+        assert!(
+            gated.per_device[1] > gated.per_device[0] * 2,
+            "{:?}",
+            gated.per_device
+        );
     }
 
     /// One unit, one fast and one slow card, the slow card asking first: with
@@ -462,14 +523,23 @@ mod tests {
     fn the_only_unit_goes_to_the_card_expected_to_be_fastest() {
         let devices = [Sim { speed: 1.0 }, Sim { speed: 3.0 }];
         let link_x2 = Some(codec::gpu::PcieLink { gts: 8.0, width: 2 });
-        let link_x16 = Some(codec::gpu::PcieLink { gts: 16.0, width: 16 });
-        let weights = [weight_from_properties(6144, link_x2), weight_from_properties(8192, link_x16)];
+        let link_x16 = Some(codec::gpu::PcieLink {
+            gts: 16.0,
+            width: 16,
+        });
+        let weights = [
+            weight_from_properties(6144, link_x2),
+            weight_from_properties(8192, link_x16),
+        ];
         let out = simulate(&devices, priors(&weights), &[1.0], true);
         assert_eq!(out.taken, vec![(0, 1)]);
         assert!((out.makespan - 1.0 / 3.0).abs() < 1e-9);
         // Measured earlier in the process, the same without any properties.
         let measured = normalise_priors(vec![1.0, 1.0], vec![Some(10.0), Some(30.0)]);
-        assert_eq!(simulate(&devices, measured, &[1.0], true).taken, vec![(0, 1)]);
+        assert_eq!(
+            simulate(&devices, measured, &[1.0], true).taken,
+            vec![(0, 1)]
+        );
     }
 
     /// A prior that is wrong — it rates the slow card as the fast one — is
@@ -481,7 +551,11 @@ mod tests {
         let units = vec![1.0; 24];
         let best = optimal_identical(&[1.0, 3.0], 24, 1.0);
         let out = simulate(&devices, priors(&[1.0, 0.5]), &units, true);
-        assert!(out.makespan <= best + 1.0, "makespan {} vs optimum {best}", out.makespan);
+        assert!(
+            out.makespan <= best + 1.0,
+            "makespan {} vs optimum {best}",
+            out.makespan
+        );
         assert!(out.makespan < 8.0);
     }
 
@@ -494,7 +568,9 @@ mod tests {
     fn mixed_devices_finish_near_the_lower_bound() {
         let speeds = [2.0, 1.0, 0.5, 0.2];
         let devices: Vec<Sim> = speeds.iter().map(|&speed| Sim { speed }).collect();
-        let units: Vec<f64> = (0..60).map(|i| if i % 3 == 0 { 2.25 } else { 1.0 }).collect();
+        let units: Vec<f64> = (0..60)
+            .map(|i| if i % 3 == 0 { 2.25 } else { 1.0 })
+            .collect();
         let total: f64 = units.iter().sum();
         let lower_bound = total / speeds.iter().sum::<f64>();
         let out = simulate(&devices, priors(&[1.0; 4]), &units, true);
@@ -506,7 +582,12 @@ mod tests {
             out.per_device
         );
         let ungated = simulate(&devices, priors(&[1.0; 4]), &units, false);
-        assert!(out.makespan <= ungated.makespan + 1e-9, "gated {} ungated {}", out.makespan, ungated.makespan);
+        assert!(
+            out.makespan <= ungated.makespan + 1e-9,
+            "gated {} ungated {}",
+            out.makespan,
+            ungated.makespan
+        );
     }
 
     /// Whatever the speeds and priors, nothing stalls, every unit is handed
@@ -531,7 +612,11 @@ mod tests {
             let devices: Vec<Sim> = speeds.iter().map(|&speed| Sim { speed }).collect();
             let out = simulate(&devices, priors(&weights), &units, true);
             let order: Vec<usize> = out.taken.iter().map(|&(u, _)| u).collect();
-            assert_eq!(order, (0..count).collect::<Vec<_>>(), "units must be handed out once each, in order");
+            assert_eq!(
+                order,
+                (0..count).collect::<Vec<_>>(),
+                "units must be handed out once each, in order"
+            );
             let fastest = speeds.iter().copied().fold(0.0, f64::max);
             let alone: f64 = units.iter().sum::<f64>() / fastest;
             let biggest = units.iter().copied().fold(0.0, f64::max);
@@ -550,7 +635,10 @@ mod tests {
     /// no alternative: a device alone takes everything.
     #[test]
     fn only_eligible_live_devices_count_as_alternatives() {
-        let mut board = SpeedBoard::new(normalise_priors(vec![1.0, 1.0], vec![Some(1.0), Some(10.0)]));
+        let mut board = SpeedBoard::new(normalise_priors(
+            vec![1.0, 1.0],
+            vec![Some(1.0), Some(10.0)],
+        ));
         // The fast one would do the last unit sooner: the slow one waits.
         assert!(!board.should_take(0, 1.0, 1.0, 0.0, |_| true));
         // Not if the fast one cannot take this unit,
@@ -579,16 +667,23 @@ mod tests {
     /// using even for the last unit.
     #[test]
     fn a_busy_fast_device_is_waited_for_only_when_that_is_quicker() {
-        let mut board = SpeedBoard::new(normalise_priors(vec![1.0, 1.0], vec![Some(1.0), Some(3.0)]));
+        let mut board =
+            SpeedBoard::new(normalise_priors(vec![1.0, 1.0], vec![Some(1.0), Some(3.0)]));
         board.start(1, 30.0, 0.0); // ten seconds of work in hand
-        assert!(board.should_take(0, 1.0, 1.0, 0.0, |_| true), "the fast card is busy for 10 s; 1 s here is better");
+        assert!(
+            board.should_take(0, 1.0, 1.0, 0.0, |_| true),
+            "the fast card is busy for 10 s; 1 s here is better"
+        );
         // Nearly done: waiting for it is quicker.
         assert!(!board.should_take(0, 1.0, 1.0, 9.9, |_| true));
     }
 
     #[test]
     fn weights_come_from_memory_and_link() {
-        let x16 = Some(codec::gpu::PcieLink { gts: 16.0, width: 16 });
+        let x16 = Some(codec::gpu::PcieLink {
+            gts: 16.0,
+            width: 16,
+        });
         let x2 = Some(codec::gpu::PcieLink { gts: 8.0, width: 2 });
         let x4 = Some(codec::gpu::PcieLink { gts: 8.0, width: 4 });
         let a750 = weight_from_properties(8192, x16);
@@ -596,7 +691,11 @@ mod tests {
         assert!((a750 - 1.0).abs() < 1e-9);
         assert!(a380 < 0.5 && a380 > 0.4, "{a380}");
         assert!(weight_from_properties(8192, x4) < a750);
-        assert_eq!(weight_from_properties(8192, None), a750, "an unknown link is no penalty");
+        assert_eq!(
+            weight_from_properties(8192, None),
+            a750,
+            "an unknown link is no penalty"
+        );
         // Floored relative to the best.
         let p = normalise_priors(vec![1.0, 0.01], vec![None, None]);
         assert_eq!(p[1].weight, MIN_PRIOR_RATIO);

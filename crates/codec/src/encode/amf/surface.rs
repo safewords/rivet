@@ -284,7 +284,8 @@ unsafe fn copy_yuv420p10le_to_p010_surface(
             let src_row = src_ptr.add(row * w * 2);
             let dst_row = y_dst.add(row * y_pitch_bytes) as *mut u16;
             for col in 0..w {
-                let sample = u16::from_le_bytes([*src_row.add(col * 2), *src_row.add(col * 2 + 1)]) & 0x03FF;
+                let sample =
+                    u16::from_le_bytes([*src_row.add(col * 2), *src_row.add(col * 2 + 1)]) & 0x03FF;
                 dst_row.add(col).write_unaligned(sample << 6);
             }
         }

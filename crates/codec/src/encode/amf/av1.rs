@@ -11,13 +11,13 @@
 use anyhow::Result;
 use std::ffi::c_void;
 
-use crate::encode::tuning::{self, AmfQualityPreset, AmfRateControl};
-use crate::encode::{AUTO_FROM_TARGET, EncoderConfig};
 use super::{
     AMF_COLOR_BIT_DEPTH_8, AMF_COLOR_BIT_DEPTH_10, CodecPlan, amf_color_bit_depth_for,
     amf_color_profile_for, frame_rate_rational, qvbr_bitrate_ceiling, set_bool_property,
     set_int_property, set_rate_property, transfer_to_h273,
 };
+use crate::encode::tuning::{self, AmfQualityPreset, AmfRateControl};
+use crate::encode::{AUTO_FROM_TARGET, EncoderConfig};
 
 // ─── Component id ─────────────────────────────────────────────────
 
@@ -180,7 +180,11 @@ pub(super) unsafe fn apply_av1_properties(
                 (None, AmfRateControl::QualityVbr) => AV1_RC_QUALITY_VBR,
             },
         )?;
-        set_int_property(encoder, AV1_QUALITY_PRESET, av1_quality_preset(tp.quality_preset))?;
+        set_int_property(
+            encoder,
+            AV1_QUALITY_PRESET,
+            av1_quality_preset(tp.quality_preset),
+        )?;
         set_int_property(encoder, AV1_Q_INDEX_INTRA, i64::from(q_intra))?;
         set_int_property(encoder, AV1_Q_INDEX_INTER, i64::from(q_inter))?;
         let (fps_num, fps_den) = frame_rate_rational(config.frame_rate);
@@ -190,7 +194,11 @@ pub(super) unsafe fn apply_av1_properties(
             set_int_property(encoder, AV1_TARGET_BITRATE, p.bps)?;
             set_int_property(encoder, AV1_PEAK_BITRATE, p.bps)?;
             set_int_property(encoder, AV1_VBV_BUFFER_SIZE, p.vbv_bits)?;
-            set_int_property(encoder, AV1_INITIAL_VBV_BUFFER_FULLNESS, p.initial_fullness_64ths)?;
+            set_int_property(
+                encoder,
+                AV1_INITIAL_VBV_BUFFER_FULLNESS,
+                p.initial_fullness_64ths,
+            )?;
             set_bool_property(encoder, AV1_ENFORCE_HRD, true)?;
             // Pad a quiet stretch up to the rate: CBR holds it.
             set_bool_property(encoder, AV1_FILLER_DATA, true)?;
@@ -199,7 +207,8 @@ pub(super) unsafe fn apply_av1_properties(
             // QVBR keeps quality *under* the bitrate constraints, so leaving
             // them at the USAGE default would cap every rung at whatever the
             // driver assumed. Give it a generous, resolution-scaled ceiling.
-            let ceiling = qvbr_bitrate_ceiling(config.width, config.height, config.frame_rate, None);
+            let ceiling =
+                qvbr_bitrate_ceiling(config.width, config.height, config.frame_rate, None);
             set_int_property(encoder, AV1_TARGET_BITRATE, ceiling)?;
             set_int_property(encoder, AV1_PEAK_BITRATE, ceiling)?;
             set_int_property(encoder, AV1_VBV_BUFFER_SIZE, ceiling)?;

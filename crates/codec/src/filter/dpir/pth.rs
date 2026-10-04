@@ -53,8 +53,12 @@ pub(super) fn read_legacy_pth_file(path: &Path) -> Result<Vec<PthTensor>> {
 /// Decode one pickle from the cursor (up to and including its STOP opcode).
 fn read_pickle(cur: &mut Cursor<&[u8]>, what: &str) -> Result<Object> {
     let mut stack = Stack::empty();
-    stack.read_loop(cur).with_context(|| format!("decoding the {what} pickle"))?;
-    stack.finalize().with_context(|| format!("decoding the {what} pickle"))
+    stack
+        .read_loop(cur)
+        .with_context(|| format!("decoding the {what} pickle"))?;
+    stack
+        .finalize()
+        .with_context(|| format!("decoding the {what} pickle"))
 }
 
 /// The pickle VM's accessors return the offending object on mismatch; name it.
@@ -78,14 +82,25 @@ fn tensor_ref(name: String, value: Object) -> Result<TensorRef> {
     let (callable, args) = expect(value.reduce(), "a rebuilt tensor")?;
     let (module, class) = expect(callable.class(), "a rebuild function")?;
     if module != "torch._utils" || class != "_rebuild_tensor_v2" {
-        bail!("tensor '{name}' is built by {module}.{class}; only torch._utils._rebuild_tensor_v2 is supported");
+        bail!(
+            "tensor '{name}' is built by {module}.{class}; only torch._utils._rebuild_tensor_v2 is supported"
+        );
     }
     let mut args = expect(args.tuple(), "rebuild arguments")?.into_iter();
-    let mut next = |what: &str| args.next().ok_or_else(|| anyhow!("tensor '{name}': missing {what}"));
-    let storage = expect(next("storage")?.persistent_load(), "a persistent storage id")?;
+    let mut next = |what: &str| {
+        args.next()
+            .ok_or_else(|| anyhow!("tensor '{name}': missing {what}"))
+    };
+    let storage = expect(
+        next("storage")?.persistent_load(),
+        "a persistent storage id",
+    )?;
     let pid = expect(storage.tuple(), "a storage id tuple")?;
     if pid.len() < 5 {
-        bail!("tensor '{name}': storage id has {} fields, expected 5 or 6", pid.len());
+        bail!(
+            "tensor '{name}': storage id has {} fields, expected 5 or 6",
+            pid.len()
+        );
     }
     let mut pid = pid.into_iter();
     let tag = expect(pid.next().unwrap().unicode(), "the 'storage' tag")?;
@@ -94,7 +109,9 @@ fn tensor_ref(name: String, value: Object) -> Result<TensorRef> {
     }
     let (_, storage_class) = expect(pid.next().unwrap().class(), "a storage class")?;
     if storage_class != "FloatStorage" {
-        bail!("tensor '{name}' is stored as torch.{storage_class}; only FloatStorage (f32) is supported");
+        bail!(
+            "tensor '{name}' is stored as torch.{storage_class}; only FloatStorage (f32) is supported"
+        );
     }
     let storage_key = expect(pid.next().unwrap().unicode(), "a storage key")?;
     let offset = expect(next("offset")?.int_or_long(), "the storage offset")?;
@@ -106,7 +123,13 @@ fn tensor_ref(name: String, value: Object) -> Result<TensorRef> {
     };
     let shape = dims(next("size")?, "the size tuple")?;
     let stride = dims(next("stride")?, "the stride tuple")?;
-    Ok(TensorRef { name, storage_key, offset: offset as usize, shape, stride })
+    Ok(TensorRef {
+        name,
+        storage_key,
+        offset: offset as usize,
+        shape,
+        stride,
+    })
 }
 
 /// Parse the whole legacy container. Errors name what was found, so a zip-format
@@ -115,10 +138,13 @@ pub(super) fn read_legacy_pth(bytes: &[u8]) -> Result<Vec<PthTensor>> {
     let mut cur = Cursor::new(bytes);
     // First pickle, matched by hand: PROTO 2, LONG1 of 10 bytes, STOP.
     let mut head = [0u8; 15];
-    cur.read_exact(&mut head).context("reading the magic number")?;
+    cur.read_exact(&mut head)
+        .context("reading the magic number")?;
     if head[..4] != [0x80, 2, 0x8a, 10] || head[4..14] != MAGIC || head[14] != b'.' {
         if bytes.starts_with(b"PK") {
-            bail!("this is a zip-format torch checkpoint, not the legacy layout this reader handles");
+            bail!(
+                "this is a zip-format torch checkpoint, not the legacy layout this reader handles"
+            );
         }
         bail!("not a torch.save file (bad magic number)");
     }
@@ -153,7 +179,8 @@ pub(super) fn read_legacy_pth(bytes: &[u8]) -> Result<Vec<PthTensor>> {
     for key in keys {
         let key = expect(key.unicode(), "a storage key")?;
         let mut n = [0u8; 8];
-        cur.read_exact(&mut n).with_context(|| format!("reading the length of storage {key}"))?;
+        cur.read_exact(&mut n)
+            .with_context(|| format!("reading the length of storage {key}"))?;
         let numel = i64::from_le_bytes(n);
         if numel < 0 {
             bail!("storage {key} has negative length {numel}");
@@ -161,7 +188,11 @@ pub(super) fn read_legacy_pth(bytes: &[u8]) -> Result<Vec<PthTensor>> {
         let start = cur.position() as usize;
         let end = start + numel as usize * 4;
         if end > bytes.len() {
-            bail!("truncated: storage {key} needs {} bytes, {} remain (incomplete download?)", end - start, bytes.len() - start);
+            bail!(
+                "truncated: storage {key} needs {} bytes, {} remain (incomplete download?)",
+                end - start,
+                bytes.len() - start
+            );
         }
         let data = bytes[start..end]
             .chunks_exact(4)
@@ -171,13 +202,20 @@ pub(super) fn read_legacy_pth(bytes: &[u8]) -> Result<Vec<PthTensor>> {
         storages.insert(key, data);
     }
     if (cur.position() as usize) != bytes.len() {
-        bail!("{} trailing bytes after the last storage", bytes.len() - cur.position() as usize);
+        bail!(
+            "{} trailing bytes after the last storage",
+            bytes.len() - cur.position() as usize
+        );
     }
     let mut out = Vec::with_capacity(refs.len());
     for r in refs {
-        let storage = storages
-            .get(&r.storage_key)
-            .ok_or_else(|| anyhow!("tensor '{}' refers to missing storage {}", r.name, r.storage_key))?;
+        let storage = storages.get(&r.storage_key).ok_or_else(|| {
+            anyhow!(
+                "tensor '{}' refers to missing storage {}",
+                r.name,
+                r.storage_key
+            )
+        })?;
         let numel: usize = r.shape.iter().product();
         // Only contiguous (row-major) views: the stride of each dim must be the
         // product of the dims after it. A transposed or sliced view would need
@@ -185,15 +223,31 @@ pub(super) fn read_legacy_pth(bytes: &[u8]) -> Result<Vec<PthTensor>> {
         let mut expected = 1usize;
         for (&d, &s) in r.shape.iter().zip(&r.stride).rev() {
             if d != 1 && s != expected {
-                bail!("tensor '{}' is not contiguous (shape {:?}, stride {:?})", r.name, r.shape, r.stride);
+                bail!(
+                    "tensor '{}' is not contiguous (shape {:?}, stride {:?})",
+                    r.name,
+                    r.shape,
+                    r.stride
+                );
             }
             expected *= d;
         }
         let end = r.offset + numel;
         if end > storage.len() {
-            bail!("tensor '{}' needs {}..{} of storage {} which has {} elements", r.name, r.offset, end, r.storage_key, storage.len());
+            bail!(
+                "tensor '{}' needs {}..{} of storage {} which has {} elements",
+                r.name,
+                r.offset,
+                end,
+                r.storage_key,
+                storage.len()
+            );
         }
-        out.push(PthTensor { name: r.name, shape: r.shape, data: storage[r.offset..end].to_vec() });
+        out.push(PthTensor {
+            name: r.name,
+            shape: r.shape,
+            data: storage[r.offset..end].to_vec(),
+        });
     }
     Ok(out)
 }

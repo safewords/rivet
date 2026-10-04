@@ -10,17 +10,16 @@ use frame::{ColorSpace, PixelFormat, StreamInfo};
 use crate::demux::AudioTrack;
 use crate::streaming::{DemuxHeader, Sample, StreamingDemuxer};
 
-use super::{
-    ProgramInfo, PatProgram,
-    STREAM_TYPE_H264, STREAM_TYPE_HEVC, STREAM_TYPE_MPEG1_VIDEO, STREAM_TYPE_MPEG2_VIDEO,
-    TS_PACKET, TS_SYNC,
-};
 use super::audio::{TsAudio, read_program_audio};
 use super::clock::{PTS_HZ, ProgramClock, PtsUnwrapper};
 use super::framerate::estimate_frame_rate_from_ptses;
 use super::pat_pmt::{parse_pat_all_programs, parse_pmt_streams};
 use super::pes::{VideoStreamScan, parse_pes_header, scan_first_video_au};
 use super::pictures::{FieldSyntax, VideoSegment, count_frames};
+use super::{
+    PatProgram, ProgramInfo, STREAM_TYPE_H264, STREAM_TYPE_HEVC, STREAM_TYPE_MPEG1_VIDEO,
+    STREAM_TYPE_MPEG2_VIDEO, TS_PACKET, TS_SYNC,
+};
 use super::{discontinuity, retime};
 use crate::edit::{AudioEdit, AudioGap, VideoPresentation};
 
@@ -144,8 +143,7 @@ pub(super) fn scan_programs(
         })
         .collect();
     // Track which programs still need their PMT parsed.
-    let mut need: std::collections::HashSet<u16> =
-        pat_programs.iter().map(|p| p.pmt_pid).collect();
+    let mut need: std::collections::HashSet<u16> = pat_programs.iter().map(|p| p.pmt_pid).collect();
     for i in 0..packets {
         if need.is_empty() {
             break;
@@ -229,18 +227,15 @@ pub(crate) fn demux_ts_streaming_init(data: bytes::Bytes) -> Result<TsStreamingD
         &codec,
     );
     let (width, height) = match scan.parameter_au() {
-        Some(au) => {
-            frame::pixel_format::detect_dims(&codec, std::slice::from_ref(au)).unwrap_or_else(
-                || {
-                    tracing::warn!(
-                        codec = codec.as_str(),
-                        video_pid = video.pid,
-                        "TS streaming demux: first AU SPS parse failed; width/height=0×0"
-                    );
-                    (0, 0)
-                },
-            )
-        }
+        Some(au) => frame::pixel_format::detect_dims(&codec, std::slice::from_ref(au))
+            .unwrap_or_else(|| {
+                tracing::warn!(
+                    codec = codec.as_str(),
+                    video_pid = video.pid,
+                    "TS streaming demux: first AU SPS parse failed; width/height=0×0"
+                );
+                (0, 0)
+            }),
         None => {
             tracing::warn!(
                 codec = codec.as_str(),
@@ -275,7 +270,15 @@ pub(crate) fn demux_ts_streaming_init(data: bytes::Bytes) -> Result<TsStreamingD
     // Nor a sample aspect ratio: the stream's is the only one.
     let sample_aspect = crate::demux::aspect::resolve(
         None,
-        || crate::demux::aspect::from_bitstream(&codec, &[], scan.colour_au(), info.width, info.height),
+        || {
+            crate::demux::aspect::from_bitstream(
+                &codec,
+                &[],
+                scan.colour_au(),
+                info.width,
+                info.height,
+            )
+        },
         "ts",
     );
     // No colour description at the TS layer: the first SPS's VUI and the SEIs
@@ -300,8 +303,13 @@ pub(crate) fn demux_ts_streaming_init(data: bytes::Bytes) -> Result<TsStreamingD
 
     // Audio passthrough still happens up-front (Squad-18 contract), routed
     // by codec kind; a stream rivet cannot read comes back named.
-    let (audio_track, named_audio) =
-        read_program_audio(&owned, packets, packet_stride, prefix_len, &active.audio_streams);
+    let (audio_track, named_audio) = read_program_audio(
+        &owned,
+        packets,
+        packet_stride,
+        prefix_len,
+        &active.audio_streams,
+    );
     let layout = (packets, packet_stride, prefix_len);
     let breaks = discontinuity::time_base_breaks(
         &owned,
@@ -434,15 +442,13 @@ impl TsStreamingDemuxer {
         );
         let (w, h) = match scan.parameter_au() {
             Some(au) => {
-                frame::pixel_format::detect_dims(&codec, std::slice::from_ref(au))
-                    .unwrap_or((0, 0))
+                frame::pixel_format::detect_dims(&codec, std::slice::from_ref(au)).unwrap_or((0, 0))
             }
             None => (0, 0),
         };
         self.header.info.width = w;
         self.header.info.height = h;
-        self.header.info.frame_rate =
-            estimate_frame_rate_from_ptses(&scan.ptses).unwrap_or(30.0);
+        self.header.info.frame_rate = estimate_frame_rate_from_ptses(&scan.ptses).unwrap_or(30.0);
         // Colour and pixel format are the new program's stream's, not the old
         // program's: start from the defaults and read its first access unit.
         self.header.info.color_metadata = Default::default();

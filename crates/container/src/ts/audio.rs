@@ -801,11 +801,19 @@ pub(super) fn extract_ts_audio(
         AudioCodecKind::MpegAudio => {
             extract_ts_mpeg_audio(data, packets, packet_stride, prefix_len, info.pid)
         }
-        AudioCodecKind::Opus { channel_config_code } => {
-            extract_ts_opus_audio(data, packets, packet_stride, prefix_len, info.pid, channel_config_code)
-        }
+        AudioCodecKind::Opus {
+            channel_config_code,
+        } => extract_ts_opus_audio(
+            data,
+            packets,
+            packet_stride,
+            prefix_len,
+            info.pid,
+            channel_config_code,
+        ),
         AudioCodecKind::Dts => {
-            let (es, pes) = reassemble_audio_pes(data, packets, packet_stride, prefix_len, info.pid);
+            let (es, pes) =
+                reassemble_audio_pes(data, packets, packet_stride, prefix_len, info.pid);
             let Some((track, starts)) = dts_from_es(&es)? else {
                 return Ok(None);
             };
@@ -817,7 +825,8 @@ pub(super) fn extract_ts_audio(
             }))
         }
         AudioCodecKind::BdLpcm => {
-            let (es, pes) = reassemble_audio_pes(data, packets, packet_stride, prefix_len, info.pid);
+            let (es, pes) =
+                reassemble_audio_pes(data, packets, packet_stride, prefix_len, info.pid);
             let starts: Vec<usize> = pes.iter().map(|&(at, _, _)| at).collect();
             let Some((track, starts)) = super::bd_lpcm::bd_lpcm_from_pes(&es, &starts)? else {
                 return Ok(None);
@@ -844,7 +853,11 @@ pub(super) fn read_program_audio(
     prefix_len: usize,
     streams: &[AudioStreamInfo],
 ) -> (Option<TsAudio>, Option<AudioTrack>) {
-    let Some(&info) = streams.iter().find(|s| s.kind.is_read()).or(streams.first()) else {
+    let Some(&info) = streams
+        .iter()
+        .find(|s| s.kind.is_read())
+        .or(streams.first())
+    else {
         return (None, None);
     };
     let named = |name: String| AudioTrack {
@@ -858,14 +871,22 @@ pub(super) fn read_program_audio(
         durations: Vec::new(),
     };
     if let AudioCodecKind::Unsupported(name) = info.kind {
-        tracing::warn!(audio_pid = info.pid, stream_type = info.stream_type, codec = name, "TS audio stream has no reader in rivet; surfaced by name with no packets");
+        tracing::warn!(
+            audio_pid = info.pid,
+            stream_type = info.stream_type,
+            codec = name,
+            "TS audio stream has no reader in rivet; surfaced by name with no packets"
+        );
         return (None, Some(named(name.to_string())));
     }
     match extract_ts_audio(data, packets, packet_stride, prefix_len, info) {
         Ok(audio) => (audio, None),
         Err(e) => {
             tracing::warn!(audio_pid = info.pid, audio_kind = ?info.kind, error = %e, "TS audio extraction failed; the track is surfaced by name with no packets");
-            (None, Some(named(format!("unreadable_{}", info.kind.name()))))
+            (
+                None,
+                Some(named(format!("unreadable_{}", info.kind.name()))),
+            )
         }
     }
 }
@@ -882,22 +903,23 @@ pub(super) fn read_program_audio(
 /// uncoupled stream each. Anything else (the explicit form included) is
 /// refused by name.
 pub(crate) fn opus_head_for_ts(channel_config_code: u8, pre_skip: u16) -> Result<Vec<u8>> {
-    let (channels, family, streams, coupled, mapping): (u8, u8, u8, u8, Vec<u8>) = match channel_config_code {
-        0x00 => (2, 255, 2, 0, vec![0, 1]),
-        0x01 => (1, 0, 1, 0, vec![]),
-        0x02 => (2, 0, 1, 1, vec![]),
-        0x03 => (3, 1, 2, 1, vec![0, 2, 1]),
-        0x04 => (4, 1, 2, 2, vec![0, 1, 2, 3]),
-        0x05 => (5, 1, 3, 2, vec![0, 4, 1, 2, 3]),
-        0x06 => (6, 1, 4, 2, vec![0, 4, 1, 2, 3, 5]),
-        0x07 => (7, 1, 4, 3, vec![0, 4, 1, 2, 3, 5, 6]),
-        0x08 => (8, 1, 5, 3, vec![0, 6, 1, 2, 3, 4, 5, 7]),
-        c @ 0x80..=0x86 => {
-            let n = c - 0x7E;
-            (n, 1, n, 0, (0..n).collect())
-        }
-        other => bail!("TS: Opus channel_config_code 0x{other:02X} is not one rivet reads"),
-    };
+    let (channels, family, streams, coupled, mapping): (u8, u8, u8, u8, Vec<u8>) =
+        match channel_config_code {
+            0x00 => (2, 255, 2, 0, vec![0, 1]),
+            0x01 => (1, 0, 1, 0, vec![]),
+            0x02 => (2, 0, 1, 1, vec![]),
+            0x03 => (3, 1, 2, 1, vec![0, 2, 1]),
+            0x04 => (4, 1, 2, 2, vec![0, 1, 2, 3]),
+            0x05 => (5, 1, 3, 2, vec![0, 4, 1, 2, 3]),
+            0x06 => (6, 1, 4, 2, vec![0, 4, 1, 2, 3, 5]),
+            0x07 => (7, 1, 4, 3, vec![0, 4, 1, 2, 3, 5, 6]),
+            0x08 => (8, 1, 5, 3, vec![0, 6, 1, 2, 3, 4, 5, 7]),
+            c @ 0x80..=0x86 => {
+                let n = c - 0x7E;
+                (n, 1, n, 0, (0..n).collect())
+            }
+            other => bail!("TS: Opus channel_config_code 0x{other:02X} is not one rivet reads"),
+        };
     let mut head = vec![1, channels];
     head.extend_from_slice(&pre_skip.to_le_bytes());
     head.extend_from_slice(&48_000u32.to_le_bytes());
@@ -926,7 +948,8 @@ fn parse_opus_control(au: &[u8]) -> Option<OpusControl> {
     if au.len() < 3 || au[0] != 0x7F || au[1] & 0xE0 != 0xE0 {
         return None;
     }
-    let (start_flag, end_flag, ext_flag) = (au[1] & 0x10 != 0, au[1] & 0x08 != 0, au[1] & 0x04 != 0);
+    let (start_flag, end_flag, ext_flag) =
+        (au[1] & 0x10 != 0, au[1] & 0x08 != 0, au[1] & 0x04 != 0);
     let mut at = 2;
     let mut payload_size = 0usize;
     loop {
@@ -950,7 +973,12 @@ fn parse_opus_control(au: &[u8]) -> Option<OpusControl> {
     if ext_flag {
         at += 1 + usize::from(*au.get(at)?);
     }
-    Some(OpusControl { header_len: at, payload_size, start_trim, end_trim })
+    Some(OpusControl {
+        header_len: at,
+        payload_size,
+        start_trim,
+        end_trim,
+    })
 }
 
 /// Extract Opus access units from PES packets on `audio_pid`: each AU's
@@ -988,7 +1016,10 @@ fn extract_ts_opus_audio(
                         pre_skip = Some(c.start_trim);
                     }
                     end_trim = c.end_trim;
-                    (&au[c.header_len..c.header_len + c.payload_size], at + c.header_len + c.payload_size)
+                    (
+                        &au[c.header_len..c.header_len + c.payload_size],
+                        at + c.header_len + c.payload_size,
+                    )
                 }
                 // No control header: the rest of the PES packet is one AU.
                 None => (au, end),
@@ -1006,7 +1037,10 @@ fn extract_ts_opus_audio(
         return Ok(None);
     }
     if end_trim > 0 {
-        tracing::info!(end_trim, "TS Opus: the last access unit's end trim is not applied");
+        tracing::info!(
+            end_trim,
+            "TS Opus: the last access unit's end trim is not applied"
+        );
     }
     let head = opus_head_for_ts(channel_config_code, pre_skip.unwrap_or(0))?;
     let channels = u16::from(head[1]);
@@ -1034,7 +1068,10 @@ fn extract_ts_opus_audio(
 /// Where the next DTS core sync word (`7F FE 80 01`, the 16-bit big-endian
 /// form) is, at or after `from`.
 fn find_dts_sync(es: &[u8], from: usize) -> Option<usize> {
-    es.get(from..)?.windows(4).position(|w| w == [0x7F, 0xFE, 0x80, 0x01]).map(|i| from + i)
+    es.get(from..)?
+        .windows(4)
+        .position(|w| w == [0x7F, 0xFE, 0x80, 0x01])
+        .map(|i| from + i)
 }
 
 /// A DTS track from an elementary stream: one sample per core frame, with
@@ -1047,7 +1084,8 @@ pub(crate) fn dts_from_es(es: &[u8]) -> Result<Option<(AudioTrack, Vec<usize>)>>
     let Some(mut cursor) = find_dts_sync(es, 0) else {
         return Ok(None);
     };
-    let first = crate::dts_sync::parse_core_sync(&es[cursor..]).map_err(|e| anyhow::anyhow!("DTS: first core frame: {e}"))?;
+    let first = crate::dts_sync::parse_core_sync(&es[cursor..])
+        .map_err(|e| anyhow::anyhow!("DTS: first core frame: {e}"))?;
     let hd = crate::dts_sync::has_hd_extension(&es[cursor..], &first);
     let mut samples = Vec::new();
     let mut durations = Vec::new();
@@ -1135,7 +1173,10 @@ pub(crate) fn mpeg_audio_from_es(es: &[u8]) -> Option<(AudioTrack, Vec<usize>)> 
         .into_iter()
         .take_while(|(_, h)| h.layer == first.layer && h.sample_rate == first.sample_rate)
         .collect();
-    let samples = frames.iter().map(|&(at, h)| es[at..at + h.frame_len()].to_vec()).collect();
+    let samples = frames
+        .iter()
+        .map(|&(at, h)| es[at..at + h.frame_len()].to_vec())
+        .collect();
     let durations: Vec<u32> = frames.iter().map(|(_, h)| h.samples()).collect();
     let starts: Vec<usize> = frames.iter().map(|&(at, _)| at).collect();
     Some((

@@ -127,7 +127,10 @@ impl LadderPolicy {
         if self.top_bonus != 0 {
             policy = policy.with_rule(
                 RungSelector::Top,
-                EncodeOverrides { quality_delta: -self.top_bonus, ..Default::default() },
+                EncodeOverrides {
+                    quality_delta: -self.top_bonus,
+                    ..Default::default()
+                },
             );
         }
 
@@ -135,7 +138,10 @@ impl LadderPolicy {
             policy = policy.with_rule(
                 // `- 1`: "below 4K" means a 2160 rung keeps its tiles.
                 RungSelector::ShortSideAtMost(self.single_tile_below_short_side.saturating_sub(1)),
-                EncodeOverrides { tiles: Some(TileGrid::SINGLE), ..Default::default() },
+                EncodeOverrides {
+                    tiles: Some(TileGrid::SINGLE),
+                    ..Default::default()
+                },
             );
         }
 
@@ -205,7 +211,11 @@ fn parse_selector(text: &str) -> Option<RungSelector> {
         return value.trim().parse().ok().map(RungSelector::ShortSideAtMost);
     }
     if let Some(value) = text.strip_prefix("short>=") {
-        return value.trim().parse().ok().map(RungSelector::ShortSideAtLeast);
+        return value
+            .trim()
+            .parse()
+            .ok()
+            .map(RungSelector::ShortSideAtLeast);
     }
     match text {
         "any" | "*" => Some(RungSelector::Any),
@@ -218,9 +228,14 @@ fn parse_selector(text: &str) -> Option<RungSelector> {
 fn parse_overrides(assignments: &str, fragment: &str) -> Result<EncodeOverrides, String> {
     let mut overrides = EncodeOverrides::default();
 
-    for pair in assignments.split(',').map(str::trim).filter(|p| !p.is_empty()) {
-        let (key, value) =
-            pair.split_once('=').ok_or_else(|| format!("`{fragment}`: `{pair}` is not `key=value`"))?;
+    for pair in assignments
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        let (key, value) = pair
+            .split_once('=')
+            .ok_or_else(|| format!("`{fragment}`: `{pair}` is not `key=value`"))?;
         let (key, value) = (key.trim(), value.trim());
         let bad = || format!("`{fragment}`: `{value}` is not a valid `{key}`");
 
@@ -238,8 +253,14 @@ fn parse_overrides(assignments: &str, fragment: &str) -> Result<EncodeOverrides,
             "aq" => overrides.aq_strength_tenths = Some(parse_aq_tenths(value).ok_or_else(bad)?),
             "wp" => overrides.weighted_pred = Some(parse_bool(value).ok_or_else(bad)?),
             "cu_depth" => overrides.cu_depth = Some(parse_cu_depth(value).ok_or_else(bad)?),
-            "bitrate" => overrides.bitrate = Some(parse_bitrate(value).map_err(|e| format!("`{fragment}`: {e}"))?),
-            "buffer" => overrides.buffer_ms = Some(parse_buffer_ms(value).map_err(|e| format!("`{fragment}`: {e}"))?),
+            "bitrate" => {
+                overrides.bitrate =
+                    Some(parse_bitrate(value).map_err(|e| format!("`{fragment}`: {e}"))?)
+            }
+            "buffer" => {
+                overrides.buffer_ms =
+                    Some(parse_buffer_ms(value).map_err(|e| format!("`{fragment}`: {e}"))?)
+            }
             "rate" => overrides.rate_mode = Some(parse_rate_mode(value).ok_or_else(bad)?),
             _ => return Err(format!("`{fragment}`: `{key}` is not a knob")),
         }
@@ -258,7 +279,11 @@ fn parse_aq_tenths(value: &str) -> Option<u8> {
         return None;
     }
     let whole: u8 = whole.parse().ok()?;
-    let frac: u8 = if frac.is_empty() { 0 } else { frac.parse().ok()? };
+    let frac: u8 = if frac.is_empty() {
+        0
+    } else {
+        frac.parse().ok()?
+    };
     let tenths = whole.checked_mul(10)?.checked_add(frac)?;
     (tenths <= 40).then_some(tenths)
 }
@@ -283,10 +308,9 @@ pub fn parse_bitrate(value: &str) -> Result<u32, String> {
         Some('m') | Some('M') => (&t[..t.len() - 1], 1_000_000f64),
         _ => (t, 1f64),
     };
-    let v: f64 = num
-        .trim()
-        .parse()
-        .map_err(|_| format!("bitrate must be a number with an optional k/M suffix (got '{value}')"))?;
+    let v: f64 = num.trim().parse().map_err(|_| {
+        format!("bitrate must be a number with an optional k/M suffix (got '{value}')")
+    })?;
     if !v.is_finite() || v <= 0.0 {
         return Err(format!("bitrate must be positive (got '{value}')"));
     }
@@ -306,7 +330,8 @@ pub fn parse_buffer_ms(value: &str) -> Result<u32, String> {
     if t == "0" {
         return Ok(0);
     }
-    let bad = || format!("buffer must be a duration such as 500ms or 1s, or 0 for none (got '{value}')");
+    let bad =
+        || format!("buffer must be a duration such as 500ms or 1s, or 0 for none (got '{value}')");
     let (num, scale) = if let Some(n) = t.strip_suffix("ms") {
         (n, 1f64)
     } else if let Some(n) = t.strip_suffix('s') {
@@ -324,7 +349,10 @@ pub fn parse_buffer_ms(value: &str) -> Result<u32, String> {
 
 fn parse_tiles(value: &str) -> Option<TileGrid> {
     let (columns, rows) = value.split_once(['x', 'X'])?;
-    Some(TileGrid { columns: columns.trim().parse().ok()?, rows: rows.trim().parse().ok()? })
+    Some(TileGrid {
+        columns: columns.trim().parse().ok()?,
+        rows: rows.trim().parse().ok()?,
+    })
 }
 
 /// The `speed` word: `draft`, `standard`, `archive`.
@@ -342,11 +370,16 @@ pub fn parse_tier(value: &str) -> Option<SpeedTier> {
 /// per-encoder tables turn into that backend's quantiser.
 pub fn parse_target(value: &str) -> Option<QualityTarget> {
     let value = value.trim().to_ascii_lowercase();
-    if let Some(score) = value.strip_prefix("vmaf=").or_else(|| value.strip_prefix("vmaf:")) {
+    if let Some(score) = value
+        .strip_prefix("vmaf=")
+        .or_else(|| value.strip_prefix("vmaf:"))
+    {
         return score.trim().parse().ok().map(QualityTarget::Vmaf);
     }
     match value.as_str() {
-        "visually_lossless" | "visually-lossless" | "lossless" => Some(QualityTarget::VisuallyLossless),
+        "visually_lossless" | "visually-lossless" | "lossless" => {
+            Some(QualityTarget::VisuallyLossless)
+        }
         "high" => Some(QualityTarget::High),
         "standard" => Some(QualityTarget::Standard),
         "low" => Some(QualityTarget::Low),
@@ -387,7 +420,12 @@ mod tests {
     use crate::encode::tuning::RungContext;
 
     fn rung(index: usize, short: u32, count: usize) -> RungContext {
-        RungContext { width: short * 2, height: short, index, rung_count: count }
+        RungContext {
+            width: short * 2,
+            height: short,
+            index,
+            rung_count: count,
+        }
     }
 
     #[test]
@@ -430,13 +468,24 @@ mod tests {
     #[test]
     fn tiles_collapse_below_4k_and_survive_at_it() {
         let policy = RungPolicy::recommended();
-        assert_eq!(policy.resolve(&rung(1, 1080, 5)).tiles, Some(TileGrid::SINGLE));
-        assert_eq!(policy.resolve(&rung(0, 2160, 5)).tiles, None, "4K should keep its tiles");
+        assert_eq!(
+            policy.resolve(&rung(1, 1080, 5)).tiles,
+            Some(TileGrid::SINGLE)
+        );
+        assert_eq!(
+            policy.resolve(&rung(0, 2160, 5)).tiles,
+            None,
+            "4K should keep its tiles"
+        );
     }
 
     #[test]
     fn a_top_bonus_is_a_sharper_top_rung() {
-        let policy = LadderPolicy { top_bonus: 2, ..Default::default() }.into_policy();
+        let policy = LadderPolicy {
+            top_bonus: 2,
+            ..Default::default()
+        }
+        .into_policy();
         assert_eq!(policy.resolve(&rung(0, 1080, 5)).quality_delta, -2);
         assert_eq!(policy.resolve(&rung(1, 720, 5)).quality_delta, 2);
     }
@@ -446,7 +495,10 @@ mod tests {
         let policy = RungPolicy::parse("any:refs=5").expect("valid spec");
         let overrides = policy.resolve(&rung(3, 360, 5));
         assert_eq!(overrides.reference_frames, Some(5));
-        assert_eq!(overrides.quality_delta, 0, "the default step leaked into an explicit spec");
+        assert_eq!(
+            overrides.quality_delta, 0,
+            "the default step leaked into an explicit spec"
+        );
     }
 
     #[test]
@@ -463,15 +515,28 @@ mod tests {
         let policy: RungPolicy = spec.parse().expect("documented spec should parse");
 
         let top = policy.resolve(&rung(0, 1080, 5));
-        assert_eq!(top.tiles, Some(TileGrid { columns: 2, rows: 2 }));
+        assert_eq!(
+            top.tiles,
+            Some(TileGrid {
+                columns: 2,
+                rows: 2
+            })
+        );
         assert_eq!(top.quality_target, Some(QualityTarget::Vmaf(95)));
-        assert_eq!(top.speed_tier, Some(SpeedTier::Standard), "the later rule should win");
+        assert_eq!(
+            top.speed_tier,
+            Some(SpeedTier::Standard),
+            "the later rule should win"
+        );
         assert_eq!(top.reference_frames, Some(4));
         assert_eq!(top.quality_delta, -2);
         assert_eq!(top.aq_strength_tenths, Some(15));
         assert_eq!(top.weighted_pred, Some(true));
         assert_eq!(top.cu_depth, Some(2), "the later rule should win");
-        assert_eq!(top.rate_mode, Some(crate::encode::tuning::RateMode::Constant));
+        assert_eq!(
+            top.rate_mode,
+            Some(crate::encode::tuning::RateMode::Constant)
+        );
 
         let third = policy.resolve(&rung(2, 480, 5));
         assert_eq!(third.keyframe_interval, Some(120));
@@ -501,20 +566,36 @@ mod tests {
             ("top:cu_depth=", "is not a valid `cu_depth`"),
         ] {
             let error = RungPolicy::parse(spec).expect_err("should have rejected {spec}");
-            assert!(error.contains(needle), "{spec:?} said {error:?}, wanted {needle:?}");
+            assert!(
+                error.contains(needle),
+                "{spec:?} said {error:?}, wanted {needle:?}"
+            );
         }
     }
 
     #[test]
     fn aq_strengths_parse_as_tenths_up_to_four() {
-        for (text, tenths) in [("0", 0), ("0.0", 0), ("0.5", 5), ("1", 10), ("1.", 10), ("2.5", 25), ("4.0", 40)] {
+        for (text, tenths) in [
+            ("0", 0),
+            ("0.0", 0),
+            ("0.5", 5),
+            ("1", 10),
+            ("1.", 10),
+            ("2.5", 25),
+            ("4.0", 40),
+        ] {
             assert_eq!(parse_aq_tenths(text), Some(tenths), "{text}");
         }
         for text in ["4.1", "5", "0.05", "1.x", "x", "", "256", "-0"] {
             assert_eq!(parse_aq_tenths(text), None, "{text}");
         }
-        let top = RungPolicy::parse("any:aq=0.5,wp=off").expect("valid").resolve(&rung(0, 1080, 1));
-        assert_eq!((top.aq_strength_tenths, top.weighted_pred), (Some(5), Some(false)));
+        let top = RungPolicy::parse("any:aq=0.5,wp=off")
+            .expect("valid")
+            .resolve(&rung(0, 1080, 1));
+        assert_eq!(
+            (top.aq_strength_tenths, top.weighted_pred),
+            (Some(5), Some(false))
+        );
     }
 
     #[test]
@@ -525,13 +606,21 @@ mod tests {
         for text in ["3", "255", "256", "-1", "1.0", "x", ""] {
             assert_eq!(parse_cu_depth(text), None, "{text}");
         }
-        let top = RungPolicy::parse("any:cu_depth=2;top:cu_depth=0").expect("valid").resolve(&rung(0, 1080, 2));
+        let top = RungPolicy::parse("any:cu_depth=2;top:cu_depth=0")
+            .expect("valid")
+            .resolve(&rung(0, 1080, 2));
         assert_eq!(top.cu_depth, Some(0), "the later rule should win");
     }
 
     #[test]
     fn bitrates_parse_the_ffmpeg_spellings() {
-        for (text, bps) in [("240k", 240_000), ("240K", 240_000), ("240000", 240_000), ("1.5M", 1_500_000), ("3m", 3_000_000)] {
+        for (text, bps) in [
+            ("240k", 240_000),
+            ("240K", 240_000),
+            ("240000", 240_000),
+            ("1.5M", 1_500_000),
+            ("3m", 3_000_000),
+        ] {
             assert_eq!(parse_bitrate(text), Ok(bps), "{text}");
         }
         for text in ["0", "0k", "-96k", "loud", "", "k", "5000M", "inf"] {
@@ -541,7 +630,14 @@ mod tests {
 
     #[test]
     fn buffers_parse_as_whole_milliseconds_with_a_unit() {
-        for (text, ms) in [("0", 0), ("0ms", 0), ("500ms", 500), ("1s", 1000), ("1.5s", 1500), (" 250MS ", 250)] {
+        for (text, ms) in [
+            ("0", 0),
+            ("0ms", 0),
+            ("500ms", 500),
+            ("1s", 1000),
+            ("1.5s", 1500),
+            (" 250MS ", 250),
+        ] {
             assert_eq!(parse_buffer_ms(text), Ok(ms), "{text}");
         }
         // No unit is refused rather than guessed: 1000 of what.
@@ -555,29 +651,62 @@ mod tests {
     /// every knob, and a bad value names the fragment it was in.
     #[test]
     fn bitrate_and_buffer_rules_resolve_per_rung() {
-        let policy = RungPolicy::parse("any:buffer=1s;top:bitrate=5M;step=1:bitrate=3M;short<=360:bitrate=800k,buffer=500ms")
-            .expect("valid");
+        let policy = RungPolicy::parse(
+            "any:buffer=1s;top:bitrate=5M;step=1:bitrate=3M;short<=360:bitrate=800k,buffer=500ms",
+        )
+        .expect("valid");
         let at = |index, short| policy.resolve(&rung(index, short, 3));
-        assert_eq!((at(0, 1080).bitrate, at(0, 1080).buffer_ms), (Some(5_000_000), Some(1000)));
-        assert_eq!((at(1, 720).bitrate, at(1, 720).buffer_ms), (Some(3_000_000), Some(1000)));
-        assert_eq!((at(2, 360).bitrate, at(2, 360).buffer_ms), (Some(800_000), Some(500)));
+        assert_eq!(
+            (at(0, 1080).bitrate, at(0, 1080).buffer_ms),
+            (Some(5_000_000), Some(1000))
+        );
+        assert_eq!(
+            (at(1, 720).bitrate, at(1, 720).buffer_ms),
+            (Some(3_000_000), Some(1000))
+        );
+        assert_eq!(
+            (at(2, 360).bitrate, at(2, 360).buffer_ms),
+            (Some(800_000), Some(500))
+        );
         let err = RungPolicy::parse("top:bitrate=fast").expect_err("not a rate");
-        assert!(err.contains("top:bitrate=fast") && err.contains("k/M"), "{err}");
+        assert!(
+            err.contains("top:bitrate=fast") && err.contains("k/M"),
+            "{err}"
+        );
         let err = RungPolicy::parse("any:buffer=1000").expect_err("no unit");
-        assert!(err.contains("any:buffer=1000") && err.contains("500ms"), "{err}");
+        assert!(
+            err.contains("any:buffer=1000") && err.contains("500ms"),
+            "{err}"
+        );
     }
 
     #[test]
     fn a_rate_mode_resolves_per_rung() {
         use crate::encode::tuning::RateMode;
-        let policy = RungPolicy::parse("any:rate=cbr;short<=360:rate=abr;top:bitrate=6M").expect("valid");
+        let policy =
+            RungPolicy::parse("any:rate=cbr;short<=360:rate=abr;top:bitrate=6M").expect("valid");
         let at = |index, short| policy.resolve(&rung(index, short, 3));
-        assert_eq!((at(0, 1080).rate_mode, at(0, 1080).bitrate), (Some(RateMode::Constant), Some(6_000_000)));
-        assert_eq!((at(1, 720).rate_mode, at(1, 720).bitrate), (Some(RateMode::Constant), None));
+        assert_eq!(
+            (at(0, 1080).rate_mode, at(0, 1080).bitrate),
+            (Some(RateMode::Constant), Some(6_000_000))
+        );
+        assert_eq!(
+            (at(1, 720).rate_mode, at(1, 720).bitrate),
+            (Some(RateMode::Constant), None)
+        );
         assert_eq!(at(2, 360).rate_mode, Some(RateMode::Average));
-        assert_eq!(RungPolicy::parse("any:rate=constant").unwrap().global.rate_mode, Some(RateMode::Constant));
+        assert_eq!(
+            RungPolicy::parse("any:rate=constant")
+                .unwrap()
+                .global
+                .rate_mode,
+            Some(RateMode::Constant)
+        );
         let err = RungPolicy::parse("top:rate=vbr").expect_err("not a mode");
-        assert!(err.contains("top:rate=vbr") && err.contains("is not a valid `rate`"), "{err}");
+        assert!(
+            err.contains("top:rate=vbr") && err.contains("is not a valid `rate`"),
+            "{err}"
+        );
     }
 
     #[test]

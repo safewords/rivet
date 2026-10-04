@@ -6,8 +6,9 @@ use serde_json::{Map, Value};
 use super::digest::DigestAlgorithm;
 use super::phash::{self, PerceptualAlgorithm};
 use super::{
-    ArtifactData, ArtifactEvent, ArtifactHook, ArtifactKind, DecodedFrameHook, EncoderFrameHook, FrameEvent,
-    FrameSampling, HookContext, HookOutcome, SourceEvent, SourceHook, StillEvent, StillHook,
+    ArtifactData, ArtifactEvent, ArtifactHook, ArtifactKind, DecodedFrameHook, EncoderFrameHook,
+    FrameEvent, FrameSampling, HookContext, HookOutcome, SourceEvent, SourceHook, StillEvent,
+    StillHook,
 };
 
 /// A [`SourceHook`] recording content digests of the source bytes, under each
@@ -18,13 +19,19 @@ pub struct SourceDigest {
 
 impl SourceDigest {
     pub fn new(algorithms: &[DigestAlgorithm]) -> Self {
-        Self { algorithms: algorithms.to_vec() }
+        Self {
+            algorithms: algorithms.to_vec(),
+        }
     }
 }
 
 impl SourceHook for SourceDigest {
     fn on_source(&self, _ctx: &HookContext, source: &SourceEvent) -> Result<HookOutcome> {
-        Ok(digests(&self.algorithms, &source.bytes, HookOutcome::proceed().annotate("bytes", source.bytes.len())))
+        Ok(digests(
+            &self.algorithms,
+            &source.bytes,
+            HookOutcome::proceed().annotate("bytes", source.bytes.len()),
+        ))
     }
 
     fn describe(&self) -> String {
@@ -43,7 +50,10 @@ pub struct ArtifactDigest {
 impl ArtifactDigest {
     /// Every kind of output.
     pub fn new(algorithms: &[DigestAlgorithm]) -> Self {
-        Self { algorithms: algorithms.to_vec(), kinds: ArtifactKind::ALL.to_vec() }
+        Self {
+            algorithms: algorithms.to_vec(),
+            kinds: ArtifactKind::ALL.to_vec(),
+        }
     }
 
     /// Only outputs of `kinds`.
@@ -61,16 +71,23 @@ impl ArtifactHook for ArtifactDigest {
     fn on_artifact(&self, _ctx: &HookContext, artifact: &ArtifactEvent) -> Result<HookOutcome> {
         let outcome = HookOutcome::proceed();
         Ok(match &artifact.data {
-            ArtifactData::Bytes(b) => digests(&self.algorithms, b, outcome.annotate("bytes", b.len())),
+            ArtifactData::Bytes(b) => {
+                digests(&self.algorithms, b, outcome.annotate("bytes", b.len()))
+            }
             ArtifactData::File(p) => {
                 let data = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
-                digests(&self.algorithms, &data, outcome.annotate("bytes", data.len()))
+                digests(
+                    &self.algorithms,
+                    &data,
+                    outcome.annotate("bytes", data.len()),
+                )
             }
             ArtifactData::Directory { path, files } => {
                 let mut per_algo: Vec<Map<String, Value>> = vec![Map::new(); self.algorithms.len()];
                 for f in files {
                     let full = path.join(f);
-                    let data = std::fs::read(&full).with_context(|| format!("reading {}", full.display()))?;
+                    let data = std::fs::read(&full)
+                        .with_context(|| format!("reading {}", full.display()))?;
                     for (a, map) in self.algorithms.iter().zip(per_algo.iter_mut()) {
                         map.insert(f.clone(), Value::String(a.hex(&data)));
                     }
@@ -78,14 +95,20 @@ impl ArtifactHook for ArtifactDigest {
                 self.algorithms
                     .iter()
                     .zip(per_algo)
-                    .fold(outcome, |o, (a, map)| o.annotate(a.as_str(), Value::Object(map)))
+                    .fold(outcome, |o, (a, map)| {
+                        o.annotate(a.as_str(), Value::Object(map))
+                    })
             }
         })
     }
 
     fn describe(&self) -> String {
         let kinds: Vec<&str> = self.kinds.iter().map(|k| k.as_str()).collect();
-        format!("artifact digest ({}) of {}", names(&self.algorithms), kinds.join(", "))
+        format!(
+            "artifact digest ({}) of {}",
+            names(&self.algorithms),
+            kinds.join(", ")
+        )
     }
 }
 
@@ -106,7 +129,10 @@ pub struct PerceptualFingerprint {
 impl PerceptualFingerprint {
     /// One frame a second.
     pub fn new(algorithms: &[PerceptualAlgorithm]) -> Self {
-        Self { algorithms: algorithms.to_vec(), sampling: FrameSampling::default() }
+        Self {
+            algorithms: algorithms.to_vec(),
+            sampling: FrameSampling::default(),
+        }
     }
 
     pub fn sampling(mut self, sampling: FrameSampling) -> Self {
@@ -117,9 +143,11 @@ impl PerceptualFingerprint {
     fn hash(&self, frame: &codec::frame::VideoFrame) -> Result<HookOutcome> {
         let luma = super::frame::luma8(frame)?;
         let (w, h) = (frame.width as usize, frame.height as usize);
-        self.algorithms.iter().try_fold(HookOutcome::proceed(), |o, a| {
-            Ok(o.annotate(a.as_str(), phash::to_hex(a.hash_luma(&luma, w, h)?)))
-        })
+        self.algorithms
+            .iter()
+            .try_fold(HookOutcome::proceed(), |o, a| {
+                Ok(o.annotate(a.as_str(), phash::to_hex(a.hash_luma(&luma, w, h)?)))
+            })
     }
 
     fn describe_at(&self, place: &str) -> String {
@@ -162,9 +190,15 @@ impl StillHook for PerceptualFingerprint {
 }
 
 fn digests(algorithms: &[DigestAlgorithm], data: &[u8], outcome: HookOutcome) -> HookOutcome {
-    algorithms.iter().fold(outcome, |o, a| o.annotate(a.as_str(), a.hex(data)))
+    algorithms
+        .iter()
+        .fold(outcome, |o, a| o.annotate(a.as_str(), a.hex(data)))
 }
 
 fn names(algorithms: &[DigestAlgorithm]) -> String {
-    algorithms.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(", ")
+    algorithms
+        .iter()
+        .map(|a| a.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }

@@ -16,9 +16,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rivet::hooks::{
-    ArtifactDigest, ArtifactKind, CompletedEvent, CompletedHook, DecodedFrameHook, DigestAlgorithm, FrameEvent,
-    FrameSampling, HookContext, HookOutcome, HookPolicy, Hooks, PerceptualAlgorithm, PerceptualFingerprint,
-    ProbeEvent, ProbeHook, SourceDigest,
+    ArtifactDigest, ArtifactKind, CompletedEvent, CompletedHook, DecodedFrameHook, DigestAlgorithm,
+    FrameEvent, FrameSampling, HookContext, HookOutcome, HookPolicy, Hooks, PerceptualAlgorithm,
+    PerceptualFingerprint, ProbeEvent, ProbeHook, SourceDigest,
 };
 
 /// A probe hook: refuses sources larger than it accepts, before any decoding.
@@ -29,11 +29,13 @@ struct SizeGate {
 impl ProbeHook for SizeGate {
     fn on_probe(&self, _ctx: &HookContext, probe: &ProbeEvent) -> Result<HookOutcome> {
         let m = &probe.media;
-        Ok(if u64::from(m.width) * u64::from(m.height) > self.max_pixels {
-            HookOutcome::reject(format!("{}x{} is over the limit", m.width, m.height))
-        } else {
-            HookOutcome::proceed()
-        })
+        Ok(
+            if u64::from(m.width) * u64::from(m.height) > self.max_pixels {
+                HookOutcome::reject(format!("{}x{} is over the limit", m.width, m.height))
+            } else {
+                HookOutcome::proceed()
+            },
+        )
     }
 
     fn describe(&self) -> String {
@@ -66,7 +68,10 @@ struct Announce;
 
 impl CompletedHook for Announce {
     fn on_completed(&self, ctx: &HookContext, done: &CompletedEvent) -> Result<HookOutcome> {
-        eprintln!("job {} made {} artifact(s) in {:?}", ctx.job_id, done.artifacts, done.elapsed);
+        eprintln!(
+            "job {} made {} artifact(s) in {:?}",
+            ctx.job_id, done.artifacts, done.elapsed
+        );
         Ok(HookOutcome::proceed())
     }
 }
@@ -84,21 +89,39 @@ fn main() -> Result<()> {
             PerceptualFingerprint::new(&[PerceptualAlgorithm::PHash, PerceptualAlgorithm::DHash])
                 .sampling(FrameSampling::every_seconds(1.0)),
         )
-        .probe("size-gate", SizeGate { max_pixels: 8192 * 4320 })
+        .probe(
+            "size-gate",
+            SizeGate {
+                max_pixels: 8192 * 4320,
+            },
+        )
         // Background: on the session's worker thread, off the decode path.
-        .decoded_frames_with("frame-integration", FrameIntegration, HookPolicy::background())
-        .artifacts("output-digest", ArtifactDigest::new(&[DigestAlgorithm::Sha256]).kinds(&[ArtifactKind::Video]))
+        .decoded_frames_with(
+            "frame-integration",
+            FrameIntegration,
+            HookPolicy::background(),
+        )
+        .artifacts(
+            "output-digest",
+            ArtifactDigest::new(&[DigestAlgorithm::Sha256]).kinds(&[ArtifactKind::Video]),
+        )
         .completed("announce", Announce);
     // A session the caller keeps, so the report is readable even if a hook
     // rejects the job.
     let session = hooks.session("example-job", rivet::hooks::JobKind::Transcode);
 
-    let data = bytes::Bytes::from(std::fs::read(&input).with_context(|| format!("reading {input}"))?);
+    let data =
+        bytes::Bytes::from(std::fs::read(&input).with_context(|| format!("reading {input}"))?);
     let info = rivet::probe_bytes(&data)?;
-    let spec = rivet::OutputSpec::single_file(vec![rivet::Rung::new(info.width, info.height)]).with_hooks(session.clone());
-    let result = rivet::run_job_blocking_owned(data, &spec, None, Arc::new(rivet::progress::NullSink));
+    let spec = rivet::OutputSpec::single_file(vec![rivet::Rung::new(info.width, info.height)])
+        .with_hooks(session.clone());
+    let result =
+        rivet::run_job_blocking_owned(data, &spec, None, Arc::new(rivet::progress::NullSink));
 
-    println!("{}", serde_json::to_string_pretty(&session.report().to_json())?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&session.report().to_json())?
+    );
     let out = match result {
         Ok(out) => out,
         Err(e) => match rivet::hooks::rejection_of(&e) {

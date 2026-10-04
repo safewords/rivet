@@ -18,7 +18,10 @@ use crate::frame::{ColorSpace, PixelFormat, StreamInfo, VideoFrame};
 /// The codec labels the ProRes tier serves: the label demux gives every
 /// ProRes track, and the six profile fourccs.
 pub fn supports(codec_lower: &str) -> bool {
-    matches!(codec_lower, "prores" | "apco" | "apcs" | "apcn" | "apch" | "ap4h" | "ap4x")
+    matches!(
+        codec_lower,
+        "prores" | "apco" | "apcs" | "apcn" | "apch" | "ap4h" | "ap4x"
+    )
 }
 
 /// A ProRes decoder behind rivet's [`Decoder`] trait.
@@ -41,7 +44,15 @@ impl ProresDecoder {
         if !supports(&codec) {
             bail!("the ProRes decoder decodes ProRes, not '{codec}'");
         }
-        Ok(Self { inner: prores::Decoder::new().with_threads(super::sw_decode_threads("RIVET_PRORES_DECODE_THREADS", share)), info, ready: VecDeque::new(), next_pts: 0 })
+        Ok(Self {
+            inner: prores::Decoder::new().with_threads(super::sw_decode_threads(
+                "RIVET_PRORES_DECODE_THREADS",
+                share,
+            )),
+            info,
+            ready: VecDeque::new(),
+            next_pts: 0,
+        })
     }
 
     /// The frame's colour matrix, from its header (ITU-T H.273 codes), or the
@@ -60,7 +71,9 @@ impl ProresDecoder {
             (prores::ChromaFormat::Yuv422, 10) => PixelFormat::Yuv422p10le,
             (prores::ChromaFormat::Yuv444, 12) => PixelFormat::Yuv444p12le,
             (chroma, depth) => {
-                bail!("ProRes decoded a {chroma:?} {depth}-bit picture, which has no pixel format in the pipeline")
+                bail!(
+                    "ProRes decoded a {chroma:?} {depth}-bit picture, which has no pixel format in the pipeline"
+                )
             }
         };
         let color_space = self.color_space(&frame.metadata);
@@ -142,13 +155,25 @@ mod tests {
     #[test]
     fn encoded_frames_come_back_in_order() {
         for (profile, chroma, depth, format) in [
-            (prores::Profile::Hq, prores::ChromaFormat::Yuv422, 10, PixelFormat::Yuv422p10le),
-            (prores::Profile::P4444, prores::ChromaFormat::Yuv444, 12, PixelFormat::Yuv444p12le),
+            (
+                prores::Profile::Hq,
+                prores::ChromaFormat::Yuv422,
+                10,
+                PixelFormat::Yuv422p10le,
+            ),
+            (
+                prores::Profile::P4444,
+                prores::ChromaFormat::Yuv444,
+                12,
+                PixelFormat::Yuv444p12le,
+            ),
         ] {
             let encoder = prores::Encoder::new(prores::Config::new(profile));
             let mut dec = ProresDecoder::new(info("prores")).expect("decoder");
             for _ in 0..2 {
-                let sample = encoder.encode(&picture(64, 32, chroma, depth)).expect("encode");
+                let sample = encoder
+                    .encode(&picture(64, 32, chroma, depth))
+                    .expect("encode");
                 dec.push_sample(&sample).expect("decode");
             }
             dec.finish().unwrap();
@@ -156,7 +181,11 @@ mod tests {
                 let f = dec.decode_next().unwrap().expect("a frame");
                 assert_eq!((f.width, f.height, f.format, f.pts), (64, 32, format, pts));
                 let bytes_per_sample = 2;
-                let planes = if chroma == prores::ChromaFormat::Yuv422 { 2 } else { 3 };
+                let planes = if chroma == prores::ChromaFormat::Yuv422 {
+                    2
+                } else {
+                    3
+                };
                 assert_eq!(f.data.len(), 64 * 32 * planes * bytes_per_sample);
             }
             assert!(dec.decode_next().unwrap().is_none());

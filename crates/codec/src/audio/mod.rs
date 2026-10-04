@@ -114,7 +114,15 @@ impl AudioEncoderConfig {
     /// `codec` at `sample_rate` / `channels`, `bitrate` (0: the default),
     /// the default quality and the codec's default thread count.
     pub fn new(codec: AudioCodec, sample_rate: u32, channels: u8, bitrate: u32) -> Self {
-        Self { codec, sample_rate, channels, bitrate, quality: None, layout: None, threads: 0 }
+        Self {
+            codec,
+            sample_rate,
+            channels,
+            bitrate,
+            quality: None,
+            layout: None,
+            threads: 0,
+        }
     }
 }
 
@@ -138,9 +146,14 @@ pub enum AudioCodec {
     /// DTS Coherent Acoustics core (`crates/dts`).
     Dts,
     /// FLAC at the given bit depth (4–32) and effort. `bitrate` is ignored.
-    Flac { bits_per_sample: u8, level: encode::flac::FlacLevel },
+    Flac {
+        bits_per_sample: u8,
+        level: encode::flac::FlacLevel,
+    },
     /// ALAC at the given bit depth (16, 20, 24 or 32). `bitrate` is ignored.
-    Alac { bits_per_sample: u8 },
+    Alac {
+        bits_per_sample: u8,
+    },
 }
 
 impl AudioCodec {
@@ -315,18 +328,28 @@ pub fn create_decoder(
             sample_rate,
             channels,
         )?)),
-        "opus" => Ok(Box::new(decode::opus::OpusDecoder::new(extra_data, channels)?)),
+        "opus" => Ok(Box::new(decode::opus::OpusDecoder::new(
+            extra_data, channels,
+        )?)),
         // AAC: the AudioSpecificConfig, or ADTS framing without one. HE-AAC
         // and HE-AAC v2 decode in full, at the SBR rate.
         "aac" | "mp4a" => Ok(Box::new(decode::aac::AacDecoder::new(extra_data)?)),
         // Lossless: FLAC (MP4 `fLaC`, Matroska `A_FLAC`, native streams) and
         // ALAC (MP4 `alac`, Matroska `A_ALAC`).
-        "flac" => Ok(Box::new(decode::flac::FlacDecoder::new(extra_data, sample_rate, channels)?)),
+        "flac" => Ok(Box::new(decode::flac::FlacDecoder::new(
+            extra_data,
+            sample_rate,
+            channels,
+        )?)),
         "alac" => Ok(Box::new(decode::alac::AlacDecoder::new(extra_data)?)),
         // Linear PCM (AVI's WAVE formats): the bytes are the samples.
-        "pcm_u8" | "pcm_s16le" | "pcm_s24le" | "pcm_s32le" | "pcm_f32le" | "pcm_f64le" => Ok(Box::new(
-            decode::pcm::PcmDecoder::new(&codec.to_ascii_lowercase(), sample_rate, channels)?,
-        )),
+        "pcm_u8" | "pcm_s16le" | "pcm_s24le" | "pcm_s32le" | "pcm_f32le" | "pcm_f64le" => {
+            Ok(Box::new(decode::pcm::PcmDecoder::new(
+                &codec.to_ascii_lowercase(),
+                sample_rate,
+                channels,
+            )?))
+        }
         other => Err(AudioError::Unsupported(format!(
             "audio decoder for codec {other}"
         ))),
@@ -336,7 +359,11 @@ pub fn create_decoder(
 /// Construct an audio encoder.
 pub fn create_encoder(config: AudioEncoderConfig) -> Result<Box<dyn AudioEncoder>, AudioError> {
     use encode::aac::{AacConfig, AacEncoder, Profile};
-    let aac_config = AacConfig { sample_rate: config.sample_rate, channels: config.channels, bitrate: config.bitrate };
+    let aac_config = AacConfig {
+        sample_rate: config.sample_rate,
+        channels: config.channels,
+        bitrate: config.bitrate,
+    };
     let aac = |profile| AacEncoder::with_profile(aac_config.clone(), profile);
     match config.codec {
         AudioCodec::Opus => Ok(Box::new(encode::opus::OpusEncoder::new(config)?)),
@@ -347,12 +374,18 @@ pub fn create_encoder(config: AudioEncoderConfig) -> Result<Box<dyn AudioEncoder
         AudioCodec::Vorbis => Ok(Box::new(encode::vorbis::VorbisEncoder::new(&config)?)),
         AudioCodec::Ac3 | AudioCodec::Eac3 => Ok(Box::new(encode::ac3::Ac3Encoder::new(&config)?)),
         AudioCodec::Dts => Ok(Box::new(encode::dts::DtsEncoder::new(&config)?)),
-        AudioCodec::Flac { bits_per_sample, level } => {
-            Ok(Box::new(encode::flac::FlacAudioEncoder::new(&config, bits_per_sample, level)?))
-        }
-        AudioCodec::Alac { bits_per_sample } => {
-            Ok(Box::new(encode::alac::AlacAudioEncoder::new(&config, bits_per_sample)?))
-        }
+        AudioCodec::Flac {
+            bits_per_sample,
+            level,
+        } => Ok(Box::new(encode::flac::FlacAudioEncoder::new(
+            &config,
+            bits_per_sample,
+            level,
+        )?)),
+        AudioCodec::Alac { bits_per_sample } => Ok(Box::new(encode::alac::AlacAudioEncoder::new(
+            &config,
+            bits_per_sample,
+        )?)),
     }
 }
 
@@ -389,7 +422,11 @@ pub fn mp3_sample_rate(input: u32) -> u32 {
 
 /// The CBR default for `channels`.
 pub fn mp3_default_bitrate(channels: u8) -> u32 {
-    if channels == 1 { MP3_DEFAULT_BITRATE_MONO } else { MP3_DEFAULT_BITRATE_STEREO }
+    if channels == 1 {
+        MP3_DEFAULT_BITRATE_MONO
+    } else {
+        MP3_DEFAULT_BITRATE_STEREO
+    }
 }
 
 /// The rate AC-3, E-AC-3 and DTS code a source of `input` Hz at: 48, 44.1 or
@@ -421,8 +458,16 @@ mod thread_count_tests {
     #[test]
     fn the_adapters_forward_the_thread_count() {
         for threads in [0usize, 1, 3] {
-            let cfg = |codec| AudioEncoderConfig { threads, ..AudioEncoderConfig::new(codec, 48_000, 2, 0) };
-            let flac = encode::flac::FlacAudioEncoder::new(&cfg(AudioCodec::Mp3), 16, encode::flac::FlacLevel::default()).unwrap();
+            let cfg = |codec| AudioEncoderConfig {
+                threads,
+                ..AudioEncoderConfig::new(codec, 48_000, 2, 0)
+            };
+            let flac = encode::flac::FlacAudioEncoder::new(
+                &cfg(AudioCodec::Mp3),
+                16,
+                encode::flac::FlacLevel::default(),
+            )
+            .unwrap();
             assert_eq!(flac.threads(), threads);
             let alac = encode::alac::AlacAudioEncoder::new(&cfg(AudioCodec::Mp3), 16).unwrap();
             assert_eq!(alac.threads(), threads);

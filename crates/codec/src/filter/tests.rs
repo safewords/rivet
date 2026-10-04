@@ -18,7 +18,14 @@ fn frame(w: u32, h: u32) -> VideoFrame {
     }
     data.extend(std::iter::repeat_n(100, (wu / 2) * (hu / 2)));
     data.extend(std::iter::repeat_n(200, (wu / 2) * (hu / 2)));
-    VideoFrame::new(Bytes::from(data), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, 0)
+    VideoFrame::new(
+        Bytes::from(data),
+        w,
+        h,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        0,
+    )
 }
 
 /// A flat `w×h` frame with the given luma + chroma values.
@@ -27,7 +34,14 @@ fn flat(w: u32, h: u32, yv: u8, uv: u8, vv: u8) -> VideoFrame {
     let mut data = vec![yv; wu * hu];
     data.extend(std::iter::repeat_n(uv, (wu / 2) * (hu / 2)));
     data.extend(std::iter::repeat_n(vv, (wu / 2) * (hu / 2)));
-    VideoFrame::new(Bytes::from(data), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, 0)
+    VideoFrame::new(
+        Bytes::from(data),
+        w,
+        h,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        0,
+    )
 }
 
 fn luma(f: &VideoFrame) -> &[u8] {
@@ -36,16 +50,47 @@ fn luma(f: &VideoFrame) -> &[u8] {
 
 #[test]
 fn parse_and_display_round_trip() {
-    let c = parse_chain("crop=1280:720,hflip,overlay=logo.png:24:24,brightness=10,saturation=1.5,invert").unwrap();
-    assert_eq!(c[0], VideoFilter::Crop { w: 1280, h: 720, x: None, y: None });
-    assert_eq!(c[2], VideoFilter::Overlay { image: "logo.png".into(), x: 24, y: 24 });
+    let c = parse_chain(
+        "crop=1280:720,hflip,overlay=logo.png:24:24,brightness=10,saturation=1.5,invert",
+    )
+    .unwrap();
+    assert_eq!(
+        c[0],
+        VideoFilter::Crop {
+            w: 1280,
+            h: 720,
+            x: None,
+            y: None
+        }
+    );
+    assert_eq!(
+        c[2],
+        VideoFilter::Overlay {
+            image: "logo.png".into(),
+            x: 24,
+            y: 24
+        }
+    );
     assert_eq!(c[3], VideoFilter::Brightness(10));
     assert_eq!(c[4], VideoFilter::Saturation(1.5));
     assert_eq!(c[5], VideoFilter::Invert);
-    assert_eq!(chain_to_string(&c), "crop=1280:720,hflip,overlay=logo.png:24:24,brightness=10,saturation=1.5,invert");
-    assert_eq!(parse_chain("overlay=a.png").unwrap()[0], VideoFilter::Overlay { image: "a.png".into(), x: 0, y: 0 });
+    assert_eq!(
+        chain_to_string(&c),
+        "crop=1280:720,hflip,overlay=logo.png:24:24,brightness=10,saturation=1.5,invert"
+    );
+    assert_eq!(
+        parse_chain("overlay=a.png").unwrap()[0],
+        VideoFilter::Overlay {
+            image: "a.png".into(),
+            x: 0,
+            y: 0
+        }
+    );
     assert_eq!(parse_chain("negate").unwrap()[0], VideoFilter::Invert);
-    assert_eq!(parse_chain("contrast=1.2").unwrap()[0], VideoFilter::Contrast(1.2));
+    assert_eq!(
+        parse_chain("contrast=1.2").unwrap()[0],
+        VideoFilter::Contrast(1.2)
+    );
     assert!(parse_chain("brightness=x").is_err());
     assert!(parse_chain("rotate=45").is_err());
 }
@@ -56,9 +101,18 @@ fn structured_json_round_trips() {
     let json = r#"[{"crop":{"w":1280,"h":720}},"hflip",{"overlay":{"image":"logo.png","x":24,"y":24}},{"brightness":10},"invert"]"#;
     let from_list: FilterSpec = serde_json::from_str(json).unwrap();
     let expect = vec![
-        VideoFilter::Crop { w: 1280, h: 720, x: None, y: None },
+        VideoFilter::Crop {
+            w: 1280,
+            h: 720,
+            x: None,
+            y: None,
+        },
         VideoFilter::HFlip,
-        VideoFilter::Overlay { image: "logo.png".into(), x: 24, y: 24 },
+        VideoFilter::Overlay {
+            image: "logo.png".into(),
+            x: 24,
+            y: 24,
+        },
         VideoFilter::Brightness(10),
         VideoFilter::Invert,
     ];
@@ -95,7 +149,14 @@ fn color_filters() {
     let s0 = apply(&flat(4, 4, 100, 200, 60), &VideoFilter::Saturation(0.0)).unwrap();
     assert!(s0.data[16..].iter().all(|&p| p == 128));
     // brightness on a 10-bit frame is rejected
-    let ten = VideoFrame::new(Bytes::from(vec![0u8; 2 * (4 * 4 + 2 * 4)]), 4, 4, PixelFormat::Yuv420p10le, ColorSpace::Bt709, 0);
+    let ten = VideoFrame::new(
+        Bytes::from(vec![0u8; 2 * (4 * 4 + 2 * 4)]),
+        4,
+        4,
+        PixelFormat::Yuv420p10le,
+        ColorSpace::Bt709,
+        0,
+    );
     assert!(apply(&ten, &VideoFilter::Brightness(10)).is_err());
 }
 
@@ -124,13 +185,24 @@ fn overlay_composites_with_alpha() {
 
 #[test]
 fn overlay_via_apply_errors_without_prepare() {
-    let r = apply(&flat(4, 4, 100, 128, 128), &VideoFilter::Overlay { image: "x.png".into(), x: 0, y: 0 });
+    let r = apply(
+        &flat(4, 4, 100, 128, 128),
+        &VideoFilter::Overlay {
+            image: "x.png".into(),
+            x: 0,
+            y: 0,
+        },
+    );
     assert!(r.is_err());
 }
 
 #[test]
 fn filter_chain_prepare_missing_image_errors() {
-    let r = FilterChain::prepare(&[VideoFilter::Overlay { image: "/nope/missing.png".into(), x: 0, y: 0 }]);
+    let r = FilterChain::prepare(&[VideoFilter::Overlay {
+        image: "/nope/missing.png".into(),
+        x: 0,
+        y: 0,
+    }]);
     assert!(r.is_err());
 }
 
@@ -150,7 +222,14 @@ fn ten_bit_geometric_still_works() {
     }
     data.extend_from_slice(&(512u16).to_le_bytes());
     data.extend_from_slice(&(512u16).to_le_bytes());
-    let f = VideoFrame::new(Bytes::from(data), 2, 2, PixelFormat::Yuv420p10le, ColorSpace::Bt709, 0);
+    let f = VideoFrame::new(
+        Bytes::from(data),
+        2,
+        2,
+        PixelFormat::Yuv420p10le,
+        ColorSpace::Bt709,
+        0,
+    );
     let out = apply(&f, &VideoFilter::HFlip).unwrap();
     assert_eq!(&out.data[0..2], &1u16.to_le_bytes());
 }
@@ -172,7 +251,14 @@ fn frame_with_luma(luma: Vec<u8>, w: u32, h: u32) -> VideoFrame {
     assert_eq!(luma.len(), wu * hu);
     let mut data = luma;
     data.extend(std::iter::repeat_n(128, 2 * (wu / 2) * (hu / 2)));
-    VideoFrame::new(Bytes::from(data), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, 0)
+    VideoFrame::new(
+        Bytes::from(data),
+        w,
+        h,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        0,
+    )
 }
 
 /// Denoise a luma pattern, return the output luma plane.
@@ -184,14 +270,44 @@ fn denoise_luma(plane: Vec<u8>, w: u32, h: u32, method: DenoiseMethod, strength:
 
 #[test]
 fn denoise_parse_and_display() {
-    let bil = |s| VideoFilter::Denoise { method: DenoiseMethod::Bilateral, strength: s };
+    let bil = |s| VideoFilter::Denoise {
+        method: DenoiseMethod::Bilateral,
+        strength: s,
+    };
     assert_eq!(parse_chain("denoise").unwrap()[0], bil(0.5));
     assert_eq!(parse_chain("denoise=0.7").unwrap()[0], bil(0.7));
-    assert_eq!(parse_chain("denoise=median").unwrap()[0], VideoFilter::Denoise { method: DenoiseMethod::Median, strength: 0.5 });
-    assert_eq!(parse_chain("denoise=nlmeans:0.3").unwrap()[0], VideoFilter::Denoise { method: DenoiseMethod::Nlmeans, strength: 0.3 });
-    assert_eq!(parse_chain("denoise=0.3:gaussian").unwrap()[0], VideoFilter::Denoise { method: DenoiseMethod::Gaussian, strength: 0.3 });
-    assert_eq!(parse_chain("nr=pm").unwrap()[0], VideoFilter::Denoise { method: DenoiseMethod::Anisotropic, strength: 0.5 });
-    assert_eq!(chain_to_string(&parse_chain("denoise=median:0.8").unwrap()), "denoise=median:0.8");
+    assert_eq!(
+        parse_chain("denoise=median").unwrap()[0],
+        VideoFilter::Denoise {
+            method: DenoiseMethod::Median,
+            strength: 0.5
+        }
+    );
+    assert_eq!(
+        parse_chain("denoise=nlmeans:0.3").unwrap()[0],
+        VideoFilter::Denoise {
+            method: DenoiseMethod::Nlmeans,
+            strength: 0.3
+        }
+    );
+    assert_eq!(
+        parse_chain("denoise=0.3:gaussian").unwrap()[0],
+        VideoFilter::Denoise {
+            method: DenoiseMethod::Gaussian,
+            strength: 0.3
+        }
+    );
+    assert_eq!(
+        parse_chain("nr=pm").unwrap()[0],
+        VideoFilter::Denoise {
+            method: DenoiseMethod::Anisotropic,
+            strength: 0.5
+        }
+    );
+    assert_eq!(
+        chain_to_string(&parse_chain("denoise=median:0.8").unwrap()),
+        "denoise=median:0.8"
+    );
     assert!(parse_chain("denoise=2.0").is_err());
     assert!(parse_chain("denoise=foo").is_err());
 }
@@ -200,7 +316,10 @@ fn denoise_parse_and_display() {
 fn denoise_flat_is_unchanged() {
     for m in DENOISE_METHODS {
         let out = denoise_luma(vec![100u8; 64], 8, 8, m, 1.0);
-        assert!(out.iter().all(|&p| (p as i32 - 100).abs() <= 1), "{m:?} altered a flat plane");
+        assert!(
+            out.iter().all(|&p| (p as i32 - 100).abs() <= 1),
+            "{m:?} altered a flat plane"
+        );
     }
 }
 
@@ -208,13 +327,19 @@ fn denoise_flat_is_unchanged() {
 fn denoise_strength_zero_is_identity() {
     let luma: Vec<u8> = (0..64).map(|i| (i * 3) as u8).collect();
     for m in DENOISE_METHODS {
-        assert_eq!(denoise_luma(luma.clone(), 8, 8, m, 0.0), luma, "{m:?} @ strength 0 must be identity");
+        assert_eq!(
+            denoise_luma(luma.clone(), 8, 8, m, 0.0),
+            luma,
+            "{m:?} @ strength 0 must be identity"
+        );
     }
 }
 
 #[test]
 fn denoise_smooths_checkerboard() {
-    let luma: Vec<u8> = (0..64).map(|i| if (i / 8 + i % 8) % 2 == 0 { 122 } else { 134 }).collect();
+    let luma: Vec<u8> = (0..64)
+        .map(|i| if (i / 8 + i % 8) % 2 == 0 { 122 } else { 134 })
+        .collect();
     for m in [
         DenoiseMethod::Bilateral,
         DenoiseMethod::Gaussian,
@@ -224,7 +349,10 @@ fn denoise_smooths_checkerboard() {
     ] {
         let out = denoise_luma(luma.clone(), 8, 8, m, 1.0);
         let maxdev = out.iter().map(|&p| (p as i32 - 128).abs()).max().unwrap();
-        assert!(maxdev < 6, "{m:?} didn't smooth the checkerboard (maxdev {maxdev})");
+        assert!(
+            maxdev < 6,
+            "{m:?} didn't smooth the checkerboard (maxdev {maxdev})"
+        );
     }
 }
 
@@ -238,18 +366,40 @@ fn denoise_median_removes_impulse() {
 
 #[test]
 fn denoise_bilateral_preserves_edge() {
-    let luma: Vec<u8> = (0..64).map(|i| if (i % 8) < 4 { 50 } else { 200 }).collect();
+    let luma: Vec<u8> = (0..64)
+        .map(|i| if (i % 8) < 4 { 50 } else { 200 })
+        .collect();
     let out = denoise_luma(luma, 8, 8, DenoiseMethod::Bilateral, 1.0);
     for r in 0..8 {
         assert!(out[r * 8 + 1] < 80, "left edge blurred: {}", out[r * 8 + 1]);
-        assert!(out[r * 8 + 6] > 170, "right edge blurred: {}", out[r * 8 + 6]);
+        assert!(
+            out[r * 8 + 6] > 170,
+            "right edge blurred: {}",
+            out[r * 8 + 6]
+        );
     }
 }
 
 #[test]
 fn denoise_rejects_10bit() {
-    let ten = VideoFrame::new(Bytes::from(vec![0u8; 2 * (4 * 4 + 2 * 4)]), 4, 4, PixelFormat::Yuv420p10le, ColorSpace::Bt709, 0);
-    assert!(apply(&ten, &VideoFilter::Denoise { method: DenoiseMethod::Gaussian, strength: 0.5 }).is_err());
+    let ten = VideoFrame::new(
+        Bytes::from(vec![0u8; 2 * (4 * 4 + 2 * 4)]),
+        4,
+        4,
+        PixelFormat::Yuv420p10le,
+        ColorSpace::Bt709,
+        0,
+    );
+    assert!(
+        apply(
+            &ten,
+            &VideoFilter::Denoise {
+                method: DenoiseMethod::Gaussian,
+                strength: 0.5
+            }
+        )
+        .is_err()
+    );
 }
 
 // ── nlmeans (parameterized, command-line-compatible options) ──────────────────────────────
@@ -269,14 +419,27 @@ fn noisy_plane(n: usize, centre: u8) -> Vec<u8> {
 /// Apply the parameterized nlmeans to a luma pattern; return the output plane.
 fn nlmeans_luma(plane: Vec<u8>, w: u32, h: u32, s: f32, p: u32, r: u32) -> Vec<u8> {
     let f = frame_with_luma(plane, w, h);
-    let out = apply(&f, &VideoFilter::Nlmeans { s, p, pc: 0, r, rc: 0 }).unwrap();
+    let out = apply(
+        &f,
+        &VideoFilter::Nlmeans {
+            s,
+            p,
+            pc: 0,
+            r,
+            rc: 0,
+        },
+    )
+    .unwrap();
     luma(&out).to_vec()
 }
 
 /// Mean absolute deviation of a plane from a constant — the "how much noise is
 /// left" measure for the smoothing tests.
 fn mean_abs_dev(plane: &[u8], centre: u8) -> f32 {
-    plane.iter().map(|&v| (v as i32 - centre as i32).unsigned_abs() as f32).sum::<f32>()
+    plane
+        .iter()
+        .map(|&v| (v as i32 - centre as i32).unsigned_abs() as f32)
+        .sum::<f32>()
         / plane.len() as f32
 }
 
@@ -285,25 +448,49 @@ fn nlmeans_parse_and_display() {
     // The familiar command-line spelling must parse as-is.
     assert_eq!(
         parse_chain("nlmeans=s=1:p=7:pc=5:r=3:rc=3").unwrap()[0],
-        VideoFilter::Nlmeans { s: 1.0, p: 7, pc: 5, r: 3, rc: 3 }
+        VideoFilter::Nlmeans {
+            s: 1.0,
+            p: 7,
+            pc: 5,
+            r: 3,
+            rc: 3
+        }
     );
     // Bare `nlmeans` is the documented defaults; pc/rc stay 0 = "same as luma".
     assert_eq!(
         parse_chain("nlmeans").unwrap()[0],
-        VideoFilter::Nlmeans { s: 1.0, p: 7, pc: 0, r: 15, rc: 0 }
+        VideoFilter::Nlmeans {
+            s: 1.0,
+            p: 7,
+            pc: 0,
+            r: 15,
+            rc: 0
+        }
     );
     // Positional values fill s:p:pc:r:rc in declaration order.
     assert_eq!(
         parse_chain("nlmeans=2:5").unwrap()[0],
-        VideoFilter::Nlmeans { s: 2.0, p: 5, pc: 0, r: 15, rc: 0 }
+        VideoFilter::Nlmeans {
+            s: 2.0,
+            p: 5,
+            pc: 0,
+            r: 15,
+            rc: 0
+        }
     );
     // Display emits the full key=value form and round-trips.
     let c = parse_chain("nlmeans=s=3:p=5:r=7").unwrap();
     assert_eq!(chain_to_string(&c), "nlmeans=s=3:p=5:pc=0:r=7:rc=0");
     assert_eq!(parse_chain(&chain_to_string(&c)).unwrap(), c);
     // Range + spelling errors surface at parse time, not at apply time.
-    assert!(parse_chain("nlmeans=s=0.5").is_err(), "below the 1.0 sigma floor");
-    assert!(parse_chain("nlmeans=s=31").is_err(), "above the 30.0 sigma ceiling");
+    assert!(
+        parse_chain("nlmeans=s=0.5").is_err(),
+        "below the 1.0 sigma floor"
+    );
+    assert!(
+        parse_chain("nlmeans=s=31").is_err(),
+        "above the 30.0 sigma ceiling"
+    );
     assert!(parse_chain("nlmeans=p=101").is_err());
     assert!(parse_chain("nlmeans=q=3").is_err());
 }
@@ -311,7 +498,10 @@ fn nlmeans_parse_and_display() {
 #[test]
 fn nlmeans_flat_is_unchanged() {
     let out = nlmeans_luma(vec![100u8; 256], 16, 16, 10.0, 3, 5);
-    assert!(out.iter().all(|&v| v == 100), "nlmeans altered a flat plane");
+    assert!(
+        out.iter().all(|&v| v == 100),
+        "nlmeans altered a flat plane"
+    );
 }
 
 #[test]
@@ -340,7 +530,10 @@ fn nlmeans_sigma_is_monotonic() {
     let noisy = noisy_plane(32 * 32, 128);
     let weak = mean_abs_dev(&nlmeans_luma(noisy.clone(), 32, 32, 2.0, 3, 5), 128);
     let strong = mean_abs_dev(&nlmeans_luma(noisy, 32, 32, 20.0, 3, 5), 128);
-    assert!(strong < weak, "raising s didn't denoise harder ({weak:.2} → {strong:.2})");
+    assert!(
+        strong < weak,
+        "raising s didn't denoise harder ({weak:.2} → {strong:.2})"
+    );
 }
 
 #[test]
@@ -349,12 +542,20 @@ fn nlmeans_preserves_repeating_texture_at_default_sigma() {
     // the default s=1 only near-identical patches carry weight, so the
     // checkerboard survives where a plain blur would flatten it (compare
     // `denoise_smooths_checkerboard`, which drives every method to ~flat).
-    let luma: Vec<u8> =
-        (0..1024).map(|i| if (i / 32 + i % 32) % 2 == 0 { 100 } else { 160 }).collect();
+    let luma: Vec<u8> = (0..1024)
+        .map(|i| if (i / 32 + i % 32) % 2 == 0 { 100 } else { 160 })
+        .collect();
     let out = nlmeans_luma(luma.clone(), 32, 32, 1.0, 3, 5);
-    let maxdev =
-        out.iter().zip(&luma).map(|(&a, &b)| (a as i32 - b as i32).abs()).max().unwrap();
-    assert!(maxdev <= 4, "default-sigma nlmeans flattened a repeating texture (maxdev {maxdev})");
+    let maxdev = out
+        .iter()
+        .zip(&luma)
+        .map(|(&a, &b)| (a as i32 - b as i32).abs())
+        .max()
+        .unwrap();
+    assert!(
+        maxdev <= 4,
+        "default-sigma nlmeans flattened a repeating texture (maxdev {maxdev})"
+    );
 }
 
 #[test]
@@ -367,24 +568,88 @@ fn nlmeans_chroma_params_are_independent_of_luma() {
     let chroma = noisy_plane(cw * ch, 110);
     data.extend_from_slice(&chroma);
     data.extend_from_slice(&chroma);
-    let f = VideoFrame::new(Bytes::from(data), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, 0);
+    let f = VideoFrame::new(
+        Bytes::from(data),
+        w,
+        h,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        0,
+    );
     let chroma_of = |fr: &VideoFrame| fr.data[(w * h) as usize..].to_vec();
 
-    let implicit = apply(&f, &VideoFilter::Nlmeans { s: 20.0, p: 3, pc: 0, r: 5, rc: 0 }).unwrap();
-    let explicit = apply(&f, &VideoFilter::Nlmeans { s: 20.0, p: 3, pc: 3, r: 5, rc: 5 }).unwrap();
-    assert_eq!(chroma_of(&implicit), chroma_of(&explicit), "pc/rc=0 must mean 'same as p/r'");
+    let implicit = apply(
+        &f,
+        &VideoFilter::Nlmeans {
+            s: 20.0,
+            p: 3,
+            pc: 0,
+            r: 5,
+            rc: 0,
+        },
+    )
+    .unwrap();
+    let explicit = apply(
+        &f,
+        &VideoFilter::Nlmeans {
+            s: 20.0,
+            p: 3,
+            pc: 3,
+            r: 5,
+            rc: 5,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        chroma_of(&implicit),
+        chroma_of(&explicit),
+        "pc/rc=0 must mean 'same as p/r'"
+    );
 
     // rc=1 collapses the chroma research window to the centre sample, so chroma
     // passes through untouched while luma is still denoised.
-    let chroma_off = apply(&f, &VideoFilter::Nlmeans { s: 20.0, p: 3, pc: 0, r: 5, rc: 1 }).unwrap();
-    assert_eq!(chroma_of(&chroma_off), [chroma.clone(), chroma].concat(), "rc=1 must leave chroma alone");
+    let chroma_off = apply(
+        &f,
+        &VideoFilter::Nlmeans {
+            s: 20.0,
+            p: 3,
+            pc: 0,
+            r: 5,
+            rc: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        chroma_of(&chroma_off),
+        [chroma.clone(), chroma].concat(),
+        "rc=1 must leave chroma alone"
+    );
     assert_ne!(luma(&chroma_off), luma(&f), "luma should still be denoised");
 }
 
 #[test]
 fn nlmeans_rejects_10bit() {
-    let ten = VideoFrame::new(Bytes::from(vec![0u8; 2 * (4 * 4 + 2 * 4)]), 4, 4, PixelFormat::Yuv420p10le, ColorSpace::Bt709, 0);
-    assert!(apply(&ten, &VideoFilter::Nlmeans { s: 1.0, p: 7, pc: 0, r: 15, rc: 0 }).is_err());
+    let ten = VideoFrame::new(
+        Bytes::from(vec![0u8; 2 * (4 * 4 + 2 * 4)]),
+        4,
+        4,
+        PixelFormat::Yuv420p10le,
+        ColorSpace::Bt709,
+        0,
+    );
+    assert!(
+        apply(
+            &ten,
+            &VideoFilter::Nlmeans {
+                s: 1.0,
+                p: 7,
+                pc: 0,
+                r: 15,
+                rc: 0
+            }
+        )
+        .is_err()
+    );
 }
 
 // ── hqdn3d (temporal) ───────────────────────────────────────────────────────
@@ -396,8 +661,9 @@ fn hqdn3d_chain(spec: &str) -> std::sync::Arc<FilterChain> {
 /// A blocky clean picture (8×8 tiles at well-separated levels, so the edges
 /// pass every stage) with fresh ±4 noise per `seed`.
 fn blocky_noisy(w: usize, h: usize, seed: u32) -> (Vec<u8>, Vec<u8>) {
-    let clean: Vec<u8> =
-        (0..w * h).map(|i| [40u8, 120, 200, 90][((i % w) / 8 + (i / w) / 8) % 4]).collect();
+    let clean: Vec<u8> = (0..w * h)
+        .map(|i| [40u8, 120, 200, 90][((i % w) / 8 + (i / w) / 8) % 4])
+        .collect();
     let mut state = seed.wrapping_mul(2_654_435_761).wrapping_add(0x9E37);
     let noisy = clean
         .iter()
@@ -410,18 +676,36 @@ fn blocky_noisy(w: usize, h: usize, seed: u32) -> (Vec<u8>, Vec<u8>) {
 }
 
 fn mad(a: &[u8], b: &[u8]) -> f32 {
-    a.iter().zip(b).map(|(&x, &y)| (x as i32 - y as i32).unsigned_abs() as f32).sum::<f32>() / a.len() as f32
+    a.iter()
+        .zip(b)
+        .map(|(&x, &y)| (x as i32 - y as i32).unsigned_abs() as f32)
+        .sum::<f32>()
+        / a.len() as f32
 }
 
 #[test]
 fn hqdn3d_parse_display_and_defaults() {
-    let f = |ls, cs, lt, ct| VideoFilter::Hqdn3d { luma_spatial: ls, chroma_spatial: cs, luma_tmp: lt, chroma_tmp: ct };
+    let f = |ls, cs, lt, ct| VideoFilter::Hqdn3d {
+        luma_spatial: ls,
+        chroma_spatial: cs,
+        luma_tmp: lt,
+        chroma_tmp: ct,
+    };
     // The familiar spellings, positional and keyed; omitted values derive.
     assert_eq!(parse_chain("hqdn3d").unwrap()[0], f(4.0, 3.0, 6.0, 4.5));
-    assert_eq!(parse_chain("hqdn3d=4:3:6:4.5").unwrap()[0], f(4.0, 3.0, 6.0, 4.5));
+    assert_eq!(
+        parse_chain("hqdn3d=4:3:6:4.5").unwrap()[0],
+        f(4.0, 3.0, 6.0, 4.5)
+    );
     assert_eq!(parse_chain("hqdn3d=8").unwrap()[0], f(8.0, 6.0, 12.0, 9.0));
-    assert_eq!(parse_chain("hqdn3d=luma_tmp=10:ls=2").unwrap()[0], f(2.0, 1.5, 10.0, 7.5));
-    assert_eq!(parse_chain("hqdn3d=0:0:0:2").unwrap()[0], f(4.0, 3.0, 6.0, 2.0));
+    assert_eq!(
+        parse_chain("hqdn3d=luma_tmp=10:ls=2").unwrap()[0],
+        f(2.0, 1.5, 10.0, 7.5)
+    );
+    assert_eq!(
+        parse_chain("hqdn3d=0:0:0:2").unwrap()[0],
+        f(4.0, 3.0, 6.0, 2.0)
+    );
     // Display emits the resolved strengths and round-trips.
     let c = parse_chain("hqdn3d=8").unwrap();
     assert_eq!(chain_to_string(&c), "hqdn3d=8:6:12:9");
@@ -437,16 +721,29 @@ fn hqdn3d_parse_display_and_defaults() {
 fn hqdn3d_is_refused_by_every_stateless_path() {
     let f = flat(8, 8, 100, 128, 128);
     let filt = parse_chain("hqdn3d").unwrap().remove(0);
-    assert!(apply(&f, &filt).is_err(), "apply() must refuse a temporal filter");
+    assert!(
+        apply(&f, &filt).is_err(),
+        "apply() must refuse a temporal filter"
+    );
     assert!(apply_chain(f.clone(), &[VideoFilter::HFlip, filt]).is_err());
     let chain = hqdn3d_chain("hflip,hqdn3d");
     assert!(chain.is_stateful());
-    assert!(chain.apply(f.clone()).is_err(), "FilterChain::apply must refuse a temporal step");
+    assert!(
+        chain.apply(f.clone()).is_err(),
+        "FilterChain::apply must refuse a temporal step"
+    );
     assert!(!hqdn3d_chain("hflip,denoise=median").is_stateful());
     // Through the instance it runs — and still rejects 10-bit.
     let mut inst = chain.instantiate();
     assert!(inst.apply(f).is_ok());
-    let ten = VideoFrame::new(Bytes::from(vec![0u8; 2 * (4 * 4 + 2 * 4)]), 4, 4, PixelFormat::Yuv420p10le, ColorSpace::Bt709, 0);
+    let ten = VideoFrame::new(
+        Bytes::from(vec![0u8; 2 * (4 * 4 + 2 * 4)]),
+        4,
+        4,
+        PixelFormat::Yuv420p10le,
+        ColorSpace::Bt709,
+        0,
+    );
     assert!(inst.apply(ten).is_err());
 }
 
@@ -476,7 +773,10 @@ fn hqdn3d_uses_the_history_so_noise_falls_over_frames() {
         let (clean, noisy) = blocky_noisy(w, h, k);
         let f = frame_with_luma(noisy, w as u32, h as u32);
         with_history.push(mad(luma(&inst.apply(f.clone()).unwrap()), &clean));
-        without.push(mad(luma(&chain.clone().instantiate().apply(f).unwrap()), &clean));
+        without.push(mad(
+            luma(&chain.clone().instantiate().apply(f).unwrap()),
+            &clean,
+        ));
     }
     assert!(
         with_history[7] < 0.7 * with_history[0],
@@ -494,27 +794,43 @@ fn hqdn3d_instances_do_not_share_history() {
     let chain = hqdn3d_chain("hqdn3d=4:3:6:4.5");
     let (w, h) = (16usize, 16usize);
     let stream = |base: u32| -> Vec<VideoFrame> {
-        (0..4).map(|k| frame_with_luma(blocky_noisy(w, h, base + k).1, w as u32, h as u32)).collect()
+        (0..4)
+            .map(|k| frame_with_luma(blocky_noisy(w, h, base + k).1, w as u32, h as u32))
+            .collect()
     };
     let (a, b) = (stream(100), stream(200));
     let alone = |frames: &[VideoFrame]| -> Vec<Vec<u8>> {
         let mut i = chain.clone().instantiate();
-        frames.iter().map(|f| i.apply(f.clone()).unwrap().data.to_vec()).collect()
+        frames
+            .iter()
+            .map(|f| i.apply(f.clone()).unwrap().data.to_vec())
+            .collect()
     };
     let (alone_a, alone_b) = (alone(&a), alone(&b));
     // Interleaved through two instances of the one chain: each stream's
     // output is exactly what it gets on its own.
     let (mut ia, mut ib) = (chain.clone().instantiate(), chain.clone().instantiate());
     for k in 0..4 {
-        assert_eq!(ia.apply(a[k].clone()).unwrap().data.to_vec(), alone_a[k], "stream a frame {k}");
-        assert_eq!(ib.apply(b[k].clone()).unwrap().data.to_vec(), alone_b[k], "stream b frame {k}");
+        assert_eq!(
+            ia.apply(a[k].clone()).unwrap().data.to_vec(),
+            alone_a[k],
+            "stream a frame {k}"
+        );
+        assert_eq!(
+            ib.apply(b[k].clone()).unwrap().data.to_vec(),
+            alone_b[k],
+            "stream b frame {k}"
+        );
     }
     // Through ONE instance they would not — which is what the per-stream
     // instance exists to prevent.
     let mut shared = chain.clone().instantiate();
     shared.apply(a[0].clone()).unwrap();
     shared.apply(b[0].clone()).unwrap();
-    assert_ne!(shared.apply(a[1].clone()).unwrap().data.to_vec(), alone_a[1]);
+    assert_ne!(
+        shared.apply(a[1].clone()).unwrap().data.to_vec(),
+        alone_a[1]
+    );
 }
 
 #[test]
@@ -526,9 +842,17 @@ fn hqdn3d_history_resets_on_reset_and_on_a_size_change() {
 
     let mut inst = chain.clone().instantiate();
     inst.apply(f16(1)).unwrap();
-    assert_ne!(inst.apply(f16(2)).unwrap().data.to_vec(), fresh(f16(2)), "history must matter");
+    assert_ne!(
+        inst.apply(f16(2)).unwrap().data.to_vec(),
+        fresh(f16(2)),
+        "history must matter"
+    );
     inst.reset();
-    assert_eq!(inst.apply(f16(2)).unwrap().data.to_vec(), fresh(f16(2)), "reset must forget it");
+    assert_eq!(
+        inst.apply(f16(2)).unwrap().data.to_vec(),
+        fresh(f16(2)),
+        "reset must forget it"
+    );
     // A frame of another size cannot be filtered against the old history.
     assert_eq!(inst.apply(f8(3)).unwrap().data.to_vec(), fresh(f8(3)));
 }

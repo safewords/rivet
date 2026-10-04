@@ -340,7 +340,10 @@ fn in_strips(
                 s.spawn(move || kernel(&strip))
             })
             .collect();
-        handles.into_iter().map(|h| h.join().expect("a tonemap strip panicked")).collect()
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("a tonemap strip panicked"))
+            .collect()
     });
     let (mut y, mut cb, mut cr) = (Vec::new(), Vec::new(), Vec::new());
     for (py, pcb, pcr) in parts {
@@ -383,11 +386,23 @@ fn planes_10(src: &VideoFrame) -> Result<Planes10<'_>> {
         let b = &bytes[at..at + 2 * n];
         match bytemuck_u16(b) {
             Some(s) => std::borrow::Cow::Borrowed(s),
-            None => std::borrow::Cow::Owned(b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()),
+            None => std::borrow::Cow::Owned(
+                b.as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| u16::from_le_bytes(*c))
+                    .collect(),
+            ),
         }
     };
     let cn = (w / 2) * (h / 2);
-    Ok(Planes10 { w, h, y: plane(0, w * h), cb: plane(y_plane_bytes, cn), cr: plane(y_plane_bytes + c_plane_bytes, cn) })
+    Ok(Planes10 {
+        w,
+        h,
+        y: plane(0, w * h),
+        cb: plane(y_plane_bytes, cn),
+        cr: plane(y_plane_bytes + c_plane_bytes, cn),
+    })
 }
 
 /// `b` as `u16` samples when it is 2-aligned (and the host little-endian).
@@ -469,21 +484,29 @@ pub fn tonemap_yuv420p10le_bt2020_to_yuv420p_bt709(
     let threads = crate::simd::picture_threads();
     let (out_y, out_cb, out_cr) = if use_avx2 {
         #[cfg(target_arch = "x86_64")]
-        if crate::simd::Level::get() >= crate::simd::Level::Avx512 && std::is_x86_feature_detected!("avx512f") {
+        if crate::simd::Level::get() >= crate::simd::Level::Avx512
+            && std::is_x86_feature_detected!("avx512f")
+        {
             // SAFETY: AVX-512 F, AVX2 and FMA detected; the planes were
             // bounds-checked by `planes_10` and a strip is a whole picture.
-            let out = in_strips(&p, threads, |s| unsafe { simd512::tonemap_planes_avx512(s, transfer, max_white) });
+            let out = in_strips(&p, threads, |s| unsafe {
+                simd512::tonemap_planes_avx512(s, transfer, max_white)
+            });
             return Ok(pack_frame(src, out.0, out.1, out.2));
         }
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             // SAFETY: AVX2 and FMA detected (`use_avx2`); as above.
-            in_strips(&p, threads, |s| unsafe { simd::tonemap_planes_avx2(s, transfer, max_white) })
+            in_strips(&p, threads, |s| unsafe {
+                simd::tonemap_planes_avx2(s, transfer, max_white)
+            })
         }
         #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
         unreachable!("AVX2 is only detected on x86")
     } else {
-        in_strips(&p, threads, |s| tonemap_planes_scalar(s, transfer, max_white))
+        in_strips(&p, threads, |s| {
+            tonemap_planes_scalar(s, transfer, max_white)
+        })
     };
     Ok(pack_frame(src, out_y, out_cb, out_cr))
 }
@@ -502,7 +525,8 @@ pub fn tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_avx512(
         let max_white = max_white_for(max_white_nits);
         // SAFETY: AVX-512 F, AVX2 and FMA runtime-detected; the planes were
         // bounds-checked by `planes_10`.
-        let (out_y, out_cb, out_cr) = unsafe { simd512::tonemap_planes_avx512(&p, transfer, max_white) };
+        let (out_y, out_cb, out_cr) =
+            unsafe { simd512::tonemap_planes_avx512(&p, transfer, max_white) };
         return Ok(pack_frame(src, out_y, out_cb, out_cr));
     }
     tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_avx2(src, transfer, max_white_nits)
@@ -533,7 +557,11 @@ pub fn tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(
 }
 
 /// The scalar reference over planes.
-fn tonemap_planes_scalar(p: &Planes10<'_>, transfer: TransferFn, max_white: f32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+fn tonemap_planes_scalar(
+    p: &Planes10<'_>,
+    transfer: TransferFn,
+    max_white: f32,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let (w, h) = (p.w, p.h);
     let mut out_y = vec![0u8; w * h];
     let mut out_cb = vec![0u8; (w / 2) * (h / 2)];
@@ -629,8 +657,11 @@ mod simd {
             let x = _mm256_max_ps(_mm256_set1_ps(-88.376_26), x);
             // fx = round(x · log2 e)
             // (the constant is bit-identical to the literal 1.442_695 used before)
-            let fx =
-                _mm256_fmadd_ps(x, _mm256_set1_ps(std::f32::consts::LOG2_E), _mm256_set1_ps(0.5));
+            let fx = _mm256_fmadd_ps(
+                x,
+                _mm256_set1_ps(std::f32::consts::LOG2_E),
+                _mm256_set1_ps(0.5),
+            );
             let fx = _mm256_floor_ps(fx);
             // x -= fx · ln 2 (split in two for precision)
             let x = _mm256_fnmadd_ps(fx, _mm256_set1_ps(0.693_359_4), x);
@@ -664,7 +695,10 @@ mod simd {
             let x = _mm256_max_ps(x, _mm256_castsi256_ps(_mm256_set1_epi32(0x0080_0000)));
             let emm0 = _mm256_srli_epi32(_mm256_castps_si256(x), 23);
             // Keep the mantissa, force the exponent to that of 0.5.
-            let x = _mm256_and_ps(x, _mm256_castsi256_ps(_mm256_set1_epi32(!0x7f80_0000u32 as i32)));
+            let x = _mm256_and_ps(
+                x,
+                _mm256_castsi256_ps(_mm256_set1_epi32(!0x7f80_0000u32 as i32)),
+            );
             let x = _mm256_or_ps(x, _mm256_set1_ps(0.5));
             let emm0 = _mm256_sub_epi32(emm0, _mm256_set1_epi32(0x7f));
             let e = _mm256_add_ps(_mm256_cvtepi32_ps(emm0), _mm256_set1_ps(1.0));
@@ -711,7 +745,10 @@ mod simd {
         unsafe {
             let n = _mm256_min_ps(_mm256_max_ps(n, _mm256_setzero_ps()), _mm256_set1_ps(1.0));
             let np = pow_ps(n, _mm256_set1_ps(PQ_M2_INV));
-            let num = _mm256_max_ps(_mm256_sub_ps(np, _mm256_set1_ps(PQ_C1)), _mm256_setzero_ps());
+            let num = _mm256_max_ps(
+                _mm256_sub_ps(np, _mm256_set1_ps(PQ_C1)),
+                _mm256_setzero_ps(),
+            );
             let den = _mm256_fnmadd_ps(_mm256_set1_ps(PQ_C3), np, _mm256_set1_ps(PQ_C2));
             // den ≤ 0 → 0 (the scalar early return). Divide anyway, then mask.
             let den_ok = _mm256_cmp_ps(den, _mm256_setzero_ps(), _CMP_GT_OS);
@@ -727,8 +764,14 @@ mod simd {
         unsafe {
             let e = _mm256_min_ps(_mm256_max_ps(e, _mm256_setzero_ps()), _mm256_set1_ps(1.0));
             let low = _mm256_div_ps(_mm256_mul_ps(e, e), _mm256_set1_ps(3.0));
-            let t = _mm256_div_ps(_mm256_sub_ps(e, _mm256_set1_ps(HLG_C)), _mm256_set1_ps(HLG_A));
-            let high = _mm256_div_ps(_mm256_add_ps(exp_ps(t), _mm256_set1_ps(HLG_B)), _mm256_set1_ps(12.0));
+            let t = _mm256_div_ps(
+                _mm256_sub_ps(e, _mm256_set1_ps(HLG_C)),
+                _mm256_set1_ps(HLG_A),
+            );
+            let high = _mm256_div_ps(
+                _mm256_add_ps(exp_ps(t), _mm256_set1_ps(HLG_B)),
+                _mm256_set1_ps(12.0),
+            );
             let use_low = _mm256_cmp_ps(e, _mm256_set1_ps(0.5), _CMP_LE_OS);
             let scene = _mm256_blendv_ps(high, low, use_low);
             let display = pow_ps(scene, _mm256_set1_ps(HLG_OOTF_GAMMA));
@@ -824,17 +867,29 @@ mod simd {
             let r709 = _mm256_fnmadd_ps(
                 _mm256_set1_ps(0.07285),
                 b_l,
-                _mm256_fnmadd_ps(_mm256_set1_ps(0.58764), g_l, _mm256_mul_ps(_mm256_set1_ps(1.66049), r_l)),
+                _mm256_fnmadd_ps(
+                    _mm256_set1_ps(0.58764),
+                    g_l,
+                    _mm256_mul_ps(_mm256_set1_ps(1.66049), r_l),
+                ),
             );
             let g709 = _mm256_fnmadd_ps(
                 _mm256_set1_ps(0.01006),
                 b_l,
-                _mm256_fmadd_ps(_mm256_set1_ps(1.13290), g_l, _mm256_mul_ps(_mm256_set1_ps(-0.12455), r_l)),
+                _mm256_fmadd_ps(
+                    _mm256_set1_ps(1.13290),
+                    g_l,
+                    _mm256_mul_ps(_mm256_set1_ps(-0.12455), r_l),
+                ),
             );
             let b709 = _mm256_fmadd_ps(
                 _mm256_set1_ps(1.11873),
                 b_l,
-                _mm256_fnmadd_ps(_mm256_set1_ps(0.10058), g_l, _mm256_mul_ps(_mm256_set1_ps(-0.01815), r_l)),
+                _mm256_fnmadd_ps(
+                    _mm256_set1_ps(0.10058),
+                    g_l,
+                    _mm256_mul_ps(_mm256_set1_ps(-0.01815), r_l),
+                ),
             );
             // 4. Hable. 5. OETF.
             let r_o = bt709_oetf_ps(hable_tonemap_ps(r709, scale));
@@ -844,7 +899,11 @@ mod simd {
             let y = _mm256_fmadd_ps(
                 _mm256_set1_ps(0.0722),
                 b_o,
-                _mm256_fmadd_ps(_mm256_set1_ps(0.7152), g_o, _mm256_mul_ps(_mm256_set1_ps(0.2126), r_o)),
+                _mm256_fmadd_ps(
+                    _mm256_set1_ps(0.7152),
+                    g_o,
+                    _mm256_mul_ps(_mm256_set1_ps(0.2126), r_o),
+                ),
             );
             let cb = _mm256_div_ps(_mm256_sub_ps(b_o, y), _mm256_set1_ps(1.8556));
             let cr = _mm256_div_ps(_mm256_sub_ps(r_o, y), _mm256_set1_ps(1.5748));
@@ -852,9 +911,21 @@ mod simd {
                 let v = _mm256_round_ps(v, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
                 _mm256_min_ps(_mm256_max_ps(v, _mm256_set1_ps(lo)), _mm256_set1_ps(hi))
             };
-            let y8 = round(_mm256_fmadd_ps(y, _mm256_set1_ps(219.0), _mm256_set1_ps(16.0)), 16.0, 235.0);
-            let cb8 = round(_mm256_fmadd_ps(cb, _mm256_set1_ps(224.0), _mm256_set1_ps(128.0)), 16.0, 240.0);
-            let cr8 = round(_mm256_fmadd_ps(cr, _mm256_set1_ps(224.0), _mm256_set1_ps(128.0)), 16.0, 240.0);
+            let y8 = round(
+                _mm256_fmadd_ps(y, _mm256_set1_ps(219.0), _mm256_set1_ps(16.0)),
+                16.0,
+                235.0,
+            );
+            let cb8 = round(
+                _mm256_fmadd_ps(cb, _mm256_set1_ps(224.0), _mm256_set1_ps(128.0)),
+                16.0,
+                240.0,
+            );
+            let cr8 = round(
+                _mm256_fmadd_ps(cr, _mm256_set1_ps(224.0), _mm256_set1_ps(128.0)),
+                16.0,
+                240.0,
+            );
             (y8, cb8, cr8)
         }
     }
@@ -903,7 +974,16 @@ mod simd {
             let mut out_cb = vec![0u8; cw * (h / 2)];
             let mut out_cr = vec![0u8; cw * (h / 2)];
             for by in 0..(h / 2) {
-                sites_from(p, transfer, max_white, by, 0, &mut out_y, &mut out_cb, &mut out_cr);
+                sites_from(
+                    p,
+                    transfer,
+                    max_white,
+                    by,
+                    0,
+                    &mut out_y,
+                    &mut out_cb,
+                    &mut out_cr,
+                );
             }
             (out_y, out_cb, out_cr)
         }
@@ -1079,7 +1159,10 @@ mod simd512 {
         let invalid = _mm512_cmp_ps_mask::<_CMP_LE_OS>(x, _mm512_setzero_ps());
         let x = _mm512_max_ps(x, _mm512_castsi512_ps(_mm512_set1_epi32(0x0080_0000)));
         let emm0 = _mm512_srli_epi32::<23>(_mm512_castps_si512(x));
-        let x = _mm512_and_si512(_mm512_castps_si512(x), _mm512_set1_epi32(!0x7f80_0000u32 as i32));
+        let x = _mm512_and_si512(
+            _mm512_castps_si512(x),
+            _mm512_set1_epi32(!0x7f80_0000u32 as i32),
+        );
         let x = _mm512_castsi512_ps(_mm512_or_si512(x, _mm512_castps_si512(s(0.5))));
         let emm0 = _mm512_sub_epi32(emm0, _mm512_set1_epi32(0x7f));
         let e = _mm512_add_ps(_mm512_cvtepi32_ps(emm0), s(1.0));
@@ -1157,7 +1240,11 @@ mod simd512 {
     fn hable_partial_ps(x: __m512) -> __m512 {
         let s = _mm512_set1_ps;
         let ax = _mm512_mul_ps(s(HABLE_A), x);
-        let num = _mm512_fmadd_ps(x, _mm512_add_ps(ax, s(HABLE_C * HABLE_B)), s(HABLE_D * HABLE_E));
+        let num = _mm512_fmadd_ps(
+            x,
+            _mm512_add_ps(ax, s(HABLE_C * HABLE_B)),
+            s(HABLE_D * HABLE_E),
+        );
         let den = _mm512_fmadd_ps(x, _mm512_add_ps(ax, s(HABLE_B)), s(HABLE_D * HABLE_F));
         _mm512_sub_ps(_mm512_div_ps(num, den), s(HABLE_E / HABLE_F))
     }
@@ -1185,7 +1272,13 @@ mod simd512 {
     /// Sixteen pixels, as the AVX2 kernel's `tonemap_8px` does eight.
     #[inline]
     #[target_feature(enable = "avx512f,avx2,fma")]
-    fn tonemap_16px(y_n: __m512, cb_n: __m512, cr_n: __m512, transfer: TransferFn, scale: __m512) -> (__m512, __m512, __m512) {
+    fn tonemap_16px(
+        y_n: __m512,
+        cb_n: __m512,
+        cr_n: __m512,
+        transfer: TransferFn,
+        scale: __m512,
+    ) -> (__m512, __m512, __m512) {
         let s = _mm512_set1_ps;
         let r_g = _mm512_fmadd_ps(s(1.4746), cr_n, y_n);
         let g_g = _mm512_fnmadd_ps(s(0.57135), cr_n, _mm512_fnmadd_ps(s(0.16455), cb_n, y_n));
@@ -1193,16 +1286,37 @@ mod simd512 {
         let r_l = eotf_ps(transfer, r_g);
         let g_l = eotf_ps(transfer, g_g);
         let b_l = eotf_ps(transfer, b_g);
-        let r709 = _mm512_fnmadd_ps(s(0.07285), b_l, _mm512_fnmadd_ps(s(0.58764), g_l, _mm512_mul_ps(s(1.66049), r_l)));
-        let g709 = _mm512_fnmadd_ps(s(0.01006), b_l, _mm512_fmadd_ps(s(1.13290), g_l, _mm512_mul_ps(s(-0.12455), r_l)));
-        let b709 = _mm512_fmadd_ps(s(1.11873), b_l, _mm512_fnmadd_ps(s(0.10058), g_l, _mm512_mul_ps(s(-0.01815), r_l)));
+        let r709 = _mm512_fnmadd_ps(
+            s(0.07285),
+            b_l,
+            _mm512_fnmadd_ps(s(0.58764), g_l, _mm512_mul_ps(s(1.66049), r_l)),
+        );
+        let g709 = _mm512_fnmadd_ps(
+            s(0.01006),
+            b_l,
+            _mm512_fmadd_ps(s(1.13290), g_l, _mm512_mul_ps(s(-0.12455), r_l)),
+        );
+        let b709 = _mm512_fmadd_ps(
+            s(1.11873),
+            b_l,
+            _mm512_fnmadd_ps(s(0.10058), g_l, _mm512_mul_ps(s(-0.01815), r_l)),
+        );
         let r_o = bt709_oetf_ps(hable_tonemap_ps(r709, scale));
         let g_o = bt709_oetf_ps(hable_tonemap_ps(g709, scale));
         let b_o = bt709_oetf_ps(hable_tonemap_ps(b709, scale));
-        let y = _mm512_fmadd_ps(s(0.0722), b_o, _mm512_fmadd_ps(s(0.7152), g_o, _mm512_mul_ps(s(0.2126), r_o)));
+        let y = _mm512_fmadd_ps(
+            s(0.0722),
+            b_o,
+            _mm512_fmadd_ps(s(0.7152), g_o, _mm512_mul_ps(s(0.2126), r_o)),
+        );
         let cb = _mm512_div_ps(_mm512_sub_ps(b_o, y), s(1.8556));
         let cr = _mm512_div_ps(_mm512_sub_ps(r_o, y), s(1.5748));
-        let round = |v: __m512, lo: f32, hi: f32| _mm512_min_ps(_mm512_max_ps(_mm512_roundscale_ps::<ROUND_NEAREST>(v), s(lo)), s(hi));
+        let round = |v: __m512, lo: f32, hi: f32| {
+            _mm512_min_ps(
+                _mm512_max_ps(_mm512_roundscale_ps::<ROUND_NEAREST>(v), s(lo)),
+                s(hi),
+            )
+        };
         let y8 = round(_mm512_fmadd_ps(y, s(219.0), s(16.0)), 16.0, 235.0);
         let cb8 = round(_mm512_fmadd_ps(cb, s(224.0), s(128.0)), 16.0, 240.0);
         let cr8 = round(_mm512_fmadd_ps(cr, s(224.0), s(128.0)), 16.0, 240.0);
@@ -1216,7 +1330,12 @@ mod simd512 {
     #[inline]
     #[target_feature(enable = "avx512f,avx2,fma")]
     unsafe fn store_16_bytes(dst: *mut u8, v: __m512) {
-        unsafe { _mm_storeu_si128(dst as *mut __m128i, _mm512_cvtepi32_epi8(_mm512_cvtps_epi32(v))) }
+        unsafe {
+            _mm_storeu_si128(
+                dst as *mut __m128i,
+                _mm512_cvtepi32_epi8(_mm512_cvtps_epi32(v)),
+            )
+        }
     }
 
     /// Sixteen u16 samples at `src` → sixteen f32 lanes.
@@ -1226,7 +1345,11 @@ mod simd512 {
     #[inline]
     #[target_feature(enable = "avx512f,avx2,fma")]
     unsafe fn load_16_u16_ps(src: *const u16) -> __m512 {
-        unsafe { _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(_mm256_loadu_si256(src as *const __m256i))) }
+        unsafe {
+            _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(_mm256_loadu_si256(
+                src as *const __m256i,
+            )))
+        }
     }
 
     /// The full frame, as `simd::tonemap_planes_avx2`: sixteen chroma sites
@@ -1236,7 +1359,11 @@ mod simd512 {
     /// # Safety
     /// AVX-512 F, AVX2 and FMA; `p` holds whole planes (`planes_10`).
     #[target_feature(enable = "avx512f,avx2,fma")]
-    pub(super) unsafe fn tonemap_planes_avx512(p: &Planes10<'_>, transfer: TransferFn, max_white: f32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    pub(super) unsafe fn tonemap_planes_avx512(
+        p: &Planes10<'_>,
+        transfer: TransferFn,
+        max_white: f32,
+    ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         unsafe {
             let (w, h) = (p.w, p.h);
             let cw = w / 2;
@@ -1250,8 +1377,10 @@ mod simd512 {
             let v_c_neutral = _mm512_set1_ps(C_NEUTRAL_10);
             let v_c_range_inv = _mm512_set1_ps(1.0 / (C_HALFRANGE_10 * 2.0));
             let dup_lo = _mm512_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7);
-            let dup_hi = _mm512_setr_epi32(8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14, 15, 15);
-            let evens = _mm512_setr_epi32(0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30);
+            let dup_hi =
+                _mm512_setr_epi32(8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14, 15, 15);
+            let evens =
+                _mm512_setr_epi32(0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30);
             let odds = _mm512_setr_epi32(1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31);
             let vec_sites = cw & !7;
             for by in 0..(h / 2) {
@@ -1264,32 +1393,60 @@ mod simd512 {
                     let cr = load_16_u16_ps(p.cr.as_ptr().add(c_row + bx));
                     let cb_n = _mm512_mul_ps(_mm512_sub_ps(cb, v_c_neutral), v_c_range_inv);
                     let cr_n = _mm512_mul_ps(_mm512_sub_ps(cr, v_c_neutral), v_c_range_inv);
-                    let (cb_lo, cb_hi) = (_mm512_permutexvar_ps(dup_lo, cb_n), _mm512_permutexvar_ps(dup_hi, cb_n));
-                    let (cr_lo, cr_hi) = (_mm512_permutexvar_ps(dup_lo, cr_n), _mm512_permutexvar_ps(dup_hi, cr_n));
+                    let (cb_lo, cb_hi) = (
+                        _mm512_permutexvar_ps(dup_lo, cb_n),
+                        _mm512_permutexvar_ps(dup_hi, cb_n),
+                    );
+                    let (cr_lo, cr_hi) = (
+                        _mm512_permutexvar_ps(dup_lo, cr_n),
+                        _mm512_permutexvar_ps(dup_hi, cr_n),
+                    );
                     let mut acc_cb = _mm512_setzero_ps();
                     let mut acc_cr = _mm512_setzero_ps();
                     for row in [y_row0, y_row1] {
                         let base = row + bx * 2;
-                        let y_lo = _mm512_mul_ps(_mm512_sub_ps(load_16_u16_ps(p.y.as_ptr().add(base)), v_y_black), v_y_range_inv);
-                        let y_hi = _mm512_mul_ps(_mm512_sub_ps(load_16_u16_ps(p.y.as_ptr().add(base + 16)), v_y_black), v_y_range_inv);
+                        let y_lo = _mm512_mul_ps(
+                            _mm512_sub_ps(load_16_u16_ps(p.y.as_ptr().add(base)), v_y_black),
+                            v_y_range_inv,
+                        );
+                        let y_hi = _mm512_mul_ps(
+                            _mm512_sub_ps(load_16_u16_ps(p.y.as_ptr().add(base + 16)), v_y_black),
+                            v_y_range_inv,
+                        );
                         let (y8a, cb8a, cr8a) = tonemap_16px(y_lo, cb_lo, cr_lo, transfer, scale);
                         let (y8b, cb8b, cr8b) = tonemap_16px(y_hi, cb_hi, cr_hi, transfer, scale);
                         store_16_bytes(out_y.as_mut_ptr().add(base), y8a);
                         store_16_bytes(out_y.as_mut_ptr().add(base + 16), y8b);
                         // Pair sums of integer codes (exact in any order), in
                         // site order.
-                        let pair = |a: __m512, b: __m512| _mm512_add_ps(_mm512_permutex2var_ps(a, evens, b), _mm512_permutex2var_ps(a, odds, b));
+                        let pair = |a: __m512, b: __m512| {
+                            _mm512_add_ps(
+                                _mm512_permutex2var_ps(a, evens, b),
+                                _mm512_permutex2var_ps(a, odds, b),
+                            )
+                        };
                         acc_cb = _mm512_add_ps(acc_cb, pair(cb8a, cb8b));
                         acc_cr = _mm512_add_ps(acc_cr, pair(cr8a, cr8b));
                     }
                     let (quarter, half) = (_mm512_set1_ps(0.25), _mm512_set1_ps(0.5));
-                    let avg_cb = _mm512_roundscale_ps::<ROUND_DOWN>(_mm512_fmadd_ps(acc_cb, quarter, half));
-                    let avg_cr = _mm512_roundscale_ps::<ROUND_DOWN>(_mm512_fmadd_ps(acc_cr, quarter, half));
+                    let avg_cb =
+                        _mm512_roundscale_ps::<ROUND_DOWN>(_mm512_fmadd_ps(acc_cb, quarter, half));
+                    let avg_cr =
+                        _mm512_roundscale_ps::<ROUND_DOWN>(_mm512_fmadd_ps(acc_cr, quarter, half));
                     store_16_bytes(out_cb.as_mut_ptr().add(c_row + bx), avg_cb);
                     store_16_bytes(out_cr.as_mut_ptr().add(c_row + bx), avg_cr);
                     bx += 16;
                 }
-                super::simd::sites_from(p, transfer, max_white, by, bx, &mut out_y, &mut out_cb, &mut out_cr);
+                super::simd::sites_from(
+                    p,
+                    transfer,
+                    max_white,
+                    by,
+                    bx,
+                    &mut out_y,
+                    &mut out_cb,
+                    &mut out_cr,
+                );
             }
             (out_y, out_cb, out_cr)
         }
@@ -1552,9 +1709,15 @@ mod tests {
         let grid = [0u16, 64, 256, 512, 768, 960, 1023];
         for tail in [0usize, 6, 16, 22] {
             let frame = ramp_frame(&grid, tail);
-            for (transfer, nits) in [(TransferFn::St2084, None), (TransferFn::St2084, Some(4000.0)), (TransferFn::AribStdB67, None)] {
-                let a = tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_avx2(&frame, transfer, nits).unwrap();
-                let b = tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_avx512(&frame, transfer, nits).unwrap();
+            for (transfer, nits) in [
+                (TransferFn::St2084, None),
+                (TransferFn::St2084, Some(4000.0)),
+                (TransferFn::AribStdB67, None),
+            ] {
+                let a = tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_avx2(&frame, transfer, nits)
+                    .unwrap();
+                let b = tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_avx512(&frame, transfer, nits)
+                    .unwrap();
                 assert!(a.data == b.data, "{transfer:?} nits={nits:?} tail={tail}");
             }
         }
@@ -1573,21 +1736,45 @@ mod tests {
         let mw = max_white_for(None);
         let whole = tonemap_planes_scalar(&p, TransferFn::St2084, mw);
         for threads in [2usize, 3, 7, 64] {
-            assert_eq!(in_strips(&p, threads, |s| tonemap_planes_scalar(s, TransferFn::St2084, mw)), whole, "{threads} threads");
+            assert_eq!(
+                in_strips(&p, threads, |s| tonemap_planes_scalar(
+                    s,
+                    TransferFn::St2084,
+                    mw
+                )),
+                whole,
+                "{threads} threads"
+            );
         }
         // The same frame from a buffer one byte off alignment.
         let mut shifted = vec![0u8];
         shifted.extend_from_slice(&frame.data);
-        let odd = VideoFrame::new(Bytes::from(shifted).slice(1..), frame.width, frame.height, frame.format, frame.color_space, frame.pts);
-        assert_eq!(tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(&odd, TransferFn::St2084, None).unwrap().data, tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(&frame, TransferFn::St2084, None).unwrap().data);
+        let odd = VideoFrame::new(
+            Bytes::from(shifted).slice(1..),
+            frame.width,
+            frame.height,
+            frame.format,
+            frame.color_space,
+            frame.pts,
+        );
+        assert_eq!(
+            tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(&odd, TransferFn::St2084, None)
+                .unwrap()
+                .data,
+            tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(&frame, TransferFn::St2084, None)
+                .unwrap()
+                .data
+        );
     }
 
     #[test]
     fn dispatcher_agrees_with_both_paths_and_honours_the_scalar_switch() {
         let frame = ramp_frame(&[64u16, 512, 960], 2);
-        let s = tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(&frame, TransferFn::St2084, None)
-            .unwrap();
-        let d = tonemap_yuv420p10le_bt2020_to_yuv420p_bt709(&frame, TransferFn::St2084, None).unwrap();
+        let s =
+            tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(&frame, TransferFn::St2084, None)
+                .unwrap();
+        let d =
+            tonemap_yuv420p10le_bt2020_to_yuv420p_bt709(&frame, TransferFn::St2084, None).unwrap();
         let (max, _) = max_abs_diff(&s.data, &d.data);
         assert!(max <= 1);
         // The `_avx2` entry falls back to scalar where AVX2 is missing, so it
@@ -1607,10 +1794,10 @@ mod tests {
             eprintln!("SKIP: no AVX2+FMA on this host");
             return;
         }
-        #[cfg(target_arch = "x86_64")]
-        use std::arch::x86_64::*;
         #[cfg(target_arch = "x86")]
         use std::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
+        use std::arch::x86_64::*;
         #[target_feature(enable = "avx2,fma")]
         unsafe fn run() {
             unsafe {
@@ -1618,7 +1805,8 @@ mod tests {
                 // log over 1e-6..1e3, exp over -20..20, pow over the exponents
                 // the kernel uses, on 8-lane batches.
                 for i in (0..8000).step_by(8) {
-                    let xs: [f32; 8] = std::array::from_fn(|k| 1e-6 * 1.002_5f32.powi((i + k) as i32));
+                    let xs: [f32; 8] =
+                        std::array::from_fn(|k| 1e-6 * 1.002_5f32.powi((i + k) as i32));
                     let x = _mm256_loadu_ps(xs.as_ptr());
                     let mut got = [0f32; 8];
                     _mm256_storeu_ps(got.as_mut_ptr(), super::simd::log_ps(x));
@@ -1627,7 +1815,8 @@ mod tests {
                         let rel = ((got[k] - want) / want.abs().max(1e-3)).abs();
                         worst_rel = worst_rel.max(rel);
                     }
-                    let es: [f32; 8] = std::array::from_fn(|k| -20.0 + 40.0 * ((i + k) as f32 / 8000.0));
+                    let es: [f32; 8] =
+                        std::array::from_fn(|k| -20.0 + 40.0 * ((i + k) as f32 / 8000.0));
                     let e = _mm256_loadu_ps(es.as_ptr());
                     _mm256_storeu_ps(got.as_mut_ptr(), super::simd::exp_ps(e));
                     for k in 0..8 {

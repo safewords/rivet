@@ -133,8 +133,14 @@ pub(super) struct TranscodeParams {
 
 /// `a,b` → `["a", "b"]`, blanks dropped.
 pub(super) fn hook_names(list: Option<&str>) -> Vec<String> {
-    list.map(|l| l.split(',').map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).collect())
-        .unwrap_or_default()
+    list.map(|l| {
+        l.split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_string)
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 impl TranscodeParams {
@@ -144,8 +150,7 @@ impl TranscodeParams {
     pub(super) fn to_settings(&self) -> Result<TranscodeSettings> {
         use crate::settings::{
             parse_audio, parse_bit_depth, parse_color, parse_decode_plan, parse_encode_plan,
-            parse_mode, parse_quality_target, parse_rung,
-            parse_video_codec,
+            parse_mode, parse_quality_target, parse_rung, parse_video_codec,
         };
         let mut s = TranscodeSettings::default();
         if let Some(m) = &self.mode {
@@ -182,7 +187,8 @@ impl TranscodeParams {
             s.audio = Some(parse_audio(a)?);
         }
         if let Some(b) = &self.audio_bitrate {
-            s.audio_bitrate = crate::settings::parse_bitrate_or_standard(b).context("audio_bitrate")?;
+            s.audio_bitrate =
+                crate::settings::parse_bitrate_or_standard(b).context("audio_bitrate")?;
         }
         if let Some(c) = &self.audio_channels {
             s.audio_channels = Some(crate::settings::parse_audio_channels(c)?);
@@ -204,7 +210,8 @@ impl TranscodeParams {
             }
         }
         if let Some(b) = &self.video_bitrate {
-            s.video_bitrate = crate::settings::parse_bitrate_or_standard(b).context("video_bitrate")?;
+            s.video_bitrate =
+                crate::settings::parse_bitrate_or_standard(b).context("video_bitrate")?;
         }
         if let Some(b) = &self.video_buffer {
             s.video_buffer_ms = Some(crate::settings::parse_buffer(b).context("video_buffer")?);
@@ -443,7 +450,9 @@ impl SpecBody {
 
 /// Read the media for a JSON request from its `path` or `base64` field.
 /// The media, and the server file it was read from (none for inline base64).
-pub(super) fn read_input(src: &InputSource) -> Result<(Bytes, Option<std::path::PathBuf>), ApiError> {
+pub(super) fn read_input(
+    src: &InputSource,
+) -> Result<(Bytes, Option<std::path::PathBuf>), ApiError> {
     match (&src.path, &src.base64) {
         (Some(p), None) => {
             let path = resolve_path(p, true)?;
@@ -484,7 +493,10 @@ pub(super) fn resolve_path(p: &str, must_exist: bool) -> Result<std::path::PathB
             .ok_or_else(|| ApiError::bad_request(anyhow::anyhow!("invalid output path: {p}")))?;
         let cparent = match parent {
             Some(par) => std::fs::canonicalize(par).map_err(|_| {
-                ApiError::bad_request(anyhow::anyhow!("output directory not found: {}", par.display()))
+                ApiError::bad_request(anyhow::anyhow!(
+                    "output directory not found: {}",
+                    par.display()
+                ))
             })?,
             None => std::env::current_dir()
                 .map_err(|e| ApiError::internal(anyhow::anyhow!("cwd: {e}")))?,

@@ -288,44 +288,33 @@ unsafe fn bt601_to_bt709_avx2(
                     dy_luma_pair[i * 2] = dy_luma[i];
                     dy_luma_pair[i * 2 + 1] = dy_luma[i];
                 }
-                let dy_luma_lo =
-                    _mm256_loadu_si256(dy_luma_pair.as_ptr().add(0) as *const _);
-                let dy_luma_hi =
-                    _mm256_loadu_si256(dy_luma_pair.as_ptr().add(16) as *const _);
+                let dy_luma_lo = _mm256_loadu_si256(dy_luma_pair.as_ptr().add(0) as *const _);
+                let dy_luma_hi = _mm256_loadu_si256(dy_luma_pair.as_ptr().add(16) as *const _);
 
                 // Process both luma rows for this chroma row. Both share
                 // dy_luma_* because chroma is 4:2:0.
                 for row_off in [y_row0, y_row1] {
                     // Load 32 luma pixels.
-                    let y_u8 =
-                        _mm256_loadu_si256(y.as_ptr().add(row_off + cx * 2) as *const _);
+                    let y_u8 = _mm256_loadu_si256(y.as_ptr().add(row_off + cx * 2) as *const _);
                     // Widen low 16 bytes and high 16 bytes to i16.
                     let y_lo = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(y_u8));
-                    let y_hi =
-                        _mm256_cvtepu8_epi16(_mm256_extracti128_si256::<1>(y_u8));
+                    let y_hi = _mm256_cvtepu8_epi16(_mm256_extracti128_si256::<1>(y_u8));
 
                     let y_lo_out = _mm256_add_epi16(y_lo, dy_luma_lo);
                     let y_hi_out = _mm256_add_epi16(y_hi, dy_luma_hi);
 
                     // Clamp to limited-range luma [16, 235].
-                    let y_lo_out = _mm256_min_epi16(
-                        _mm256_max_epi16(y_lo_out, v_luma_lo),
-                        v_luma_hi,
-                    );
-                    let y_hi_out = _mm256_min_epi16(
-                        _mm256_max_epi16(y_hi_out, v_luma_lo),
-                        v_luma_hi,
-                    );
+                    let y_lo_out =
+                        _mm256_min_epi16(_mm256_max_epi16(y_lo_out, v_luma_lo), v_luma_hi);
+                    let y_hi_out =
+                        _mm256_min_epi16(_mm256_max_epi16(y_hi_out, v_luma_lo), v_luma_hi);
 
                     // Pack i16 → u8 with saturation and store 32 bytes.
                     let packed = _mm256_packus_epi16(y_lo_out, y_hi_out);
                     // packus interleaves lanes; permute to
                     // [lo[0..7], hi[0..7], lo[8..15], hi[8..15]] → lane order.
                     let packed = _mm256_permute4x64_epi64::<0b11_01_10_00>(packed);
-                    _mm256_storeu_si256(
-                        y.as_mut_ptr().add(row_off + cx * 2) as *mut _,
-                        packed,
-                    );
+                    _mm256_storeu_si256(y.as_mut_ptr().add(row_off + cx * 2) as *mut _, packed);
                 }
 
                 cx += 16;
@@ -336,8 +325,8 @@ unsafe fn bt601_to_bt709_avx2(
                 let cb_idx = c_row + cx;
                 let cbl = cb[cb_idx] as i32 - 128;
                 let crl = cr[cb_idx] as i32 - 128;
-                let delta = (super::M_Y_CB * cbl + super::M_Y_CR * crl + super::Q15_ROUND)
-                    >> super::Q15;
+                let delta =
+                    (super::M_Y_CB * cbl + super::M_Y_CR * crl + super::Q15_ROUND) >> super::Q15;
                 let xi = cx * 2;
                 for row_off in [y_row0, y_row1] {
                     for sub in 0..2 {
@@ -374,10 +363,8 @@ unsafe fn bt601_to_bt709_avx2(
             let new_cr = _mm256_add_epi16(new_cr, v_128);
 
             // Clamp [16, 240].
-            let new_cb =
-                _mm256_min_epi16(_mm256_max_epi16(new_cb, v_chroma_lo), v_chroma_hi);
-            let new_cr =
-                _mm256_min_epi16(_mm256_max_epi16(new_cr, v_chroma_lo), v_chroma_hi);
+            let new_cb = _mm256_min_epi16(_mm256_max_epi16(new_cb, v_chroma_lo), v_chroma_hi);
+            let new_cr = _mm256_min_epi16(_mm256_max_epi16(new_cr, v_chroma_lo), v_chroma_hi);
 
             // Pack and store.
             let cb_packed = _mm256_packus_epi16(new_cb, new_cb);

@@ -60,17 +60,17 @@ use crate::qsv_ffi::{
     MfxVideoParam,
 };
 
-mod ffi;
 mod config;
-mod surface;
+mod ffi;
 mod session;
+mod surface;
 #[cfg(test)]
 mod tests;
 
-use self::ffi::*;
 use self::config::*;
-use self::surface::*;
+use self::ffi::*;
 use self::session::*;
+use self::surface::*;
 
 /// Ceiling for the output bitstream buffer, which grows on
 /// `MFX_ERR_NOT_ENOUGH_BUFFER`. 64 MiB is far past any single frame at the
@@ -253,8 +253,7 @@ impl QsvEncoder {
 
             let rc = match gpu_index {
                 Some(gpu_index) => {
-                    let adapter =
-                        crate::gpu::vendor_index_of(gpu_index).unwrap_or(gpu_index);
+                    let adapter = crate::gpu::vendor_index_of(gpu_index).unwrap_or(gpu_index);
                     fn_create_session(loader, adapter, &mut session)
                 }
                 // Legacy path. The dispatcher is still loaded — it owns the
@@ -376,7 +375,7 @@ impl QsvEncoder {
                     buffer_id: MFX_EXTBUFF_VIDEO_SIGNAL_INFO,
                     buffer_sz: std::mem::size_of::<MfxExtVideoSignalInfo>() as u32,
                 },
-                video_format: 5,                     // unspecified format
+                video_format: 5, // unspecified format
                 video_full_range: if cm.full_range { 1 } else { 0 },
                 colour_description_present: 1,
                 colour_primaries: cm.colour_primaries as u16,
@@ -404,7 +403,10 @@ impl QsvEncoder {
             // with the P010 surface. The colour goes in the container (vpcC,
             // colr, WebM Colour), as for rivet's own VP9 encoder.
             let mut vp9_ext: Option<Box<MfxExtVp9Param>> = vp9.then(|| {
-                Box::new(MfxExtVp9Param::raw_frames(config.width as u16, config.height as u16))
+                Box::new(MfxExtVp9Param::raw_frames(
+                    config.width as u16,
+                    config.height as u16,
+                ))
             });
             if let Some(ref mut v) = vp9_ext {
                 ext_param_array.push((&mut **v as *mut MfxExtVp9Param) as *mut MfxExtBuffer);
@@ -413,17 +415,15 @@ impl QsvEncoder {
                 // H.265 Query/Init reject an unknown ext buffer, so attach it
                 // for AV1 only.
                 if config.codec == crate::frame::VideoCodec::Av1 {
-                    ext_param_array.push(
-                        (&mut *tile_ext as *mut MfxExtAv1TileParam) as *mut MfxExtBuffer,
-                    );
+                    ext_param_array
+                        .push((&mut *tile_ext as *mut MfxExtAv1TileParam) as *mut MfxExtBuffer);
                 }
                 ext_param_array.push(
                     (&mut *signal_info_ext as *mut MfxExtVideoSignalInfo) as *mut MfxExtBuffer,
                 );
                 if let Some(ref mut co3) = coding_option3_ext {
-                    ext_param_array.push(
-                        (&mut **co3 as *mut MfxExtCodingOption3) as *mut MfxExtBuffer,
-                    );
+                    ext_param_array
+                        .push((&mut **co3 as *mut MfxExtCodingOption3) as *mut MfxExtBuffer);
                 }
             }
             let num_ext_param = ext_param_array.len() as u16;
@@ -467,12 +467,8 @@ impl QsvEncoder {
             // `constant_qp` overrides the table's ICQ suggestion, laying the
             // slots out for ICQ writes the QP into a field CQP never reads,
             // so the driver silently falls back to its own default.
-            let slots = rate_slots_for_rc(
-                rc_effective,
-                qp_i_effective,
-                qp_p_effective,
-                icq_effective,
-            );
+            let slots =
+                rate_slots_for_rc(rc_effective, qp_i_effective, qp_p_effective, icq_effective);
 
             // A constant-rate rung replaces all of that: CBR with the rung's
             // rate as target and maximum, its HRD buffer and initial delay,
@@ -491,7 +487,12 @@ impl QsvEncoder {
                         multiplier = p.brc_param_multiplier,
                         "QSV constant bitrate"
                     );
-                    (MFX_RATECONTROL_CBR, p.slots, p.buffer_size_kb, p.brc_param_multiplier)
+                    (
+                        MFX_RATECONTROL_CBR,
+                        p.slots,
+                        p.buffer_size_kb,
+                        p.brc_param_multiplier,
+                    )
                 }
                 None => (rc_mode_u16, slots, 0u16, 0u16),
             };
@@ -574,7 +575,11 @@ impl QsvEncoder {
                 // degrades to today's behaviour instead of failing the encode.
                 // VP9 has no B frames (and Intel's VP9 encoder codes "I/P
                 // frame" only): one, whatever was asked.
-                gop_ref_dist: if vp9 { 1 } else { u16::from(config.overrides.bframes.unwrap_or(0)) + 1 },
+                gop_ref_dist: if vp9 {
+                    1
+                } else {
+                    u16::from(config.overrides.bframes.unwrap_or(0)) + 1
+                },
                 gop_opt_flag: 0,
                 idr_interval: 0,
                 rate_control_method: rc_mode_u16,
@@ -686,7 +691,10 @@ impl QsvEncoder {
                              set — a genuine incompatibility fails at Init with a hard error."
                         );
                     } else {
-                        tracing::debug!(status = err, "MFXVideoENCODE_Query error (already reported)");
+                        tracing::debug!(
+                            status = err,
+                            "MFXVideoENCODE_Query error (already reported)"
+                        );
                     }
                     false
                 }
@@ -975,9 +983,7 @@ impl QsvEncoder {
         // Per-pixel byte width: 1 for 8-bit YUV420p, 2 for Yuv420p10le.
         // Drives both the source buffer-size check and the per-row
         // copy width on the upload path below.
-        let bytes_per_sample: usize = if session.input_pixel_format
-            == PixelFormat::Yuv420p10le
-        {
+        let bytes_per_sample: usize = if session.input_pixel_format == PixelFormat::Yuv420p10le {
             2
         } else {
             1
@@ -1407,9 +1413,9 @@ impl QsvEncoder {
         }));
         match result {
             Ok(inner) => inner,
-            Err(_panic) => bail!(
-                "panic in QSV flush path — aborting rather than unwinding across FFI"
-            ),
+            Err(_panic) => {
+                bail!("panic in QSV flush path — aborting rather than unwinding across FFI")
+            }
         }
     }
 }
@@ -1431,8 +1437,12 @@ unsafe fn sync_and_drain_bs(
     packets: &mut Vec<EncodedPacket>,
 ) -> Result<()> {
     // Aliased so the body below reads the same as before the split.
-    let session = Bs { bitstream: session_bs };
-    struct Bs<'a> { bitstream: &'a mut MfxBitstream }
+    let session = Bs {
+        bitstream: session_bs,
+    };
+    struct Bs<'a> {
+        bitstream: &'a mut MfxBitstream,
+    }
     unsafe {
         let rc = fn_sync(sess, sync, 60_000);
         if rc != MFX_ERR_NONE {
@@ -1444,10 +1454,7 @@ unsafe fn sync_and_drain_bs(
             return Ok(());
         }
         let offset = session.bitstream.data_offset as usize;
-        let slice = std::slice::from_raw_parts(
-            session.bitstream.data.add(offset),
-            len,
-        );
+        let slice = std::slice::from_raw_parts(session.bitstream.data.add(offset), len);
         let data_bytes = Bytes::copy_from_slice(slice);
         // For AV1, oneVPL sets `MFX_FRAMETYPE_I` on key frames and
         // keeps `MFX_FRAMETYPE_IDR` unused (that flag is an H.264
@@ -1473,9 +1480,9 @@ unsafe fn sync_and_drain_bs(
         // This encoder is AV1-only — the tile params, the sequence-header
         // signalling and the dispatch above all say so — so the bitstream is
         // consulted for every packet rather than behind a codec test.
-        let is_keyframe =
-            (session.bitstream.frame_type & (MFX_FRAMETYPE_I | MFX_FRAMETYPE_IDR)) != 0
-                || crate::pixel_format::av1_packet_is_keyframe(&data_bytes);
+        let is_keyframe = (session.bitstream.frame_type & (MFX_FRAMETYPE_I | MFX_FRAMETYPE_IDR))
+            != 0
+            || crate::pixel_format::av1_packet_is_keyframe(&data_bytes);
         // The surface clock is `frame.pts * pts_timescale` (see the upload
         // path); undo that here so the packet carries the caller's own
         // timestamp. The muxers place samples by the order of these — with
@@ -1534,9 +1541,15 @@ impl Encoder for QsvEncoder {
             self.flush_drain()?;
         }
         let session = self.session.as_mut().expect("checked above");
-        debug_assert!(session.inflight.is_empty(), "flush_drain retires every sync point");
+        debug_assert!(
+            session.inflight.is_empty(),
+            "flush_drain retires every sync point"
+        );
         let rc = unsafe {
-            (session.fn_encode_reset)(session.session, &mut session.video_param as *mut MfxVideoParam)
+            (session.fn_encode_reset)(
+                session.session,
+                &mut session.video_param as *mut MfxVideoParam,
+            )
         };
         if rc < 0 {
             bail!("MFXVideoENCODE_Reset failed: {rc}");
@@ -1622,7 +1635,10 @@ impl QsvEncoder {
             data.extend_from_slice(sets);
             data.extend_from_slice(&pkt.data);
             pkt.data = bytes::Bytes::from(data);
-            tracing::debug!(event = "qsv.reset.param_sets", "parameter sets restored on the first keyframe after a reset");
+            tracing::debug!(
+                event = "qsv.reset.param_sets",
+                "parameter sets restored on the first keyframe after a reset"
+            );
         }
     }
 }
@@ -1656,8 +1672,14 @@ fn annexb_parameter_sets(data: &[u8], hevc: bool) -> Vec<u8> {
         while end > start && data[end - 1] == 0 && k + 1 < starts.len() {
             end -= 1;
         }
-        let Some(&header) = data.get(start) else { continue };
-        let is_param_set = if hevc { matches!((header >> 1) & 0x3f, 32..=34) } else { matches!(header & 0x1f, 7 | 8) };
+        let Some(&header) = data.get(start) else {
+            continue;
+        };
+        let is_param_set = if hevc {
+            matches!((header >> 1) & 0x3f, 32..=34)
+        } else {
+            matches!(header & 0x1f, 7 | 8)
+        };
         if is_param_set {
             out.extend_from_slice(&[0, 0, 0, 1]);
             out.extend_from_slice(&data[start..end]);
@@ -1690,14 +1712,21 @@ fn vp9_packet(hidden: &mut Vec<bytes::Bytes>, pkt: EncodedPacket) -> Option<Enco
         let joined = if frames.len() <= 8 {
             bytes::Bytes::from(vp9::superframe::join(&frames))
         } else {
-            tracing::warn!(frames = frames.len(), "QSV VP9: more hidden frames than a superframe holds; sending the shown frame alone");
+            tracing::warn!(
+                frames = frames.len(),
+                "QSV VP9: more hidden frames than a superframe holds; sending the shown frame alone"
+            );
             pkt.data.clone()
         };
         hidden.clear();
         joined
     };
     let is_keyframe = crate::vp9_header::packet_is_keyframe(&data);
-    Some(EncodedPacket { data, pts: pkt.pts, is_keyframe })
+    Some(EncodedPacket {
+        data,
+        pts: pkt.pts,
+        is_keyframe,
+    })
 }
 
 /// Align `v` up to the next multiple of `a`. `a` must be a power of 2.

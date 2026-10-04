@@ -10,24 +10,22 @@ use std::os::raw::{c_int, c_ulong, c_ulonglong};
 use std::ptr;
 use std::sync::{Arc, Mutex};
 
-use crate::decode::Decoder;
-use crate::frame::{ColorMetadata, ColorSpace, StreamInfo, TransferFn, VideoFrame};
 use super::callbacks::{
     decode_callback, display_callback, get_operating_point_callback, sequence_callback,
 };
 use super::convert::{codec_to_cuvid, decoded_frame_to_video_frame};
 use super::ffi::{
-    CUcontext, CUdevice,
-    CuVideoParserParams, CuVideoSourceDataPacket, CUvideoparser,
-    FnCuCtxCreate, FnCuCtxDestroy, FnCuCtxPopCurrent, FnCuCtxPushCurrent, FnCuDeviceGet,
-    FnCuInit, FnCuMemcpy2D,
-    FnCuvidCreateDecoder, FnCuvidCreateVideoParser, FnCuvidDecodePicture,
-    FnCuvidDestroyDecoder, FnCuvidDestroyVideoParser, FnCuvidGetDecoderCaps,
-    FnCuvidMapVideoFrame, FnCuvidParseVideoData, FnCuvidUnmapVideoFrame,
-    CUVID_AV1, CUVID_PKT_ENDOFSTREAM, CUVID_PKT_TIMESTAMP,
+    CUVID_AV1, CUVID_PKT_ENDOFSTREAM, CUVID_PKT_TIMESTAMP, CUcontext, CUdevice, CUvideoparser,
+    CuVideoParserParams, CuVideoSourceDataPacket, FnCuCtxCreate, FnCuCtxDestroy, FnCuCtxPopCurrent,
+    FnCuCtxPushCurrent, FnCuDeviceGet, FnCuInit, FnCuMemcpy2D, FnCuvidCreateDecoder,
+    FnCuvidCreateVideoParser, FnCuvidDecodePicture, FnCuvidDestroyDecoder,
+    FnCuvidDestroyVideoParser, FnCuvidGetDecoderCaps, FnCuvidMapVideoFrame, FnCuvidParseVideoData,
+    FnCuvidUnmapVideoFrame,
 };
 use super::state::{CallbackState, CtxScope, DecodedFrame, FrameCollector};
 use super::streaming::{NvdecInitErrorDecoder, NvdecStreamingDecoder};
+use crate::decode::Decoder;
+use crate::frame::{ColorMetadata, ColorSpace, StreamInfo, TransferFn, VideoFrame};
 
 // ─── Public decoder ────────────────────────────────────────────────
 pub struct NvdecDecoder {
@@ -506,4 +504,3 @@ impl Decoder for NvdecDecoder {
         Ok(Some(decoded_frame_to_video_frame(frame)))
     }
 }
-

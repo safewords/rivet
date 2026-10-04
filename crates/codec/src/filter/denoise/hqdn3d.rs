@@ -28,7 +28,10 @@
 //! unchanged (every difference is 0).
 
 // The vector bodies are only reached through `tiered!`'s x86 arms.
-#![cfg_attr(not(any(target_arch = "x86", target_arch = "x86_64")), allow(dead_code))]
+#![cfg_attr(
+    not(any(target_arch = "x86", target_arch = "x86_64")),
+    allow(dead_code)
+)]
 
 use anyhow::Result;
 
@@ -72,10 +75,27 @@ impl Strengths {
     pub fn resolve(ls: f32, cs: f32, lt: f32, ct: f32) -> Strengths {
         let given = |v: f32| v > 0.0 && v.is_finite();
         let luma_spatial = if given(ls) { ls } else { LUMA_SPATIAL_DEFAULT };
-        let chroma_spatial = if given(cs) { cs } else { 3.0 * luma_spatial / 4.0 };
-        let luma_tmp = if given(lt) { lt } else { 6.0 * luma_spatial / 4.0 };
-        let chroma_tmp = if given(ct) { ct } else { luma_tmp * chroma_spatial / luma_spatial };
-        Strengths { luma_spatial, chroma_spatial, luma_tmp, chroma_tmp }
+        let chroma_spatial = if given(cs) {
+            cs
+        } else {
+            3.0 * luma_spatial / 4.0
+        };
+        let luma_tmp = if given(lt) {
+            lt
+        } else {
+            6.0 * luma_spatial / 4.0
+        };
+        let chroma_tmp = if given(ct) {
+            ct
+        } else {
+            luma_tmp * chroma_spatial / luma_spatial
+        };
+        Strengths {
+            luma_spatial,
+            chroma_spatial,
+            luma_tmp,
+            chroma_tmp,
+        }
     }
 }
 
@@ -87,7 +107,9 @@ struct Curve {
 impl Curve {
     fn new(strength: f32) -> Self {
         if strength <= 0.0 || !strength.is_finite() {
-            return Curve { k: vec![0.0; CURVE_LEN + 1] };
+            return Curve {
+                k: vec![0.0; CURVE_LEN + 1],
+            };
         }
         let k_max = strength / (strength + KNEE);
         let tau = EDGE * strength;
@@ -130,7 +152,10 @@ unsafe fn step_v<S: Simd>(k: &[f32], state: S::F, x: S::F) -> S::F {
     unsafe {
         let d = S::sub_f32(state, x);
         let a = S::max_f32(d, S::sub_f32(S::set1_f32(0.0), d));
-        let p = S::min_f32(S::mul_f32(a, S::set1_f32(STEPS)), S::set1_f32(CURVE_LEN as f32));
+        let p = S::min_f32(
+            S::mul_f32(a, S::set1_f32(STEPS)),
+            S::set1_f32(CURVE_LEN as f32),
+        );
         let kv = S::lookup_f32(k, S::trunc_f32_i32(p));
         S::add_f32(x, S::mul_f32(kv, d))
     }
@@ -153,14 +178,24 @@ pub(crate) struct State {
 impl Prepared {
     pub(crate) fn new(strengths: Strengths) -> Self {
         Prepared {
-            spatial: [Curve::new(strengths.luma_spatial), Curve::new(strengths.chroma_spatial)],
-            temporal: [Curve::new(strengths.luma_tmp), Curve::new(strengths.chroma_tmp)],
+            spatial: [
+                Curve::new(strengths.luma_spatial),
+                Curve::new(strengths.chroma_spatial),
+            ],
+            temporal: [
+                Curve::new(strengths.luma_tmp),
+                Curve::new(strengths.chroma_tmp),
+            ],
         }
     }
 
     /// Filter the stream's next frame against `state` (its history), updating
     /// it. No history, or history of another frame size, starts afresh.
-    pub(crate) fn apply(&self, state: &mut Option<State>, frame: &VideoFrame) -> Result<VideoFrame> {
+    pub(crate) fn apply(
+        &self,
+        state: &mut Option<State>,
+        frame: &VideoFrame,
+    ) -> Result<VideoFrame> {
         let (yp, up, vp) = planes_8bit(frame, "hqdn3d")?;
         let (w, h) = (frame.width as usize, frame.height as usize);
         let dims = [(w, h), (w / 2, h / 2), (w / 2, h / 2)];
@@ -194,7 +229,9 @@ fn spatial(src: &[u8], w: usize, h: usize, curve: &Curve) -> Vec<f32> {
         return buf;
     }
     let tier = Tier::detect();
-    for_row_bands(&mut buf, w, MIN_BAND_ROWS, |_, rows| sweep_rows(tier, rows, w, &curve.k));
+    for_row_bands(&mut buf, w, MIN_BAND_ROWS, |_, rows| {
+        sweep_rows(tier, rows, w, &curve.k)
+    });
     columns(tier, &mut buf, w, h, &curve.k);
     buf
 }
@@ -242,7 +279,10 @@ unsafe fn sweep_rows_body<S: Simd>(rows: &mut [f32], w: usize, k: &[f32]) {
             for g in (0..full).step_by(l) {
                 let block = &mut rows[g * w..(g + l) * w];
                 for x in 0..w {
-                    S::store_f32(t.as_mut_ptr().add(x * l), S::lookup_f32(block, S::add_i32(down, S::set1_i32(x as i32))));
+                    S::store_f32(
+                        t.as_mut_ptr().add(x * l),
+                        S::lookup_f32(block, S::add_i32(down, S::set1_i32(x as i32))),
+                    );
                 }
                 let tp = t.as_mut_ptr();
                 let mut s = S::load_f32(tp);
@@ -259,7 +299,10 @@ unsafe fn sweep_rows_body<S: Simd>(rows: &mut [f32], w: usize, k: &[f32]) {
                     let row = &mut block[r * w..(r + 1) * w];
                     let mut x = 0;
                     while x < wide {
-                        S::store_f32(row.as_mut_ptr().add(x), S::lookup_f32(&t, S::add_i32(across, S::set1_i32((x * l + r) as i32))));
+                        S::store_f32(
+                            row.as_mut_ptr().add(x),
+                            S::lookup_f32(&t, S::add_i32(across, S::set1_i32((x * l + r) as i32))),
+                        );
                         x += l;
                     }
                     for x in wide..w {
@@ -321,7 +364,11 @@ unsafe fn column_step<S: Simd>(s: &mut [f32], row: &mut [f32], wide: usize, k: &
     unsafe {
         let mut x = 0;
         while x < wide {
-            let v = step_v::<S>(k, S::load_f32(s.as_ptr().add(x)), S::load_f32(row.as_ptr().add(x)));
+            let v = step_v::<S>(
+                k,
+                S::load_f32(s.as_ptr().add(x)),
+                S::load_f32(row.as_ptr().add(x)),
+            );
             S::store_f32(s.as_mut_ptr().add(x), v);
             S::store_f32(row.as_mut_ptr().add(x), v);
             x += S::LANES;
@@ -359,7 +406,11 @@ unsafe fn temporal_rows_body<S: Simd>(cur: &mut [f32], prev: &[f32], k: &[f32]) 
         let wide = cur.len() - cur.len() % l;
         let mut i = 0;
         while i < wide {
-            let v = step_v::<S>(k, S::load_f32(prev.as_ptr().add(i)), S::load_f32(cur.as_ptr().add(i)));
+            let v = step_v::<S>(
+                k,
+                S::load_f32(prev.as_ptr().add(i)),
+                S::load_f32(cur.as_ptr().add(i)),
+            );
             S::store_f32(cur.as_mut_ptr().add(i), v);
             i += l;
         }
@@ -385,7 +436,10 @@ unsafe fn to_u8_body<S: Simd>(src: &[f32], out: &mut [u8]) {
         let wide = src.len() - src.len() % l;
         let mut i = 0;
         while i < wide {
-            S::store_f32_u8(out.as_mut_ptr().add(i), round_clamp_u8::<S>(S::load_f32(src.as_ptr().add(i))));
+            S::store_f32_u8(
+                out.as_mut_ptr().add(i),
+                round_clamp_u8::<S>(S::load_f32(src.as_ptr().add(i))),
+            );
             i += l;
         }
         to_u8_scalar(&src[wide..], &mut out[wide..]);
@@ -399,7 +453,12 @@ mod tests {
     #[test]
     fn omitted_strengths_derive_from_the_given_ones() {
         let r = Strengths::resolve;
-        let s = |ls, cs, lt, ct| Strengths { luma_spatial: ls, chroma_spatial: cs, luma_tmp: lt, chroma_tmp: ct };
+        let s = |ls, cs, lt, ct| Strengths {
+            luma_spatial: ls,
+            chroma_spatial: cs,
+            luma_tmp: lt,
+            chroma_tmp: ct,
+        };
         assert_eq!(r(0.0, 0.0, 0.0, 0.0), s(4.0, 3.0, 6.0, 4.5));
         assert_eq!(r(8.0, 0.0, 0.0, 0.0), s(8.0, 6.0, 12.0, 9.0));
         assert_eq!(r(2.0, 0.0, 10.0, 0.0), s(2.0, 1.5, 10.0, 7.5));
@@ -412,8 +471,14 @@ mod tests {
     fn retention_falls_with_the_difference_and_rises_with_the_strength() {
         for st in [1.0f32, 4.0, 10.0] {
             let c = Curve::new(st);
-            assert!(c.k.windows(2).all(|p| p[1] <= p[0]), "k must not rise with d");
-            assert!(c.k[0] < 1.0, "k must stay below 1 so the state cannot freeze");
+            assert!(
+                c.k.windows(2).all(|p| p[1] <= p[0]),
+                "k must not rise with d"
+            );
+            assert!(
+                c.k[0] < 1.0,
+                "k must stay below 1 so the state cannot freeze"
+            );
             // An edge of 10·S passes essentially untouched.
             assert!(c.step(0.0, 10.0 * st) > 10.0 * st - 1e-3);
         }
@@ -436,10 +501,19 @@ mod tests {
     fn every_tier_matches_the_scalar_stages() {
         let mut seed = 0x4d_u64;
         let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) as u32
         };
-        for &(w, h) in &[(1usize, 1usize), (7, 3), (16, 8), (19, 13), (33, 9), (64, 17)] {
+        for &(w, h) in &[
+            (1usize, 1usize),
+            (7, 3),
+            (16, 8),
+            (19, 13),
+            (33, 9),
+            (64, 17),
+        ] {
             for kind in 0..3 {
                 let src: Vec<u8> = (0..w * h)
                     .map(|_| match kind {
@@ -463,13 +537,22 @@ mod tests {
                     for tier in Tier::available() {
                         let mut rows = base.clone();
                         sweep_rows(tier, &mut rows, w, &c.k);
-                        assert!(rows == want_rows, "rows {tier:?} {w}x{h} kind {kind} S {strength}");
+                        assert!(
+                            rows == want_rows,
+                            "rows {tier:?} {w}x{h} kind {kind} S {strength}"
+                        );
                         let mut cols = want_rows.clone();
                         columns(tier, &mut cols, w, h, &c.k);
-                        assert!(cols == want_cols, "columns {tier:?} {w}x{h} kind {kind} S {strength}");
+                        assert!(
+                            cols == want_cols,
+                            "columns {tier:?} {w}x{h} kind {kind} S {strength}"
+                        );
                         let mut t = want_cols.clone();
                         temporal_rows(tier, &mut t, &prev, &c.k);
-                        assert!(t == want_t, "temporal {tier:?} {w}x{h} kind {kind} S {strength}");
+                        assert!(
+                            t == want_t,
+                            "temporal {tier:?} {w}x{h} kind {kind} S {strength}"
+                        );
                         let mut o = vec![0u8; w * h];
                         to_u8(tier, &want_t, &mut o);
                         assert_eq!(o, want_u8, "to_u8 {tier:?} {w}x{h}");

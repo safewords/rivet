@@ -16,10 +16,10 @@
 //! packet payloads). The mux + demux code paths are exercised end-to-end.
 
 use bytes::Bytes;
-use frame::EncodedPacket;
 use container::AudioInfo;
 use container::demux;
 use container::mux::Av1Mp4Muxer;
+use frame::EncodedPacket;
 
 /// Minimal AV1 OBU_SEQUENCE_HEADER with obu_has_size_field=1. Required to
 /// pass `extract_sequence_header` during finalize. (Mirrors the helper in

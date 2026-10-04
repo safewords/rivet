@@ -126,7 +126,11 @@ impl AudioEncoder for VorbisEncoder {
                 let ch = usize::from(self.channels);
                 self.buf.clear();
                 self.buf.resize(frame.samples.len(), 0.0);
-                for (dst, src) in self.buf.chunks_exact_mut(ch).zip(frame.samples.chunks_exact(ch)) {
+                for (dst, src) in self
+                    .buf
+                    .chunks_exact_mut(ch)
+                    .zip(frame.samples.chunks_exact(ch))
+                {
                     for (slot, &native) in order.iter().enumerate() {
                         dst[slot] = src[native];
                     }
@@ -165,7 +169,15 @@ mod tests {
     use crate::audio::{AudioCodec, AudioDecoder};
 
     fn config(sample_rate: u32, channels: u8, quality: Option<f32>) -> AudioEncoderConfig {
-        AudioEncoderConfig { codec: AudioCodec::Vorbis, sample_rate, channels, bitrate: 0, quality, layout: None, threads: 0 }
+        AudioEncoderConfig {
+            codec: AudioCodec::Vorbis,
+            sample_rate,
+            channels,
+            bitrate: 0,
+            quality,
+            layout: None,
+            threads: 0,
+        }
     }
 
     #[test]
@@ -184,17 +196,30 @@ mod tests {
         let freqs = [300.0f32, 500.0, 700.0, 60.0, 1100.0, 1300.0]; // native 5.1: FL FR FC LFE BL BR
         let n = 48_000;
         let pcm: Vec<f32> = (0..n * 6)
-            .map(|i| 0.3 * (2.0 * std::f32::consts::PI * freqs[i % 6] * (i / 6) as f32 / 48_000.0).sin())
+            .map(|i| {
+                0.3 * (2.0 * std::f32::consts::PI * freqs[i % 6] * (i / 6) as f32 / 48_000.0).sin()
+            })
             .collect();
         let mut enc = VorbisEncoder::new(&config(48_000, 6, None)).unwrap();
         assert_eq!((enc.pre_skip(), enc.sample_rate()), (0, 48_000));
         let mut packets = Vec::new();
         for c in pcm.chunks(6 * 1500) {
-            packets.extend(enc.encode(&AudioFrame { samples: c.to_vec(), sample_rate: 48_000, channels: 6, pts: 0 }).unwrap());
+            packets.extend(
+                enc.encode(&AudioFrame {
+                    samples: c.to_vec(),
+                    sample_rate: 48_000,
+                    channels: 6,
+                    pts: 0,
+                })
+                .unwrap(),
+            );
         }
         packets.extend(enc.flush().unwrap());
         assert_eq!(packets.iter().map(|p| p.duration).sum::<i64>(), n as i64);
-        assert_eq!(packets[0].duration, 0, "the first packet only primes the overlap");
+        assert_eq!(
+            packets[0].duration, 0,
+            "the first packet only primes the overlap"
+        );
         let mut dec = VorbisDecoder::new(Some(&enc.extra_data()), 48_000, 6).unwrap();
         let mut out = Vec::new();
         for p in &packets {

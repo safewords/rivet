@@ -43,11 +43,19 @@ fn tool(name: &str) -> Option<PathBuf> {
         "alacconvert" => Command::new(&path).output().is_ok_and(|o| {
             String::from_utf8_lossy(&[o.stdout, o.stderr].concat()).contains("alacconvert")
         }),
-        "mediainfo" => Command::new(&path).arg("--Version").output().is_ok_and(|o| o.status.success()),
-        _ => Command::new(&path).arg("--version").output().is_ok_and(|o| o.status.success()),
+        "mediainfo" => Command::new(&path)
+            .arg("--Version")
+            .output()
+            .is_ok_and(|o| o.status.success()),
+        _ => Command::new(&path)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success()),
     };
     if !found && std::env::var_os("RIVET_REQUIRE_LOSSLESS_ORACLES").is_some() {
-        panic!("RIVET_REQUIRE_LOSSLESS_ORACLES is set, and `{name}` does not run (set {var} or put it on PATH)");
+        panic!(
+            "RIVET_REQUIRE_LOSSLESS_ORACLES is set, and `{name}` does not run (set {var} or put it on PATH)"
+        );
     }
     found.then_some(path)
 }
@@ -108,7 +116,10 @@ fn signal(frames: usize, channels: usize, bits: u32, seed: u32) -> Vec<i32> {
 /// Little-endian raw PCM in the fewest whole bytes per sample.
 fn raw_bytes(samples: &[i32], bits: u32) -> Vec<u8> {
     let width = bits.div_ceil(8) as usize;
-    samples.iter().flat_map(|s| s.to_le_bytes()[..width].to_vec()).collect()
+    samples
+        .iter()
+        .flat_map(|s| s.to_le_bytes()[..width].to_vec())
+        .collect()
 }
 
 fn read_raw(path: &Path, bits: u32) -> Vec<i32> {
@@ -124,14 +135,20 @@ fn read_raw(path: &Path, bits: u32) -> Vec<i32> {
         .collect()
 }
 
-
 /// The audio track of a file, as the job engine reads it.
 fn demux_audio(data: &[u8]) -> container::streaming::AudioSource {
-    container::streaming::demux_audio(bytes::Bytes::copy_from_slice(data)).unwrap().expect("an audio track")
+    container::streaming::demux_audio(bytes::Bytes::copy_from_slice(data))
+        .unwrap()
+        .expect("an audio track")
 }
 
 fn decode_flac_track(track: &container::demux::AudioTrack) -> (Vec<i32>, FlacDecoder) {
-    let mut dec = FlacDecoder::new(Some(&track.codec_private), track.sample_rate, track.channels as u8).unwrap();
+    let mut dec = FlacDecoder::new(
+        Some(&track.codec_private),
+        track.sample_rate,
+        track.channels as u8,
+    )
+    .unwrap();
     let mut out = Vec::new();
     for p in &track.samples {
         out.extend(dec.decode_int(p).unwrap().0);
@@ -156,12 +173,26 @@ fn first_mismatch(a: &[i32], b: &[i32]) -> String {
 }
 
 /// `flac`'s encode of `pcm` (raw, little-endian, signed) with `args`.
-fn flac_encode(flac: &Path, pcm: &[i32], rate: u32, channels: usize, bits: u32, args: &[&str], name: &str) -> PathBuf {
+fn flac_encode(
+    flac: &Path,
+    pcm: &[i32],
+    rate: u32,
+    channels: usize,
+    bits: u32,
+    args: &[&str],
+    name: &str,
+) -> PathBuf {
     let raw = scratch(&format!("{name}.raw"));
     let out = scratch(&format!("{name}.flac"));
     std::fs::write(&raw, raw_bytes(pcm, bits)).unwrap();
     run(Command::new(flac)
-        .args(["--silent", "-f", "--force-raw-format", "--endian=little", "--sign=signed"])
+        .args([
+            "--silent",
+            "-f",
+            "--force-raw-format",
+            "--endian=little",
+            "--sign=signed",
+        ])
         .arg(format!("--channels={channels}"))
         .arg(format!("--bps={bits}"))
         .arg(format!("--sample-rate={rate}"))
@@ -176,17 +207,29 @@ fn flac_encode(flac: &Path, pcm: &[i32], rate: u32, channels: usize, bits: u32, 
 /// reads: native FLAC, CAF, MP4).
 fn mkvmerge(mkvmerge: &Path, input: &Path, name: &str) -> PathBuf {
     let out = scratch(&format!("{name}.mkv"));
-    run(Command::new(mkvmerge).args(["--quiet", "-o"]).arg(&out).arg(input));
+    run(Command::new(mkvmerge)
+        .args(["--quiet", "-o"])
+        .arg(&out)
+        .arg(input));
     out
 }
 
 /// The one track of `input`, remuxed by `mkvmerge` and written out by
 /// `mkvextract` in the codec's own file format (`ext`: `flac`, or `caf` for
 /// ALAC).
-fn remux_and_extract(mkvmerge_bin: &Path, mkvextract: &Path, input: &Path, name: &str, ext: &str) -> PathBuf {
+fn remux_and_extract(
+    mkvmerge_bin: &Path,
+    mkvextract: &Path,
+    input: &Path,
+    name: &str,
+    ext: &str,
+) -> PathBuf {
     let mkv = mkvmerge(mkvmerge_bin, input, name);
     let out = scratch(&format!("{name}.extracted.{ext}"));
-    run(Command::new(mkvextract).arg(&mkv).arg("tracks").arg(format!("0:{}", out.display())));
+    run(Command::new(mkvextract)
+        .arg(&mkv)
+        .arg("tracks")
+        .arg(format!("0:{}", out.display())));
     out
 }
 
@@ -224,7 +267,14 @@ fn flac_cli_streams_decode_bit_exact() {
         let label = format!("{rate} Hz {channels}ch {bits}-bit flac {args:?}");
         assert!(got == pcm, "{label}: {}", first_mismatch(&got, &pcm));
         assert_eq!(dec.md5_matches(), Some(true), "{label}: MD5");
-        assert_eq!(src.track.durations.iter().map(|&d| d as usize).sum::<usize>(), pcm.len() / channels);
+        assert_eq!(
+            src.track
+                .durations
+                .iter()
+                .map(|&d| d as usize)
+                .sum::<usize>(),
+            pcm.len() / channels
+        );
         eprintln!("ok: {label}");
     }
 }
@@ -237,15 +287,30 @@ fn flac_in_matroska_decodes_bit_exact() {
         eprintln!("SKIP: needs `flac` and `mkvmerge`");
         return;
     };
-    for (i, &(rate, channels, bits)) in [(48_000u32, 2usize, 16u32), (96_000, 6, 24), (44_100, 1, 16)].iter().enumerate() {
+    for (i, &(rate, channels, bits)) in
+        [(48_000u32, 2usize, 16u32), (96_000, 6, 24), (44_100, 1, 16)]
+            .iter()
+            .enumerate()
+    {
         let pcm = signal(rate as usize + 777, channels, bits, 40 + i as u32);
         let native = flac_encode(&flac, &pcm, rate, channels, bits, &[], &format!("m{i}"));
         let mkv = mkvmerge(&mkvmerge_bin, &native, &format!("m{i}"));
         let src = demux_audio(&std::fs::read(&mkv).unwrap());
         assert_eq!(src.track.codec, "flac");
         let (got, _) = decode_flac_track(&src.track);
-        assert!(got == pcm, "FLAC in Matroska {channels}ch {bits}-bit: {}", first_mismatch(&got, &pcm));
-        assert_eq!(src.track.durations.iter().map(|&d| u64::from(d)).sum::<u64>(), (pcm.len() / channels) as u64);
+        assert!(
+            got == pcm,
+            "FLAC in Matroska {channels}ch {bits}-bit: {}",
+            first_mismatch(&got, &pcm)
+        );
+        assert_eq!(
+            src.track
+                .durations
+                .iter()
+                .map(|&d| u64::from(d))
+                .sum::<u64>(),
+            (pcm.len() / channels) as u64
+        );
         eprintln!("ok: FLAC in Matroska (mkvmerge) {rate} Hz {channels}ch {bits}-bit");
     }
 }
@@ -273,7 +338,10 @@ fn alac_slot(channels: usize) -> &'static [usize] {
 fn to_alac_order(pcm: &[i32], channels: usize) -> Vec<i32> {
     let slot = alac_slot(channels);
     let mut out = vec![0; pcm.len()];
-    for (src, dst) in pcm.chunks_exact(channels).zip(out.chunks_exact_mut(channels)) {
+    for (src, dst) in pcm
+        .chunks_exact(channels)
+        .zip(out.chunks_exact_mut(channels))
+    {
         for (native, &s) in slot.iter().enumerate() {
             dst[s] = src[native];
         }
@@ -284,7 +352,9 @@ fn to_alac_order(pcm: &[i32], channels: usize) -> Vec<i32> {
 /// ALAC-order interleaved PCM to native order.
 fn from_alac_order(pcm: &[i32], channels: usize) -> Vec<i32> {
     let slot = alac_slot(channels);
-    pcm.chunks_exact(channels).flat_map(|f| slot.iter().map(|&s| f[s])).collect()
+    pcm.chunks_exact(channels)
+        .flat_map(|f| slot.iter().map(|&s| f[s]))
+        .collect()
 }
 
 /// Apple's encoder takes 16-, 24- and 32-bit PCM of one to eight channels;
@@ -319,7 +389,11 @@ fn apple_alac_decodes_bit_exact() {
         let pcm = signal(rate as usize * 3 / 2 + 99, channels, bits, 80 + i as u32);
         let src = scratch(&format!("a{i}.pcm.caf"));
         let caf = scratch(&format!("a{i}.alac.caf"));
-        std::fs::write(&src, caf_pcm(&to_alac_order(&pcm, channels), rate, channels, bits)).unwrap();
+        std::fs::write(
+            &src,
+            caf_pcm(&to_alac_order(&pcm, channels), rate, channels, bits),
+        )
+        .unwrap();
         run(Command::new(&alacconvert).arg(&src).arg(&caf));
         let mkv = mkvmerge(&mkvmerge_bin, &caf, &format!("a{i}"));
         let track = demux_audio(&std::fs::read(&mkv).unwrap()).track;
@@ -331,9 +405,20 @@ fn apple_alac_decodes_bit_exact() {
     }
 }
 
-fn rivet_flac(pcm: &[i32], rate: u32, channels: u8, bits: u8, level: FlacLevel) -> (Vec<u8>, Vec<(Vec<u8>, u32)>) {
-    let mut enc =
-        FlacEncoder::new(FlacEncoderConfig { sample_rate: rate, channels, bits_per_sample: bits, level }).unwrap();
+fn rivet_flac(
+    pcm: &[i32],
+    rate: u32,
+    channels: u8,
+    bits: u8,
+    level: FlacLevel,
+) -> (Vec<u8>, Vec<(Vec<u8>, u32)>) {
+    let mut enc = FlacEncoder::new(FlacEncoderConfig {
+        sample_rate: rate,
+        channels,
+        bits_per_sample: bits,
+        level,
+    })
+    .unwrap();
     let mut frames = enc.encode_int(pcm);
     frames.extend(enc.finish());
     (enc.metadata_blocks(), frames)
@@ -351,7 +436,15 @@ fn flac_decode(flac: &Path, path: &Path, bits: u32) -> Vec<i32> {
     run(Command::new(flac).args(["--silent", "-t"]).arg(path));
     let raw = path.with_extension("dec.raw");
     run(Command::new(flac)
-        .args(["--silent", "-f", "-d", "--force-raw-format", "--endian=little", "--sign=signed", "-o"])
+        .args([
+            "--silent",
+            "-f",
+            "-d",
+            "--force-raw-format",
+            "--endian=little",
+            "--sign=signed",
+            "-o",
+        ])
         .arg(&raw)
         .arg(path));
     read_raw(&raw, bits)
@@ -359,7 +452,9 @@ fn flac_decode(flac: &Path, path: &Path, bits: u32) -> Vec<i32> {
 
 #[test]
 fn rivet_flac_decodes_bit_exact_in_flac() {
-    let (Some(flac), Some(mkvmerge_bin), Some(mkvextract)) = (tool("flac"), tool("mkvmerge"), tool("mkvextract")) else {
+    let (Some(flac), Some(mkvmerge_bin), Some(mkvextract)) =
+        (tool("flac"), tool("mkvmerge"), tool("mkvextract"))
+    else {
         eprintln!("SKIP: needs `flac`, `mkvmerge` and `mkvextract`");
         return;
     };
@@ -378,21 +473,43 @@ fn rivet_flac_decodes_bit_exact_in_flac() {
         (22_050, 3, 16, FlacLevel::Default),
     ];
     for (i, &(rate, channels, bits, level)) in cases.iter().enumerate() {
-        let pcm = signal(rate as usize * 3 / 2 + 555, usize::from(channels), u32::from(bits), 200 + i as u32);
+        let pcm = signal(
+            rate as usize * 3 / 2 + 555,
+            usize::from(channels),
+            u32::from(bits),
+            200 + i as u32,
+        );
         let (blocks, frames) = rivet_flac(&pcm, rate, channels, bits, level);
         let label = format!("rivet FLAC {rate} Hz {channels}ch {bits}-bit {level:?}");
         let native = scratch(&format!("e{i}.flac"));
-        std::fs::write(&native, container::mux::write_native_flac(&blocks, &frames).unwrap()).unwrap();
+        std::fs::write(
+            &native,
+            container::mux::write_native_flac(&blocks, &frames).unwrap(),
+        )
+        .unwrap();
         let got = flac_decode(&flac, &native, u32::from(bits));
-        assert!(got == pcm, "{label} via flac -d: {}", first_mismatch(&got, &pcm));
+        assert!(
+            got == pcm,
+            "{label} via flac -d: {}",
+            first_mismatch(&got, &pcm)
+        );
         // FLAC in rivet's MP4, read by mkvmerge and written back out as a
         // native stream by mkvextract.
         let info = container::AudioInfo::flac(rate, u16::from(channels), blocks.clone());
         let mp4 = scratch(&format!("e{i}.mp4"));
-        std::fs::write(&mp4, container::mux::write_audio_mp4(&info, &frames, Default::default()).unwrap()).unwrap();
-        let extracted = remux_and_extract(&mkvmerge_bin, &mkvextract, &mp4, &format!("e{i}"), "flac");
+        std::fs::write(
+            &mp4,
+            container::mux::write_audio_mp4(&info, &frames, Default::default()).unwrap(),
+        )
+        .unwrap();
+        let extracted =
+            remux_and_extract(&mkvmerge_bin, &mkvextract, &mp4, &format!("e{i}"), "flac");
         let got = flac_decode(&flac, &extracted, u32::from(bits));
-        assert!(got == pcm, "{label} in MP4 via mkvmerge and flac -d: {}", first_mismatch(&got, &pcm));
+        assert!(
+            got == pcm,
+            "{label} in MP4 via mkvmerge and flac -d: {}",
+            first_mismatch(&got, &pcm)
+        );
         eprintln!("ok: {label}");
     }
 }
@@ -418,24 +535,52 @@ fn rivet_alac_decodes_bit_exact_in_apple_alac() {
         let caf = scratch(&format!("r{i}.alac.caf"));
         let info = container::AudioInfo::alac(rate, channels as u16, cookie.clone());
         let m4a = scratch(&format!("r{i}.m4a"));
-        std::fs::write(&m4a, container::mux::write_audio_mp4(&info, &frames, Default::default()).unwrap())
-            .unwrap();
+        std::fs::write(
+            &m4a,
+            container::mux::write_audio_mp4(&info, &frames, Default::default()).unwrap(),
+        )
+        .unwrap();
         let mkv = mkvmerge(&mkvmerge_bin, &m4a, &format!("r{i}"));
         let track = demux_audio(&std::fs::read(&mkv).unwrap()).track;
         assert_eq!(track.codec, "alac", "{label}");
-        assert_eq!((track.sample_rate, track.channels), (rate, channels as u16), "{label}: rate and channels in Matroska");
-        assert_eq!(track.codec_private, cookie, "{label}: the cookie through MP4 and Matroska");
-        assert_eq!(track.samples.len(), frames.len(), "{label}: packets through MP4 and Matroska");
+        assert_eq!(
+            (track.sample_rate, track.channels),
+            (rate, channels as u16),
+            "{label}: rate and channels in Matroska"
+        );
+        assert_eq!(
+            track.codec_private, cookie,
+            "{label}: the cookie through MP4 and Matroska"
+        );
+        assert_eq!(
+            track.samples.len(),
+            frames.len(),
+            "{label}: packets through MP4 and Matroska"
+        );
         for (n, (got, (want, _))) in track.samples.iter().zip(&frames).enumerate() {
-            assert!(got[..] == want[..], "{label}: packet {n} through MP4 and Matroska");
+            assert!(
+                got[..] == want[..],
+                "{label}: packet {n} through MP4 and Matroska"
+            );
         }
-        let packets: Vec<(Vec<u8>, u32)> = track.samples.into_iter().map(|p| (p.to_vec(), 0)).collect();
-        std::fs::write(&caf, caf_alac(&cookie, rate, channels, bits, valid, &packets)).unwrap();
+        let packets: Vec<(Vec<u8>, u32)> =
+            track.samples.into_iter().map(|p| (p.to_vec(), 0)).collect();
+        std::fs::write(
+            &caf,
+            caf_alac(&cookie, rate, channels, bits, valid, &packets),
+        )
+        .unwrap();
         let out = scratch(&format!("r{i}.pcm.caf"));
         run(Command::new(&alacconvert).arg(&caf).arg(&out));
-        let decoded = read_caf(&std::fs::read(&out).unwrap()).pcm.unwrap_or_else(|| panic!("{label}: no PCM out"));
+        let decoded = read_caf(&std::fs::read(&out).unwrap())
+            .pcm
+            .unwrap_or_else(|| panic!("{label}: no PCM out"));
         let got = from_alac_order(&decoded, channels);
-        assert!(got == pcm, "{label} via alacconvert: {}", first_mismatch(&got, &pcm));
+        assert!(
+            got == pcm,
+            "{label} via alacconvert: {}",
+            first_mismatch(&got, &pcm)
+        );
         eprintln!("ok: {label}");
     }
 }
@@ -452,26 +597,48 @@ fn high_rate_mp4_reads_right_in_mkvmerge_and_mediainfo() {
         return;
     };
     let mut n = 0;
-    for &rate in &[44_100u32, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000] {
+    for &rate in &[
+        44_100u32, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000,
+    ] {
         for &channels in &[2usize, 6] {
             for flac in [false, true] {
                 let bits = 24u32;
                 let pcm = signal(rate as usize / 4, channels, bits, 900 + n);
                 let (info, frames) = if flac {
-                    let (blocks, frames) = rivet_flac(&pcm, rate, channels as u8, bits as u8, FlacLevel::Fast);
-                    (container::AudioInfo::flac(rate, channels as u16, blocks), frames)
+                    let (blocks, frames) =
+                        rivet_flac(&pcm, rate, channels as u8, bits as u8, FlacLevel::Fast);
+                    (
+                        container::AudioInfo::flac(rate, channels as u16, blocks),
+                        frames,
+                    )
                 } else {
                     let (cookie, frames) = rivet_alac(&pcm, rate, channels as u8, bits as u8);
-                    (container::AudioInfo::alac(rate, channels as u16, cookie), frames)
+                    (
+                        container::AudioInfo::alac(rate, channels as u16, cookie),
+                        frames,
+                    )
                 };
-                let label = format!("rivet {} MP4 {rate} Hz {channels}ch", if flac { "FLAC" } else { "ALAC" });
+                let label = format!(
+                    "rivet {} MP4 {rate} Hz {channels}ch",
+                    if flac { "FLAC" } else { "ALAC" }
+                );
                 let mp4 = scratch(&format!("h{n}.m4a"));
                 n += 1;
-                std::fs::write(&mp4, container::mux::write_audio_mp4(&info, &frames, Default::default()).unwrap())
-                    .unwrap();
-                let out = Command::new(&mkvmerge_bin).arg("-J").arg(&mp4).output().expect("spawn mkvmerge");
+                std::fs::write(
+                    &mp4,
+                    container::mux::write_audio_mp4(&info, &frames, Default::default()).unwrap(),
+                )
+                .unwrap();
+                let out = Command::new(&mkvmerge_bin)
+                    .arg("-J")
+                    .arg(&mp4)
+                    .output()
+                    .expect("spawn mkvmerge");
                 let json = String::from_utf8_lossy(&out.stdout).replace(char::is_whitespace, "");
-                assert!(json.contains("\"warnings\":[]") && json.contains("\"errors\":[]"), "{label}: mkvmerge -J: {json}");
+                assert!(
+                    json.contains("\"warnings\":[]") && json.contains("\"errors\":[]"),
+                    "{label}: mkvmerge -J: {json}"
+                );
                 // Its identification of FLAC in MP4 reports the sample entry's
                 // field (half the rate above 65535 Hz, as the FLAC mapping
                 // has it); what it muxes has STREAMINFO's, checked below.
@@ -483,10 +650,17 @@ fn high_rate_mp4_reads_right_in_mkvmerge_and_mediainfo() {
                     json.contains(&format!("\"audio_sampling_frequency\":{entry_rate}")),
                     "{label}: mkvmerge's rate (want {entry_rate}): {json}"
                 );
-                assert!(json.contains(&format!("\"audio_channels\":{channels}")), "{label}: mkvmerge's channels: {json}");
+                assert!(
+                    json.contains(&format!("\"audio_channels\":{channels}")),
+                    "{label}: mkvmerge's channels: {json}"
+                );
                 let mkv = mkvmerge(&mkvmerge_bin, &mp4, &format!("h{n}"));
                 let track = demux_audio(&std::fs::read(&mkv).unwrap()).track;
-                assert_eq!((track.sample_rate, track.channels), (rate, channels as u16), "{label}: in mkvmerge's Matroska");
+                assert_eq!(
+                    (track.sample_rate, track.channels),
+                    (rate, channels as u16),
+                    "{label}: in mkvmerge's Matroska"
+                );
                 let out = Command::new(&mediainfo)
                     .arg("--Inform=Audio;%Format%|%SamplingRate%|%Channel(s)%")
                     .arg(&mp4)
@@ -521,7 +695,8 @@ fn compression_against_the_reference_encoders() {
     let mut brown = [0.0f64; 2];
     let sine: Vec<i32> = (0..frames)
         .flat_map(|i| {
-            let v = ((i as f64 / 44_100.0 * 2.0 * std::f64::consts::PI * 1000.0).sin() * 20_000.0) as i32;
+            let v = ((i as f64 / 44_100.0 * 2.0 * std::f64::consts::PI * 1000.0).sin() * 20_000.0)
+                as i32;
             [v, v / 2]
         })
         .collect();
@@ -550,7 +725,9 @@ fn compression_against_the_reference_encoders() {
             .iter()
             .map(|&l| {
                 let (blocks, frames) = rivet_flac(pcm, rate, 2, *bits as u8, l);
-                container::mux::write_native_flac(&blocks, &frames).unwrap().len()
+                container::mux::write_native_flac(&blocks, &frames)
+                    .unwrap()
+                    .len()
             })
             .collect();
         let reference = flac_encode(&flac, pcm, rate, 2, *bits, &["-5"], &format!("c{i}"));
@@ -562,7 +739,12 @@ fn compression_against_the_reference_encoders() {
         let out = scratch(&format!("c{i}.alac.caf"));
         std::fs::write(&src, caf_pcm(pcm, rate, 2, *bits)).unwrap();
         run(Command::new(&alacconvert).arg(&src).arg(&out));
-        let apple_len: usize = read_caf(&std::fs::read(&out).unwrap()).alac.expect("ALAC").iter().map(Vec::len).sum();
+        let apple_len: usize = read_caf(&std::fs::read(&out).unwrap())
+            .alac
+            .expect("ALAC")
+            .iter()
+            .map(Vec::len)
+            .sum();
         let pct = |n: usize| format!("{:.1}%", 100.0 * n as f64 / raw_len as f64);
         eprintln!(
             "| {name} | {raw_len} | {} | {} | {} | {} | {} | {} |",
@@ -596,9 +778,24 @@ fn caf_chunk(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
     out
 }
 
-fn caf_desc(rate: u32, format: u32, flags: u32, bytes_per_packet: u32, frames_per_packet: u32, channels: usize, bits: u32) -> Vec<u8> {
+fn caf_desc(
+    rate: u32,
+    format: u32,
+    flags: u32,
+    bytes_per_packet: u32,
+    frames_per_packet: u32,
+    channels: usize,
+    bits: u32,
+) -> Vec<u8> {
     let mut d = f64::from(rate).to_be_bytes().to_vec();
-    for v in [format, flags, bytes_per_packet, frames_per_packet, channels as u32, bits] {
+    for v in [
+        format,
+        flags,
+        bytes_per_packet,
+        frames_per_packet,
+        channels as u32,
+        bits,
+    ] {
         d.extend_from_slice(&v.to_be_bytes());
     }
     caf_chunk(b"desc", &d)
@@ -614,7 +811,15 @@ fn caf_data(audio: &[u8]) -> Vec<u8> {
 fn caf_pcm(pcm: &[i32], rate: u32, channels: usize, bits: u32) -> Vec<u8> {
     let width = bits.div_ceil(8);
     let mut out = b"caff\x00\x01\x00\x00".to_vec();
-    out.extend(caf_desc(rate, CAF_LPCM, CAF_LITTLE_ENDIAN, width * channels as u32, 1, channels, bits));
+    out.extend(caf_desc(
+        rate,
+        CAF_LPCM,
+        CAF_LITTLE_ENDIAN,
+        width * channels as u32,
+        1,
+        channels,
+        bits,
+    ));
     out.extend(caf_data(&raw_bytes(pcm, bits)));
     out
 }
@@ -622,7 +827,14 @@ fn caf_pcm(pcm: &[i32], rate: u32, channels: usize, bits: u32) -> Vec<u8> {
 /// ALAC packets: `desc` names the depth in its flags (1–4 for 16, 20, 24
 /// and 32 bits), `kuki` is the 24-byte cookie, `pakt` lists each packet's
 /// size as a variable-length integer and the frames the last one pads.
-fn caf_alac(cookie: &[u8], rate: u32, channels: usize, bits: u32, valid: u64, frames: &[(Vec<u8>, u32)]) -> Vec<u8> {
+fn caf_alac(
+    cookie: &[u8],
+    rate: u32,
+    channels: usize,
+    bits: u32,
+    valid: u64,
+    frames: &[(Vec<u8>, u32)],
+) -> Vec<u8> {
     let depth_flag = match bits {
         16 => 1,
         20 => 2,
@@ -634,7 +846,9 @@ fn caf_alac(cookie: &[u8], rate: u32, channels: usize, bits: u32, valid: u64, fr
     let mut pakt = (frames.len() as i64).to_be_bytes().to_vec();
     pakt.extend_from_slice(&(valid as i64).to_be_bytes());
     pakt.extend_from_slice(&0i32.to_be_bytes());
-    pakt.extend_from_slice(&((u64::from(per_packet) * frames.len() as u64 - valid) as i32).to_be_bytes());
+    pakt.extend_from_slice(
+        &((u64::from(per_packet) * frames.len() as u64 - valid) as i32).to_be_bytes(),
+    );
     for (f, _) in frames {
         let mut v = f.len() as u64;
         let mut bytes = vec![(v & 0x7F) as u8];
@@ -647,7 +861,9 @@ fn caf_alac(cookie: &[u8], rate: u32, channels: usize, bits: u32, valid: u64, fr
     }
     let audio: Vec<u8> = frames.iter().flat_map(|(f, _)| f.iter().copied()).collect();
     let mut out = b"caff\x00\x01\x00\x00".to_vec();
-    out.extend(caf_desc(rate, CAF_ALAC, depth_flag, 0, per_packet, channels, 0));
+    out.extend(caf_desc(
+        rate, CAF_ALAC, depth_flag, 0, per_packet, channels, 0,
+    ));
     out.extend(caf_chunk(b"kuki", cookie));
     out.extend(caf_chunk(b"pakt", &pakt));
     out.extend(caf_data(&audio));
@@ -669,18 +885,26 @@ fn read_caf(data: &[u8]) -> Caf {
         let kind: [u8; 4] = data[at..at + 4].try_into().unwrap();
         let size = i64::from_be_bytes(data[at + 4..at + 12].try_into().unwrap());
         // A size of -1 is a `data` chunk running to the end of the file.
-        let end = if size < 0 { data.len() } else { at + 12 + size as usize };
+        let end = if size < 0 {
+            data.len()
+        } else {
+            at + 12 + size as usize
+        };
         chunks.insert(kind, &data[at + 12..end]);
         at = end;
     }
     let desc = chunks[b"desc"];
     let field = |i: usize| be32(desc, 8 + 4 * i);
-    let (format, flags, bytes_per_packet, channels, bits) = (field(0), field(1), field(2), field(4), field(5));
+    let (format, flags, bytes_per_packet, channels, bits) =
+        (field(0), field(1), field(2), field(4), field(5));
     let audio = &chunks[b"data"][4..];
     if format == CAF_LPCM {
         assert_eq!(flags & 1, 0, "integer PCM");
         let width = (bytes_per_packet / channels) as usize;
-        assert!(width * 8 >= bits as usize && width <= 4, "{bits} bits in {width} bytes");
+        assert!(
+            width * 8 >= bits as usize && width <= 4,
+            "{bits} bits in {width} bytes"
+        );
         let pcm = audio
             .chunks_exact(width)
             .map(|b| {
@@ -694,7 +918,10 @@ fn read_caf(data: &[u8]) -> Caf {
                 }
             })
             .collect();
-        return Caf { pcm: Some(pcm), alac: None };
+        return Caf {
+            pcm: Some(pcm),
+            alac: None,
+        };
     }
     assert_eq!(format, CAF_ALAC, "lpcm or alac");
     let pakt = chunks[b"pakt"];
@@ -715,7 +942,10 @@ fn read_caf(data: &[u8]) -> Caf {
         packets.push(audio[offset..offset + len].to_vec());
         offset += len;
     }
-    Caf { pcm: None, alac: Some(packets) }
+    Caf {
+        pcm: None,
+        alac: Some(packets),
+    }
 }
 
 fn be32(b: &[u8], at: usize) -> u32 {

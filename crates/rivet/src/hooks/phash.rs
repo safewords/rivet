@@ -32,8 +32,11 @@ pub enum PerceptualAlgorithm {
 }
 
 impl PerceptualAlgorithm {
-    pub const ALL: [PerceptualAlgorithm; 3] =
-        [PerceptualAlgorithm::AHash, PerceptualAlgorithm::DHash, PerceptualAlgorithm::PHash];
+    pub const ALL: [PerceptualAlgorithm; 3] = [
+        PerceptualAlgorithm::AHash,
+        PerceptualAlgorithm::DHash,
+        PerceptualAlgorithm::PHash,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -168,7 +171,9 @@ fn phash(luma: &[u8], w: usize, h: usize) -> u64 {
     let mut rows = [[0f64; 8]; 32];
     for (y, row) in rows.iter_mut().enumerate() {
         for (k, v) in row.iter_mut().enumerate() {
-            *v = (0..32).map(|x| cells[y * 32 + x] as f64 * basis[k][x]).sum();
+            *v = (0..32)
+                .map(|x| cells[y * 32 + x] as f64 * basis[k][x])
+                .sum();
         }
     }
     let mut low = [0f64; 64];

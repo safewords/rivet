@@ -14,9 +14,7 @@ use super::ffi::{
     FnEncodeClose, FnEncodeFrameAsync, FnEncodeReset, FnMfxClose, FnMfxUnload, FnSyncOperation,
     MfxLoader, MfxSession,
 };
-use super::ffi::{
-    MfxExtAv1TileParam, MfxExtCodingOption3, MfxExtVideoSignalInfo,
-};
+use super::ffi::{MfxExtAv1TileParam, MfxExtCodingOption3, MfxExtVideoSignalInfo};
 use super::surface::{POOL_SIZE, SurfaceSlot};
 
 /// All state that outlives the constructor and must be accessed from

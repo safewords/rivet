@@ -14,10 +14,10 @@ use crate::progress::{ProgressSink, RungProgress, RungStatus};
 use crate::spec::{Container, OutputSpec, Rung};
 use crate::validate::needs_chroma_downsample;
 
-use super::{RungArtifact, RungOutput, FRAME_CHANNEL_CAPACITY, report_rung_error};
 use super::audio::PreparedAudio;
 use super::file_mux::FileMuxer;
-use super::splice::{trim_frame, trim_audio};
+use super::splice::{trim_audio, trim_frame};
+use super::{FRAME_CHANNEL_CAPACITY, RungArtifact, RungOutput, report_rung_error};
 
 // ---------------------------------------------------------------------------
 // SingleFile: decode-once fan-out to per-rung MP4 workers
@@ -45,7 +45,11 @@ pub(super) async fn run_single_file(
     // frame count) the serial path below is used unchanged — no chunk overhead.
     // `frame_rate` is the output's, after any cap; frame indices and trims
     // count on the source's clock, and a cap below it drops frames.
-    let source_fps = if header.info.frame_rate > 0.0 { header.info.frame_rate } else { frame_rate };
+    let source_fps = if header.info.frame_rate > 0.0 {
+        header.info.frame_rate
+    } else {
+        frame_rate
+    };
     let decimate = decode_pump::decimation(header.info.frame_rate, spec.max_frame_rate);
     let total_input_frames = decode_pump::output_frames(
         if header.info.total_frames > 0 {
@@ -59,8 +63,7 @@ pub(super) async fn run_single_file(
     // before a frame is decoded — see `gpu_pool_for_serial`.
     let (_, output_pixel_format) =
         spec.resolve_output(header.info.color_metadata, header.info.pixel_format);
-    let gpu_pool =
-        multigpu::gpu_pool_for_serial_job(spec, output_pixel_format)?;
+    let gpu_pool = multigpu::gpu_pool_for_serial_job(spec, output_pixel_format)?;
     // `RIVET_FORCE_CHUNKED=1` runs the chunk-and-stitch engine on a one-GPU
     // host. It exists to verify the chunked path — seams, the per-chunk IDR,
     // the encoder session pool — on a machine with a single card, where the
@@ -81,7 +84,9 @@ pub(super) async fn run_single_file(
     // chunked against 0.9 s serial at 10 s (one chunk), 5.3 s against 2.4 s
     // at 30 s (two). Under two chunks per card the job runs serially, on the
     // card expected to be fastest (`serial_target`).
-    let chunk_frames = u64::from(multigpu::single_file_chunk_frames(spec.gop_frames(frame_rate)));
+    let chunk_frames = u64::from(multigpu::single_file_chunk_frames(
+        spec.gop_frames(frame_rate),
+    ));
     let chunks = total_input_frames.div_ceil(chunk_frames.max(1)) * spec.rungs.len() as u64;
     let one_chunk = chunks < 2 * gpu_pool.capacity().max(1) as u64;
     if one_chunk && spec.encode_policy.spreads() && gpu_pool.capacity() > 1 && !force_chunked {
@@ -114,7 +119,8 @@ pub(super) async fn run_single_file(
         // counted for a single-file job: check the output again without it,
         // here, before a frame is decoded — the spec's own ask and what this
         // source makes of it.
-        spec.check_encoder_caps(None).context("invalid OutputSpec")?;
+        spec.check_encoder_caps(None)
+            .context("invalid OutputSpec")?;
         spec.check_source_against(
             header.info.color_metadata,
             header.info.pixel_format,
@@ -126,8 +132,7 @@ pub(super) async fn run_single_file(
         // output's format on them, with no fallback: lease from a pool of
         // cards that take that format (software slots in their place when
         // none does), not the serial pool, which is judged at the codec.
-        let gpu_pool =
-            multigpu::gpu_pool_for_job(spec, output_pixel_format)?;
+        let gpu_pool = multigpu::gpu_pool_for_job(spec, output_pixel_format)?;
         // Bitrate rungs are coded by the software encoder only; the chunk
         // workers lease from this pool and never read the pin.
         multigpu::check_rate_pool(spec, &gpu_pool, output_pixel_format, None)?;
@@ -155,7 +160,12 @@ pub(super) async fn run_single_file(
     let (encode_gpu, encode_vendor) = multigpu::serial_target(spec.encode_policy, &gpu_pool);
     // Bitrate rungs are coded by the software encoder only, which the serial
     // encoder builds by name when pinned to it whatever the pool holds.
-    multigpu::check_rate_pool(spec, &gpu_pool, output_pixel_format, encoder_backend_override())?;
+    multigpu::check_rate_pool(
+        spec,
+        &gpu_pool,
+        output_pixel_format,
+        encoder_backend_override(),
+    )?;
     let decode_gpu = spec.decode_policy.gpu_index().or(encode_gpu);
     let (output_color_metadata, output_pixel_format) =
         spec.resolve_output(header.info.color_metadata, header.info.pixel_format);
@@ -207,7 +217,12 @@ pub(super) async fn run_single_file(
     .map(|n| decode_pump::output_frames(n, decimate));
     // Trim the prepared audio to the same window so A/V stay aligned.
     let trimmed_audio = trim_audio(audio, spec.trim_start, spec.trim_end);
-    let clip = ClipSource { cfg: pump_cfg, input, start_frame, end_frame };
+    let clip = ClipSource {
+        cfg: pump_cfg,
+        input,
+        start_frame,
+        end_frame,
+    };
     run_serial_single_file(
         vec![clip],
         spec,
@@ -249,7 +264,10 @@ pub(super) async fn run_serial_single_file(
     // each rung its share instead; the hardware backends do not read
     // `threads` and are unaffected. An explicit budget from the caller stays.
     let base_cfg = if base_cfg.threads == 0 {
-        EncoderConfig { threads: serial_threads_per_rung(spec.rungs.len()), ..base_cfg }
+        EncoderConfig {
+            threads: serial_threads_per_rung(spec.rungs.len()),
+            ..base_cfg
+        }
     } else {
         base_cfg
     };
@@ -265,8 +283,18 @@ pub(super) async fn run_serial_single_file(
         let subtitles = subtitles.clone();
         let handle = tokio::task::spawn_blocking(move || {
             let r = encode_rung_single_file(
-                idx, &rung, rx, base_cfg, backend_override, frame_rate, effective_total,
-                audio.as_ref(), &subtitles, sink.as_ref(), video_delay, container,
+                idx,
+                &rung,
+                rx,
+                base_cfg,
+                backend_override,
+                frame_rate,
+                effective_total,
+                audio.as_ref(),
+                &subtitles,
+                sink.as_ref(),
+                video_delay,
+                container,
             );
             (idx, rung, r)
         });
@@ -288,7 +316,10 @@ pub(super) async fn run_serial_single_file(
             Err(e) => report_rung_error(sink.as_ref(), idx, &rung, &e),
         }
     }
-    let _ = pump_handle.await.context("decode pump panicked")?.context("decode pump failed")?;
+    let _ = pump_handle
+        .await
+        .context("decode pump panicked")?
+        .context("decode pump failed")?;
     if outputs.is_empty() {
         bail!("all {} rung(s) failed", spec.rungs.len());
     }
@@ -364,7 +395,15 @@ async fn run_single_file_multigpu(
     let mut outputs = Vec::new();
     for rp in rung_packets.into_iter().flatten() {
         let label = rp.label.clone();
-        match mux_rung_packets(rp, spec.container, frame_rate, output_color_metadata, audio, subtitles, video_delay) {
+        match mux_rung_packets(
+            rp,
+            spec.container,
+            frame_rate,
+            output_color_metadata,
+            audio,
+            subtitles,
+            video_delay,
+        ) {
             Ok(out) => outputs.push(out),
             Err(e) => tracing::warn!(rung = %label, error = %e, "stitching rung MP4 failed"),
         }
@@ -385,7 +424,15 @@ pub(super) fn mux_rung_packets_to_mp4(
     subtitles: &[SubtitleTrack],
     video_delay: (u64, u32),
 ) -> Result<RungOutput> {
-    mux_rung_packets(rp, Container::Mp4, frame_rate, color_metadata, audio, subtitles, video_delay)
+    mux_rung_packets(
+        rp,
+        Container::Mp4,
+        frame_rate,
+        color_metadata,
+        audio,
+        subtitles,
+        video_delay,
+    )
 }
 
 /// Stitch one rung's ordered packets (+ optional audio) into the file
@@ -466,7 +513,14 @@ pub(super) fn encode_rung_single_file(
     let out_codec = cfg.codec;
     let mut encoder = encode::select_encoder(cfg, backend)
         .with_context(|| format!("creating encoder for rung {}", rung.label))?;
-    let mut muxer = FileMuxer::new(container, rung.width, rung.height, frame_rate, out_codec, false)?;
+    let mut muxer = FileMuxer::new(
+        container,
+        rung.width,
+        rung.height,
+        frame_rate,
+        out_codec,
+        false,
+    )?;
     muxer.set_color_metadata(out_color);
     muxer.set_video_delay(video_delay.0, video_delay.1);
 
@@ -480,7 +534,16 @@ pub(super) fn encode_rung_single_file(
     // Running total of encoded payload so the CLI can show size to date and
     // project a finished size, matching what the chunked path reports.
     let mut bytes_encoded: u64 = 0;
-    report(sink, rung_index, rung, RungStatus::Running, 0, frames_total, 0, 0);
+    report(
+        sink,
+        rung_index,
+        rung,
+        RungStatus::Running,
+        0,
+        frames_total,
+        0,
+        0,
+    );
     while let Some(frame) = rx.blocking_recv() {
         let scaled = rung.scale(&frame).context("scaling to the rung")?;
         encoder.send_frame(&scaled).context("send_frame")?;
@@ -490,17 +553,44 @@ pub(super) fn encode_rung_single_file(
         }
         frames += 1;
         if frames.is_multiple_of(30) {
-            report(sink, rung_index, rung, RungStatus::Running, frames, frames_total, 0, bytes_encoded);
+            report(
+                sink,
+                rung_index,
+                rung,
+                RungStatus::Running,
+                frames,
+                frames_total,
+                0,
+                bytes_encoded,
+            );
         }
     }
     encoder.flush().context("encoder flush")?;
     while let Some(pkt) = encoder.receive_packet().context("receive_packet drain")? {
         muxer.add_packet(pkt).context("add_packet drain")?;
     }
-    report(sink, rung_index, rung, RungStatus::Finalizing, frames, frames_total, 0, bytes_encoded);
+    report(
+        sink,
+        rung_index,
+        rung,
+        RungStatus::Finalizing,
+        frames,
+        frames_total,
+        0,
+        bytes_encoded,
+    );
     let bytes = muxer.finalize()?;
     let nbytes = bytes.len() as u64;
-    report(sink, rung_index, rung, RungStatus::Completed, frames, frames_total, 0, nbytes);
+    report(
+        sink,
+        rung_index,
+        rung,
+        RungStatus::Completed,
+        frames,
+        frames_total,
+        0,
+        nbytes,
+    );
 
     Ok(RungOutput {
         label: rung.label.clone(),
@@ -558,7 +648,11 @@ fn report(
         _ => match frames_total {
             Some(total) if total > 0 => ((frames_done as f32 / total as f32) * 100.0).min(99.0),
             _ => {
-                if frames_done == 0 { 1.0 } else { 50.0 }
+                if frames_done == 0 {
+                    1.0
+                } else {
+                    50.0
+                }
             }
         },
     };

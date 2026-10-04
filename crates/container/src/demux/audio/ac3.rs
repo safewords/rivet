@@ -78,10 +78,17 @@ pub(crate) fn eac3_sample_rate_channels_from_dec3(dec3: &[u8]) -> Option<(u32, u
     let acmod = bits(28, 3)? as u8;
     let lfeon = bits(31, 1)? == 1;
     let num_dep_sub = bits(35, 4)?;
-    let chan_loc = if num_dep_sub > 0 { bits(39, 9).unwrap_or(0) } else { 0 };
+    let chan_loc = if num_dep_sub > 0 {
+        bits(39, 9).unwrap_or(0)
+    } else {
+        0
+    };
     let sr = crate::ac3_sync::eac3_sample_rate_hz(fscod, 0);
     if sr == 0 {
         return None;
     }
-    Some((sr, crate::ac3_sync::channel_count(acmod, lfeon) + crate::ac3_sync::chan_loc_channels(chan_loc)))
+    Some((
+        sr,
+        crate::ac3_sync::channel_count(acmod, lfeon) + crate::ac3_sync::chan_loc_channels(chan_loc),
+    ))
 }

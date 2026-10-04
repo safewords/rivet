@@ -41,9 +41,9 @@ mod constants;
 mod ffi;
 mod helpers;
 mod session;
-mod upload;
 #[cfg(test)]
 mod tests;
+mod upload;
 
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
@@ -64,29 +64,30 @@ use self::constants::{
     FnCuDeviceGet, FnCuInit, FnNvEncCreateBitstreamBuffer, FnNvEncCreateInputBuffer,
     FnNvEncDestroyBitstreamBuffer, FnNvEncDestroyEncoder, FnNvEncDestroyInputBuffer,
     FnNvEncEncodePicture, FnNvEncGetEncodeCaps, FnNvEncGetEncodeGUIDCount, FnNvEncGetEncodeGUIDs,
-    FnNvEncGetEncodePresetConfigEx, FnNvEncInitializeEncoder, FnNvEncLockBitstream,
-    FnNvEncGetSequenceParams, FnNvEncLockInputBuffer, FnNvEncOpenEncodeSessionEx,
-    FnNvEncReconfigureEncoder, FnNvEncUnlockBitstream,
-    FnNvEncUnlockInputBuffer, FnNvEncodeAPICreateInstance, FnNvEncodeAPIGetMaxSupportedVersion,
-    Guid, NV_ENC_CAPS_HEIGHT_MAX, NV_ENC_CAPS_SUPPORT_10BIT_ENCODE, NV_ENC_CAPS_WIDTH_MAX,
-    NV_ENC_CONFIG_VER, NV_ENC_CREATE_BITSTREAM_BUFFER_VER, NV_ENC_CREATE_INPUT_BUFFER_VER,
-    NV_ENC_DEVICE_TYPE_CUDA, NV_ENC_ERR_ENCODER_BUSY, NV_ENC_ERR_ENCODER_NOT_INITIALIZED,
-    NV_ENC_ERR_INVALID_PARAM, NV_ENC_ERR_INVALID_PTR, NV_ENC_ERR_LOCK_BUSY,
-    NV_ENC_ERR_NEED_MORE_INPUT, NV_ENC_INITIALIZE_PARAMS_VER, NV_ENC_LOCK_BITSTREAM_VER,
+    FnNvEncGetEncodePresetConfigEx, FnNvEncGetSequenceParams, FnNvEncInitializeEncoder,
+    FnNvEncLockBitstream, FnNvEncLockInputBuffer, FnNvEncOpenEncodeSessionEx,
+    FnNvEncReconfigureEncoder, FnNvEncUnlockBitstream, FnNvEncUnlockInputBuffer,
+    FnNvEncodeAPICreateInstance, FnNvEncodeAPIGetMaxSupportedVersion, Guid, NV_ENC_CAPS_HEIGHT_MAX,
+    NV_ENC_CAPS_SUPPORT_10BIT_ENCODE, NV_ENC_CAPS_WIDTH_MAX, NV_ENC_CONFIG_VER,
+    NV_ENC_CREATE_BITSTREAM_BUFFER_VER, NV_ENC_CREATE_INPUT_BUFFER_VER, NV_ENC_DEVICE_TYPE_CUDA,
+    NV_ENC_ERR_ENCODER_BUSY, NV_ENC_ERR_ENCODER_NOT_INITIALIZED, NV_ENC_ERR_INVALID_PARAM,
+    NV_ENC_ERR_INVALID_PTR, NV_ENC_ERR_LOCK_BUSY, NV_ENC_ERR_NEED_MORE_INPUT,
+    NV_ENC_INITIALIZE_PARAMS_VER, NV_ENC_LOCK_BITSTREAM_VER,
     NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER, NV_ENC_PARAMS_RC_CONSTQP, NV_ENC_PARAMS_RC_VBR,
     NV_ENC_PIC_FLAG_EOS, NV_ENC_PIC_FLAG_FORCEIDR, NV_ENC_PIC_PARAMS_VER, NV_ENC_PIC_TYPE_I,
     NV_ENC_PIC_TYPE_IDR, NV_ENC_PIC_TYPE_P, NV_ENC_PIC_TYPE_UNKNOWN, NV_ENC_PRESET_CONFIG_VER,
-    NV_ENCODE_API_FUNCTION_LIST_VER, NVENCAPI_VERSION, NvEncCapsParam, RC_FLAG_ENABLE_LOOKAHEAD,
-    RC_FLAG_ZERO_REORDER_DELAY, RING_SIZE, struct_version, nvenc_codec_guid, nvenc_profile_guid,
-    guid_from_bytes, NV_ENC_SUCCESS,
+    NV_ENC_SUCCESS, NV_ENCODE_API_FUNCTION_LIST_VER, NVENCAPI_VERSION, NvEncCapsParam,
+    RC_FLAG_ENABLE_LOOKAHEAD, RC_FLAG_ZERO_REORDER_DELAY, RING_SIZE, guid_from_bytes,
+    nvenc_codec_guid, nvenc_profile_guid, struct_version,
 };
 use self::ffi::{
     AV1_BIT_REPEAT_SEQ_HDR, AV1_CHROMA_FORMAT_IDC_420, NV_ENC_BIT_DEPTH_8, NV_ENC_BIT_DEPTH_10,
     NvEncConfig, NvEncConfigAv1, NvEncConfigHevcBitDepth, NvEncInitializeParams,
     NvEncOpenEncodeSessionExParams, NvEncPresetConfig,
 };
-use self::helpers::{fps_to_rational, nvenc_buffer_format_for, pixel_bit_depth_minus8_for,
-    transfer_to_h273};
+use self::helpers::{
+    fps_to_rational, nvenc_buffer_format_for, pixel_bit_depth_minus8_for, transfer_to_h273,
+};
 use self::session::EncodeSession;
 use self::upload::{upload_frame, upload_frame_10bit};
 
@@ -361,17 +362,21 @@ impl NvencEncoder {
                 if fn_list.nv_enc_reconfigure_encoder.is_null() {
                     None
                 } else {
-                    Some(std::mem::transmute::<*mut c_void, FnNvEncReconfigureEncoder>(
-                        fn_list.nv_enc_reconfigure_encoder,
-                    ))
+                    Some(
+                        std::mem::transmute::<*mut c_void, FnNvEncReconfigureEncoder>(
+                            fn_list.nv_enc_reconfigure_encoder,
+                        ),
+                    )
                 };
             let fn_get_sequence_params: Option<FnNvEncGetSequenceParams> =
                 if fn_list.nv_enc_get_sequence_params.is_null() {
                     None
                 } else {
-                    Some(std::mem::transmute::<*mut c_void, FnNvEncGetSequenceParams>(
-                        fn_list.nv_enc_get_sequence_params,
-                    ))
+                    Some(
+                        std::mem::transmute::<*mut c_void, FnNvEncGetSequenceParams>(
+                            fn_list.nv_enc_get_sequence_params,
+                        ),
+                    )
                 };
             // Preset-config-ex: required for HIGH-1 fix. If the SDK
             // fn-list is missing it the driver is too old for AV1
@@ -449,7 +454,12 @@ impl NvencEncoder {
                     Some(format!("NvEncGetEncodeGUIDCount failed on GPU {gpu_index}"))
                 } else {
                     let mut guids = vec![
-                        Guid { data1: 0, data2: 0, data3: 0, data4: [0u8; 8] };
+                        Guid {
+                            data1: 0,
+                            data2: 0,
+                            data3: 0,
+                            data4: [0u8; 8]
+                        };
                         guid_count.max(1) as usize
                     ];
                     let mut returned: u32 = 0;
@@ -746,8 +756,11 @@ impl NvencEncoder {
                 enc_config.rc_params.flags |= RC_FLAG_ZERO_REORDER_DELAY;
             }
             enc_config.frame_interval_p = u32::from(bframes) + 1;
-            enc_config.rc_params.multi_pass =
-                if config.overrides.multi_pass.unwrap_or(false) { 1 } else { 0 };
+            enc_config.rc_params.multi_pass = if config.overrides.multi_pass.unwrap_or(false) {
+                1
+            } else {
+                0
+            };
 
             // ─── AV1 codec-specific config (SDK 13 layout) ───────────
             //
@@ -1237,7 +1250,11 @@ impl NvencEncoder {
                     match unsafe { Self::drain_bitstream(session, oldest, false)? } {
                         Some((frame_idx, pkt)) => {
                             self.last_drained_frame_idx[oldest] = frame_idx as i64;
-                            Self::queue_packet(&mut self.encoded_packets, &mut self.pending_headers, pkt);
+                            Self::queue_packet(
+                                &mut self.encoded_packets,
+                                &mut self.pending_headers,
+                                pkt,
+                            );
                         }
                         None => bail!(
                             "NVENC slot {oldest} yielded no packet on a blocking lock. The                              encoder is holding {RING_SIZE} frames and will not release one;                              overwriting a held surface would emit the wrong picture."
@@ -1339,7 +1356,11 @@ impl NvencEncoder {
                             match Self::drain_bitstream(session, front, !block)? {
                                 Some((frame_idx, pkt)) => {
                                     self.last_drained_frame_idx[front] = frame_idx as i64;
-                                    Self::queue_packet(&mut self.encoded_packets, &mut self.pending_headers, pkt);
+                                    Self::queue_packet(
+                                        &mut self.encoded_packets,
+                                        &mut self.pending_headers,
+                                        pkt,
+                                    );
                                     self.slot_in_flight[front] = false;
                                     self.inflight.pop_front();
                                     drained += 1;
@@ -1440,7 +1461,11 @@ impl NvencEncoder {
                 if let Some((frame_idx, pkt)) = Self::drain_bitstream(session, slot, false)? {
                     if (frame_idx as i64) > self.last_drained_frame_idx[slot] {
                         self.last_drained_frame_idx[slot] = frame_idx as i64;
-                        Self::queue_packet(&mut self.encoded_packets, &mut self.pending_headers, pkt);
+                        Self::queue_packet(
+                            &mut self.encoded_packets,
+                            &mut self.pending_headers,
+                            pkt,
+                        );
                     }
                     self.slot_in_flight[slot] = false;
                 }
@@ -1524,7 +1549,11 @@ impl Encoder for NvencEncoder {
         // The new stream's first IDR comes without parameter sets (the
         // driver writes them once per session); fetch them now, after the
         // reconfigure, so they describe the stream about to start.
-        let headers = if is_av1 { None } else { Some(Bytes::from(unsafe { session.sequence_params()? })) };
+        let headers = if is_av1 {
+            None
+        } else {
+            Some(Bytes::from(unsafe { session.sequence_params()? }))
+        };
 
         let discarded = self.encoded_packets.len() - self.packet_cursor;
         self.pending_frames.clear();

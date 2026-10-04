@@ -7,7 +7,6 @@
 //!   active video PID to capture the first access unit (for SPS dim parsing)
 //!   and a window of PTSes (for frame-rate estimation).
 
-
 use super::clock::{PtsUnwrapper, VideoStart};
 use super::{TS_PACKET, TS_SYNC};
 use crate::demux::hdr::{ColourWindow, HeadNals};

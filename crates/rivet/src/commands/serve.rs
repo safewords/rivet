@@ -11,5 +11,9 @@ pub(crate) fn run(addr: String, jobs: Option<usize>) -> Result<()> {
         .build()
         .context("building tokio runtime")?;
     eprintln!("rivet transcode API on http://{addr} (POST media to /v1/transcode)");
-    rt.block_on(rivet::server::serve_with(addr, rivet::hooks::Hooks::default(), jobs))
+    rt.block_on(rivet::server::serve_with(
+        addr,
+        rivet::hooks::Hooks::default(),
+        jobs,
+    ))
 }

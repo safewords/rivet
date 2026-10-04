@@ -38,7 +38,10 @@ const N_FRAMES: u32 = 10;
 /// The MediaInfo binary, or `None` (said so) where there is none.
 fn mediainfo() -> Option<String> {
     let bin = std::env::var("MEDIAINFO").unwrap_or_else(|_| "mediainfo".into());
-    let ok = Command::new(&bin).arg("--Version").output().is_ok_and(|o| o.status.success());
+    let ok = Command::new(&bin)
+        .arg("--Version")
+        .output()
+        .is_ok_and(|o| o.status.success());
     if ok {
         return Some(bin);
     }
@@ -111,18 +114,29 @@ fn config(codec: VideoCodec) -> EncoderConfig {
 
 /// MediaInfo's JSON for `mp4`.
 fn mediainfo_json(bin: &str, mp4: &[u8], name: &str) -> String {
-    let path = std::env::temp_dir().join(format!("rivet-mediainfo-{}-{name}.mp4", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("rivet-mediainfo-{}-{name}.mp4", std::process::id()));
     std::fs::write(&path, mp4).unwrap();
-    let out = Command::new(bin).arg("--Output=JSON").arg(&path).output().expect("mediainfo runs");
+    let out = Command::new(bin)
+        .arg("--Output=JSON")
+        .arg(&path)
+        .output()
+        .expect("mediainfo runs");
     let _ = std::fs::remove_file(&path);
-    assert!(out.status.success(), "mediainfo failed on {name}: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "mediainfo failed on {name}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
 /// The fields of the track whose `@type` is `kind`, as a flat
 /// `"key": "value"` lookup (MediaInfo writes every value as a string).
 fn track<'a>(json: &'a str, kind: &str) -> &'a str {
-    let at = json.find(&format!("\"@type\":\"{kind}\"")).unwrap_or_else(|| panic!("no {kind} track: {json}"));
+    let at = json
+        .find(&format!("\"@type\":\"{kind}\""))
+        .unwrap_or_else(|| panic!("no {kind} track: {json}"));
     let rest = &json[at..];
     &rest[..rest.find('}').unwrap_or(rest.len())]
 }
@@ -139,27 +153,77 @@ fn check(bin: &str, name: &str, mp4: &[u8], packets: usize, format: &str, codec_
     // MediaInfo names an ISOBMFF file by its major brand when it has no
     // other name for it ("MPEG-4" for the older brands).
     let container = field(general, "Format").unwrap_or_default();
-    assert!(container == "MPEG-4" || container == "iso6", "{name}: container {container:?}: {json}");
-    assert_eq!(field(general, "CodecID").as_deref(), Some("iso6"), "{name}: major brand: {json}");
-    assert_eq!(field(general, "VideoCount").as_deref(), Some("1"), "{name}: one video track");
+    assert!(
+        container == "MPEG-4" || container == "iso6",
+        "{name}: container {container:?}: {json}"
+    );
+    assert_eq!(
+        field(general, "CodecID").as_deref(),
+        Some("iso6"),
+        "{name}: major brand: {json}"
+    );
+    assert_eq!(
+        field(general, "VideoCount").as_deref(),
+        Some("1"),
+        "{name}: one video track"
+    );
     let video = track(&json, "Video");
-    assert_eq!(field(video, "Format").as_deref(), Some(format), "{name}: video format: {json}");
-    assert_eq!(field(video, "CodecID").as_deref(), Some(codec_id), "{name}: sample entry: {json}");
-    assert_eq!(field(video, "Width").as_deref(), Some(W.to_string().as_str()), "{name}: width");
-    assert_eq!(field(video, "Height").as_deref(), Some(H.to_string().as_str()), "{name}: height");
-    assert_eq!(field(video, "ChromaSubsampling").as_deref(), Some("4:2:0"), "{name}: chroma: {json}");
-    assert_eq!(field(video, "BitDepth").as_deref(), Some("8"), "{name}: depth: {json}");
-    assert_eq!(field(video, "PixelAspectRatio").as_deref(), Some("1.000"), "{name}: square samples");
-    let rate: f64 = field(video, "FrameRate").expect("a frame rate").parse().unwrap();
+    assert_eq!(
+        field(video, "Format").as_deref(),
+        Some(format),
+        "{name}: video format: {json}"
+    );
+    assert_eq!(
+        field(video, "CodecID").as_deref(),
+        Some(codec_id),
+        "{name}: sample entry: {json}"
+    );
+    assert_eq!(
+        field(video, "Width").as_deref(),
+        Some(W.to_string().as_str()),
+        "{name}: width"
+    );
+    assert_eq!(
+        field(video, "Height").as_deref(),
+        Some(H.to_string().as_str()),
+        "{name}: height"
+    );
+    assert_eq!(
+        field(video, "ChromaSubsampling").as_deref(),
+        Some("4:2:0"),
+        "{name}: chroma: {json}"
+    );
+    assert_eq!(
+        field(video, "BitDepth").as_deref(),
+        Some("8"),
+        "{name}: depth: {json}"
+    );
+    assert_eq!(
+        field(video, "PixelAspectRatio").as_deref(),
+        Some("1.000"),
+        "{name}: square samples"
+    );
+    let rate: f64 = field(video, "FrameRate")
+        .expect("a frame rate")
+        .parse()
+        .unwrap();
     assert!((rate - FPS).abs() < 0.01, "{name}: frame rate {rate}");
-    assert_eq!(field(video, "FrameCount").as_deref(), Some(packets.to_string().as_str()), "{name}: frames: {json}");
+    assert_eq!(
+        field(video, "FrameCount").as_deref(),
+        Some(packets.to_string().as_str()),
+        "{name}: frames: {json}"
+    );
 }
 
 #[test]
 fn mediainfo_reads_what_the_muxer_wrote() {
     let Some(bin) = mediainfo() else { return };
-    for (codec, format, id) in [(VideoCodec::H264, "AVC", "avc1"), (VideoCodec::H265, "HEVC", "hvc1")] {
-        let enc = select_encoder(config(codec), Some(EncoderBackend::H26x)).expect("the software encoder, by name");
+    for (codec, format, id) in [
+        (VideoCodec::H264, "AVC", "avc1"),
+        (VideoCodec::H265, "HEVC", "hvc1"),
+    ] {
+        let enc = select_encoder(config(codec), Some(EncoderBackend::H26x))
+            .expect("the software encoder, by name");
         let (mp4, packets) = build_mp4(codec, enc);
         check(&bin, &format!("{codec:?}"), &mp4, packets, format, id);
     }

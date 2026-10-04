@@ -48,12 +48,19 @@ pub fn sniff(data: &[u8]) -> bool {
 /// durations (ticks of `info.timescale`), presented as `edit` says (its
 /// `media_time` is Opus's pre-skip; its `duration`, when given, ends the
 /// stream before the last packet's end). Opus and Vorbis.
-pub fn write_audio(info: &AudioInfo, packets: &[(Vec<u8>, u32)], edit: TrackEdit) -> Result<Vec<u8>> {
+pub fn write_audio(
+    info: &AudioInfo,
+    packets: &[(Vec<u8>, u32)],
+    edit: TrackEdit,
+) -> Result<Vec<u8>> {
     if packets.is_empty() {
         bail!("an Ogg file needs at least one audio packet");
     }
     if edit.delay != 0 {
-        bail!("an Ogg file cannot start its audio late (an edit delay of {} ticks)", edit.delay);
+        bail!(
+            "an Ogg file cannot start its audio late (an edit delay of {} ticks)",
+            edit.delay
+        );
     }
     let mut w = PacketWriter::new(Vec::new(), SERIAL);
     let total: u64 = packets.iter().map(|(_, d)| u64::from(*d)).sum();
@@ -65,9 +72,15 @@ pub fn write_audio(info: &AudioInfo, packets: &[(Vec<u8>, u32)], edit: TrackEdit
             let mut head = b"OpusHead".to_vec();
             head.extend_from_slice(&info.codec_private);
             head[8] = 1; // the OpusHead version (a `dOps` body says 0)
-            let pre_skip = u64::from(u16::from_le_bytes([info.codec_private[2], info.codec_private[3]]));
+            let pre_skip = u64::from(u16::from_le_bytes([
+                info.codec_private[2],
+                info.codec_private[3],
+            ]));
             if edit.media_time != 0 && edit.media_time != pre_skip {
-                bail!("an Opus edit starting at {} is not the stream's pre-skip ({pre_skip})", edit.media_time);
+                bail!(
+                    "an Opus edit starting at {} is not the stream's pre-skip ({pre_skip})",
+                    edit.media_time
+                );
             }
             w.write_packet(&head, 0, true, false)?;
             w.write_packet(&opus_tags(), 0, true, false)?;
@@ -117,7 +130,10 @@ pub fn read_audio(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
     let mut packets: Vec<Vec<u8>> = Vec::new();
     // The granule position at the end of each packet that ends a page.
     let mut granules: Vec<(usize, i64)> = Vec::new();
-    while let Some(p) = reader.next_packet().map_err(|e| anyhow::anyhow!("Ogg: {e}"))? {
+    while let Some(p) = reader
+        .next_packet()
+        .map_err(|e| anyhow::anyhow!("Ogg: {e}"))?
+    {
         if serial.is_none() {
             if !p.bos {
                 continue;
@@ -148,7 +164,9 @@ pub fn read_audio(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
         };
         // FLAC's header packets after the first are metadata blocks (their
         // first byte a block type, never a frame's 0xFF sync).
-        if headers.len() < need || (kind == Some(Kind::Flac) && packets.is_empty() && p.data.first() != Some(&0xFF)) {
+        if headers.len() < need
+            || (kind == Some(Kind::Flac) && packets.is_empty() && p.data.first() != Some(&0xFF))
+        {
             headers.push(p.data);
             continue;
         }
@@ -179,16 +197,21 @@ pub fn read_audio(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
             // count (2), then "fLaC" and the STREAMINFO block.
             let first = &headers[0];
             if first.get(5) != Some(&1) {
-                bail!("Ogg FLAC: mapping version {}.{} (rivet reads 1.x)", first.get(5).unwrap_or(&0), first.get(6).unwrap_or(&0));
+                bail!(
+                    "Ogg FLAC: mapping version {}.{} (rivet reads 1.x)",
+                    first.get(5).unwrap_or(&0),
+                    first.get(6).unwrap_or(&0)
+                );
             }
             let blocks = first
                 .get(9..)
                 .and_then(crate::demux::audio::lossless::normalize_flac_blocks)
                 .context("Ogg FLAC: the first packet holds no STREAMINFO")?;
-            let (rate, channels, _, _) =
-                crate::demux::audio::lossless::flac_stream_params(&blocks).context("Ogg FLAC: STREAMINFO")?;
-            let durations = crate::demux::audio::lossless::frame_durations("flac", &blocks, &packets)
-                .context("Ogg FLAC: a packet that is not a FLAC frame")?;
+            let (rate, channels, _, _) = crate::demux::audio::lossless::flac_stream_params(&blocks)
+                .context("Ogg FLAC: STREAMINFO")?;
+            let durations =
+                crate::demux::audio::lossless::frame_durations("flac", &blocks, &packets)
+                    .context("Ogg FLAC: a packet that is not a FLAC frame")?;
             let track = AudioTrack {
                 codec: "flac".into(),
                 samples: packets,
@@ -211,14 +234,20 @@ pub fn read_audio(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
             let input_rate = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
             let durations: Vec<u32> = packets
                 .iter()
-                .map(|p| opus_packet_samples(p).context("Ogg Opus: a packet whose TOC does not parse"))
+                .map(|p| {
+                    opus_packet_samples(p).context("Ogg Opus: a packet whose TOC does not parse")
+                })
                 .collect::<Result<_>>()?;
             let total: u64 = durations.iter().map(|&d| u64::from(d)).sum();
             // A stream that begins mid-way (RFC 7845 §4.5) counts from before
             // its first packet: the difference comes off the end position.
             let offset = first_offset(&granules, &durations).max(0);
             let end = last_granule.map(|g| (g - offset).max(0) as u64);
-            let edit = AudioEdit { delay: 0, media_start: pre_skip, media_end: end.filter(|&e| e < total) };
+            let edit = AudioEdit {
+                delay: 0,
+                media_start: pre_skip,
+                media_end: end.filter(|&e| e < total),
+            };
             let track = AudioTrack {
                 codec: "opus".into(),
                 samples: packets,
@@ -234,7 +263,8 @@ pub fn read_audio(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
         Kind::Vorbis => {
             let refs: [&[u8]; 3] = [&headers[0], &headers[1], &headers[2]];
             let private = vorbis::xiph_lacing(refs);
-            let ident = vorbis::Identification::read(&headers[0]).map_err(|e| anyhow::anyhow!("Ogg Vorbis: {e}"))?;
+            let ident = vorbis::Identification::read(&headers[0])
+                .map_err(|e| anyhow::anyhow!("Ogg Vorbis: {e}"))?;
             let durations = crate::demux::audio::vorbis_durations(&private, &packets)
                 .context("Ogg Vorbis: a packet names a mode the setup header lacks")?;
             let total: u64 = durations.iter().map(|&d| u64::from(d)).sum();
@@ -242,7 +272,11 @@ pub fn read_audio(data: &[u8]) -> Result<(AudioTrack, Option<AudioEdit>)> {
             // A negative offset is samples to drop at the start (§A.2).
             let start = (-offset).max(0) as u64;
             let end = last_granule.map(|g| (g - offset).max(0) as u64);
-            let edit = AudioEdit { delay: 0, media_start: start, media_end: end.filter(|&e| e < total) };
+            let edit = AudioEdit {
+                delay: 0,
+                media_start: start,
+                media_end: end.filter(|&e| e < total),
+            };
             let track = AudioTrack {
                 codec: "vorbis".into(),
                 samples: packets,
@@ -282,7 +316,10 @@ fn first_offset(granules: &[(usize, i64)], durations: &[u32]) -> i64 {
     let Some(&(n, g)) = granules.first() else {
         return 0;
     };
-    let decoded: i64 = durations[..n.min(durations.len())].iter().map(|&d| i64::from(d)).sum();
+    let decoded: i64 = durations[..n.min(durations.len())]
+        .iter()
+        .map(|&d| i64::from(d))
+        .sum();
     // The last page's position is an end trim, not an offset.
     if n == durations.len() && granules.len() == 1 && g <= decoded {
         return 0;
@@ -343,7 +380,11 @@ mod tests {
     #[test]
     fn opus_round_trips_with_its_pre_skip_and_end() {
         let packets: Vec<(Vec<u8>, u32)> = (0..50).map(|_| (opus_packet(), 960)).collect();
-        let edit = TrackEdit { delay: 0, media_time: 312, duration: Some(47_000) };
+        let edit = TrackEdit {
+            delay: 0,
+            media_time: 312,
+            duration: Some(47_000),
+        };
         let file = write_audio(&opus_info(312), &packets, edit).unwrap();
         assert!(sniff(&file));
         let (track, read) = read_audio(&file).unwrap();
@@ -351,14 +392,31 @@ mod tests {
         assert_eq!(track.samples.len(), 50);
         assert!(track.durations.iter().all(|&d| d == 960));
         assert_eq!(&track.codec_private[1..4], &[2, 0x38, 0x01]);
-        assert_eq!(read, Some(AudioEdit { delay: 0, media_start: 312, media_end: Some(312 + 47_000) }));
+        assert_eq!(
+            read,
+            Some(AudioEdit {
+                delay: 0,
+                media_start: 312,
+                media_end: Some(312 + 47_000)
+            })
+        );
     }
 
     #[test]
     fn other_codecs_and_late_starts_are_refused() {
         let packets = vec![(vec![1u8, 2, 3], 1024)];
-        assert!(write_audio(&AudioInfo::aac_lc(48_000, 2, vec![0x11, 0x90]), &packets, TrackEdit::default()).is_err());
-        let edit = TrackEdit { delay: 10, ..TrackEdit::default() };
+        assert!(
+            write_audio(
+                &AudioInfo::aac_lc(48_000, 2, vec![0x11, 0x90]),
+                &packets,
+                TrackEdit::default()
+            )
+            .is_err()
+        );
+        let edit = TrackEdit {
+            delay: 10,
+            ..TrackEdit::default()
+        };
         assert!(write_audio(&opus_info(312), &packets, edit).is_err());
         assert!(read_audio(b"not an ogg file at all, not one bit").is_err());
     }

@@ -31,13 +31,14 @@
 use crate::audio::filter::{ChannelLabel, ChannelLayout};
 use crate::audio::resample::AlignedResampler;
 use crate::audio::{
-    AudioCodec, AudioEncoder, AudioEncoderConfig, AudioError, AudioFrame, EncodedAudioPacket, dolby_dts_sample_rate,
+    AudioCodec, AudioEncoder, AudioEncoderConfig, AudioError, AudioFrame, EncodedAudioPacket,
+    dolby_dts_sample_rate,
 };
 
 /// AC-3's bit rates (A/52 Table 5.18), bits per second.
 pub const AC3_BITRATES: [u32; 19] = [
-    32_000, 40_000, 48_000, 56_000, 64_000, 80_000, 96_000, 112_000, 128_000, 160_000, 192_000, 224_000, 256_000,
-    320_000, 384_000, 448_000, 512_000, 576_000, 640_000,
+    32_000, 40_000, 48_000, 56_000, 64_000, 80_000, 96_000, 112_000, 128_000, 160_000, 192_000,
+    224_000, 256_000, 320_000, 384_000, 448_000, 512_000, 576_000, 640_000,
 ];
 
 /// E-AC-3's bit rate span, bits per second (whole kb/s).
@@ -75,14 +76,18 @@ pub fn default_bitrate(codec: AudioCodec, channels: u8) -> u32 {
 /// Whether `bps` is a bit rate `codec` (AC-3 or E-AC-3) codes.
 pub fn valid_bitrate(codec: AudioCodec, bps: u32) -> bool {
     match codec {
-        AudioCodec::Eac3 => bps.is_multiple_of(1000) && (EAC3_BITRATE_RANGE.0..=EAC3_BITRATE_RANGE.1).contains(&bps),
+        AudioCodec::Eac3 => {
+            bps.is_multiple_of(1000) && (EAC3_BITRATE_RANGE.0..=EAC3_BITRATE_RANGE.1).contains(&bps)
+        }
         _ => AC3_BITRATES.contains(&bps),
     }
 }
 
 fn encode_error(e: ::ac3::Error) -> AudioError {
     match e {
-        ::ac3::Error::InvalidInput(m) | ::ac3::Error::Unsupported(m) => AudioError::Unsupported(format!("ac3: {m}")),
+        ::ac3::Error::InvalidInput(m) | ::ac3::Error::Unsupported(m) => {
+            AudioError::Unsupported(format!("ac3: {m}"))
+        }
         other => AudioError::Encode(format!("ac3: {other}")),
     }
 }
@@ -109,11 +114,15 @@ pub fn ac3_layout_of(layout: &ChannelLayout, eac3: bool) -> Option<(::ac3::Layou
     let lfe = layout.has(ChannelLabel::LFE);
     let full = layout.len() - usize::from(lfe);
     let seven = eac3.then_some(ThreeFour);
-    [Mono, Stereo, ThreeZero, TwoOne, ThreeOne, TwoTwo, ThreeTwo].into_iter().chain(seven).find_map(|l| {
-        let speakers = l.speakers(lfe);
-        (speakers.len() == full + usize::from(lfe) && speakers.iter().all(|&s| layout.has(speaker_label(s))))
+    [Mono, Stereo, ThreeZero, TwoOne, ThreeOne, TwoTwo, ThreeTwo]
+        .into_iter()
+        .chain(seven)
+        .find_map(|l| {
+            let speakers = l.speakers(lfe);
+            (speakers.len() == full + usize::from(lfe)
+                && speakers.iter().all(|&s| layout.has(speaker_label(s))))
             .then_some((l, lfe))
-    })
+        })
 }
 
 pub struct Ac3Encoder {
@@ -137,28 +146,42 @@ impl Ac3Encoder {
         let format = match codec {
             AudioCodec::Ac3 => ::ac3::Format::Ac3,
             AudioCodec::Eac3 => ::ac3::Format::Eac3,
-            other => return Err(AudioError::Encode(format!("Ac3Encoder constructed with codec {other:?}"))),
+            other => {
+                return Err(AudioError::Encode(format!(
+                    "Ac3Encoder constructed with codec {other:?}"
+                )));
+            }
         };
         if config.sample_rate == 0 {
             return Err(AudioError::Encode("input sample_rate is 0".into()));
         }
         let layout = match &config.layout {
             Some(l) => l.clone(),
-            None => ChannelLayout::default_for(config.channels)
-                .map_err(|e| AudioError::Unsupported(format!("{} channels: {e}", config.channels)))?,
+            None => ChannelLayout::default_for(config.channels).map_err(|e| {
+                AudioError::Unsupported(format!("{} channels: {e}", config.channels))
+            })?,
         };
         if layout.len() != usize::from(config.channels) {
-            return Err(AudioError::Encode(format!("layout {layout} for {} channels", config.channels)));
+            return Err(AudioError::Encode(format!(
+                "layout {layout} for {} channels",
+                config.channels
+            )));
         }
         let (arrangement, lfe) = ac3_layout_of(&layout, codec == AudioCodec::Eac3).ok_or_else(|| {
             AudioError::Unsupported(format!(
                 "{layout} is not an AC-3 channel arrangement (1/0 to 3/2, with or without the LFE; 7.1 for E-AC-3)"
             ))
         })?;
-        let bitrate = if config.bitrate == 0 { default_bitrate(codec, config.channels) } else { config.bitrate };
+        let bitrate = if config.bitrate == 0 {
+            default_bitrate(codec, config.channels)
+        } else {
+            config.bitrate
+        };
         if !valid_bitrate(codec, bitrate) {
             return Err(AudioError::Unsupported(match codec {
-                AudioCodec::Eac3 => format!("{bitrate} bps is not an E-AC-3 bit rate (32k..6144k, whole kb/s)"),
+                AudioCodec::Eac3 => {
+                    format!("{bitrate} bps is not an E-AC-3 bit rate (32k..6144k, whole kb/s)")
+                }
                 _ => format!(
                     "{bitrate} bps is not an AC-3 bit rate ({})",
                     AC3_BITRATES.map(|b| format!("{}k", b / 1000)).join(", ")
@@ -166,12 +189,22 @@ impl Ac3Encoder {
             }));
         }
         let out_rate = dolby_dts_sample_rate(config.sample_rate);
-        let inner = ::ac3::Encoder::new(::ac3::Config::new(format, out_rate, arrangement, lfe, bitrate / 1000))
-            .map_err(encode_error)?;
+        let inner = ::ac3::Encoder::new(::ac3::Config::new(
+            format,
+            out_rate,
+            arrangement,
+            lfe,
+            bitrate / 1000,
+        ))
+        .map_err(encode_error)?;
         let order = inner
             .speakers()
             .iter()
-            .map(|&s| layout.index_of(speaker_label(s)).expect("the arrangement was matched on these speakers"))
+            .map(|&s| {
+                layout
+                    .index_of(speaker_label(s))
+                    .expect("the arrangement was matched on these speakers")
+            })
             .collect();
         Ok(Self {
             inner,
@@ -212,7 +245,11 @@ impl Ac3Encoder {
             .map(|data| {
                 let pts = first + (self.samples_out * 1_000_000 / u64::from(self.out_rate)) as i64;
                 self.samples_out += step;
-                EncodedAudioPacket { data, pts, duration: step as i64 }
+                EncodedAudioPacket {
+                    data,
+                    pts,
+                    duration: step as i64,
+                }
             })
             .collect())
     }
@@ -280,13 +317,36 @@ mod tests {
 
     #[test]
     fn arrangements_and_rates_are_checked() {
-        for name in ["mono", "stereo", "2.1", "3.0", "3.0(back)", "3.1", "4.0", "quad(side)", "4.1", "5.0(side)", "5.1(side)"]
-        {
-            assert!(ac3_layout_of(&ChannelLayout::named(name), false).is_some(), "{name}");
+        for name in [
+            "mono",
+            "stereo",
+            "2.1",
+            "3.0",
+            "3.0(back)",
+            "3.1",
+            "4.0",
+            "quad(side)",
+            "4.1",
+            "5.0(side)",
+            "5.1(side)",
+        ] {
+            assert!(
+                ac3_layout_of(&ChannelLayout::named(name), false).is_some(),
+                "{name}"
+            );
         }
-        assert!(ac3_layout_of(&ChannelLayout::named("5.1"), true).is_none(), "back surrounds are not A/52's");
-        assert!(ac3_layout_of(&ChannelLayout::named("7.1"), false).is_none(), "7.1 is E-AC-3's");
-        assert_eq!(ac3_layout_of(&ChannelLayout::named("7.1"), true), Some((::ac3::Layout::ThreeFour, true)));
+        assert!(
+            ac3_layout_of(&ChannelLayout::named("5.1"), true).is_none(),
+            "back surrounds are not A/52's"
+        );
+        assert!(
+            ac3_layout_of(&ChannelLayout::named("7.1"), false).is_none(),
+            "7.1 is E-AC-3's"
+        );
+        assert_eq!(
+            ac3_layout_of(&ChannelLayout::named("7.1"), true),
+            Some((::ac3::Layout::ThreeFour, true))
+        );
         assert!(Ac3Encoder::new(&config(AudioCodec::Ac3, 48_000, "stereo", 100_000)).is_err());
         assert!(Ac3Encoder::new(&config(AudioCodec::Eac3, 48_000, "stereo", 100_000)).is_ok());
         assert!(Ac3Encoder::new(&config(AudioCodec::Ac3, 48_000, "7.1", 0)).is_err());
@@ -304,12 +364,23 @@ mod tests {
             let freqs = [300.0f32, 500.0, 700.0, 60.0, 1100.0, 1300.0];
             let n = 48_000;
             let pcm: Vec<f32> = (0..n * 6)
-                .map(|i| 0.3 * (2.0 * std::f32::consts::PI * freqs[i % 6] * (i / 6) as f32 / 48_000.0).sin())
+                .map(|i| {
+                    0.3 * (2.0 * std::f32::consts::PI * freqs[i % 6] * (i / 6) as f32 / 48_000.0)
+                        .sin()
+                })
                 .collect();
             let mut enc = Ac3Encoder::new(&config(codec, 48_000, "5.1(side)", 0)).unwrap();
             let mut packets = Vec::new();
             for c in pcm.chunks(6 * 1000) {
-                packets.extend(enc.encode(&AudioFrame { samples: c.to_vec(), sample_rate: 48_000, channels: 6, pts: 0 }).unwrap());
+                packets.extend(
+                    enc.encode(&AudioFrame {
+                        samples: c.to_vec(),
+                        sample_rate: 48_000,
+                        channels: 6,
+                        pts: 0,
+                    })
+                    .unwrap(),
+                );
             }
             packets.extend(enc.flush().unwrap());
             assert!(packets.iter().all(|p| p.duration == 1536));

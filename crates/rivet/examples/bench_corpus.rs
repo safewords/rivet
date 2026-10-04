@@ -34,11 +34,19 @@ const FADE_SECONDS: f64 = 3.0;
 
 /// BT.709 limited-range Y'CbCr of an sRGB-ish 8-bit colour.
 fn yuv(rgb: u32) -> (u8, u8, u8) {
-    let (r, g, b) = (f64::from((rgb >> 16) & 255) / 255.0, f64::from((rgb >> 8) & 255) / 255.0, f64::from(rgb & 255) / 255.0);
+    let (r, g, b) = (
+        f64::from((rgb >> 16) & 255) / 255.0,
+        f64::from((rgb >> 8) & 255) / 255.0,
+        f64::from(rgb & 255) / 255.0,
+    );
     let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     let cb = (b - y) / 1.8556;
     let cr = (r - y) / 1.5748;
-    ((16.0 + 219.0 * y).round() as u8, (128.0 + 224.0 * cb).round() as u8, (128.0 + 224.0 * cr).round() as u8)
+    (
+        (16.0 + 219.0 * y).round() as u8,
+        (128.0 + 224.0 * cb).round() as u8,
+        (128.0 + 224.0 * cr).round() as u8,
+    )
 }
 
 /// The fade from black over the first three seconds: luma toward 16,
@@ -78,7 +86,9 @@ fn frame(kind: &str, w: u32, h: u32, n: u64, fps: u32, rng: &mut Rng, still: &[u
             let mut p = synth::test_pattern(w, h, n, ChromaFormat::Yuv420);
             for s in &mut p[..wu * hu] {
                 let noise = (rng.next_u64() >> 56) as f64;
-                *s = (f64::from(*s) * 0.65 + noise * 0.35).round().clamp(16.0, 235.0) as u8;
+                *s = (f64::from(*s) * 0.65 + noise * 0.35)
+                    .round()
+                    .clamp(16.0, 235.0) as u8;
             }
             p
         }
@@ -111,7 +121,11 @@ fn frame(kind: &str, w: u32, h: u32, n: u64, fps: u32, rng: &mut Rng, still: &[u
             let zoom = 1.4 + 0.3 * (n as f64 / 8.0).sin();
             let (c, s) = (angle.cos(), angle.sin());
             let mut p = synth::blank(w, h, ChromaFormat::Yuv420);
-            for (plane, pw, ph, off) in [(0, wu, hu, 0), (1, cw, ch, wu * hu), (2, cw, ch, wu * hu + cw * ch)] {
+            for (plane, pw, ph, off) in [
+                (0, wu, hu, 0),
+                (1, cw, ch, wu * hu),
+                (2, cw, ch, wu * hu + cw * ch),
+            ] {
                 let src = &still[off..off + pw * ph];
                 let (cx, cy) = (pw as f64 / 2.0, ph as f64 / 2.0);
                 for y in 0..ph {
@@ -119,7 +133,13 @@ fn frame(kind: &str, w: u32, h: u32, n: u64, fps: u32, rng: &mut Rng, still: &[u
                         let (dx, dy) = ((x as f64 - cx) / zoom, (y as f64 - cy) / zoom);
                         let (u, v) = (c * dx + s * dy + cx, -s * dx + c * dy + cy);
                         let inside = (0.0..pw as f64).contains(&u) && (0.0..ph as f64).contains(&v);
-                        p[off + y * pw + x] = if inside { sample(src, pw, ph, u, v) } else if plane == 0 { 16 } else { 128 };
+                        p[off + y * pw + x] = if inside {
+                            sample(src, pw, ph, u, v)
+                        } else if plane == 0 {
+                            16
+                        } else {
+                            128
+                        };
                     }
                 }
             }
@@ -129,7 +149,11 @@ fn frame(kind: &str, w: u32, h: u32, n: u64, fps: u32, rng: &mut Rng, still: &[u
             let mut p = synth::test_pattern(w, h, n, ChromaFormat::Yuv420);
             for s in &mut p[..wu * hu] {
                 let x = (f64::from(*s) - 16.0) / 219.0;
-                let curved = if x <= 0.5 { x / 0.5 * 0.09 } else { 0.09 + (x - 0.5) / 0.5 * 0.13 };
+                let curved = if x <= 0.5 {
+                    x / 0.5 * 0.09
+                } else {
+                    0.09 + (x - 0.5) / 0.5 * 0.13
+                };
                 *s = (16.0 + 219.0 * (curved - 0.06).max(0.0)).round() as u8;
             }
             p
@@ -151,8 +175,10 @@ fn main() {
             "--seconds" | "--size" if i + 1 < args.len() => i += 2,
             "--yuv" => i += 1,
             other => {
-                eprintln!("bench_corpus: unexpected argument {other:?}
-{USAGE}");
+                eprintln!(
+                    "bench_corpus: unexpected argument {other:?}
+{USAGE}"
+                );
                 std::process::exit(2);
             }
         }
@@ -168,7 +194,11 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let opt = |name: &str| args.iter().position(|a| a == name).map(|i| args[i + 1].clone());
+    let opt = |name: &str| {
+        args.iter()
+            .position(|a| a == name)
+            .map(|i| args[i + 1].clone())
+    };
     let seconds: f64 = opt("--seconds").map_or(20.0, |s| s.parse().expect("--seconds S"));
     let (w, h) = opt("--size").map_or((1920, 1080), |s| {
         let (a, b) = s.split_once('x').expect("--size WxH");
@@ -180,16 +210,25 @@ fn main() {
     for kind in ["grain", "flat", "motion", "dark"] {
         let n = (seconds * f64::from(FPS)).round() as u64;
         let mut rng = Rng::new(42);
-        let pictures: Vec<Vec<u8>> = (0..n).map(|i| frame(kind, w, h, i, FPS, &mut rng, &still)).collect();
+        let pictures: Vec<Vec<u8>> = (0..n)
+            .map(|i| frame(kind, w, h, i, FPS, &mut rng, &still))
+            .collect();
         if args.iter().any(|a| a == "--yuv") {
             let raw = out.join(format!("{kind}_{w}x{h}.yuv"));
             std::fs::write(&raw, pictures.concat()).expect("write the raw pictures");
         }
-        let cfg = H264 { qp: 12, ..H264::new(w, h, FPS) };
+        let cfg = H264 {
+            qp: 12,
+            ..H264::new(w, h, FPS)
+        };
         let coded = synth::encode_h264(&cfg, pictures);
         let mp4 = synth::mp4(&coded, w, h, FPS, None, None);
         let path = out.join(format!("{kind}.mp4"));
         std::fs::write(&path, &mp4).expect("write the clip");
-        println!("{:<14} {:>11} bytes  {w}x{h}, {n} frames", format!("{kind}.mp4"), mp4.len());
+        println!(
+            "{:<14} {:>11} bytes  {w}x{h}, {n} frames",
+            format!("{kind}.mp4"),
+            mp4.len()
+        );
     }
 }

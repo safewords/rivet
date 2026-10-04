@@ -2,11 +2,11 @@
 // sample-entry validation, stsd dispatcher, and Apple `chan` box.
 // 29 #[test] functions.
 
-use crate::AudioInfo;
 use super::super::Av1Mp4Muxer;
 use super::super::audio_track::{
-    build_audio_stsd, build_chan_box, build_mp4a, build_opus_sample_entry, build_dops,
+    build_audio_stsd, build_chan_box, build_dops, build_mp4a, build_opus_sample_entry,
 };
+use crate::AudioInfo;
 
 // ---- local fixtures -------------------------------------------------------
 
@@ -575,7 +575,9 @@ fn front_pair_first_asc(layout: &str) -> Vec<u8> {
     put(&mut bits, 5, 5); // extensionAudioObjectType: SBR
     put(&mut bits, 0, 1); // sbrPresentFlag
     bits.resize(bits.len().div_ceil(8) * 8, 0);
-    bits.chunks(8).map(|b| b.iter().fold(0u8, |a, &x| a << 1 | x)).collect()
+    bits.chunks(8)
+        .map(|b| b.iter().fold(0u8, |a, &x| a << 1 | x))
+        .collect()
 }
 
 /// An ASC carrying a PCE in the ISO/IEC 14496-3 arrangement: front,
@@ -584,7 +586,13 @@ fn front_pair_first_asc(layout: &str) -> Vec<u8> {
 fn pce_asc(front: &str, side: &str, back: &str, lfe: usize) -> Vec<u8> {
     use crate::aac_asc::{PceElement, ProgramConfig, synthesize_asc_with_pce};
     let elements = |spec: &str| -> Vec<PceElement> {
-        spec.chars().enumerate().map(|(i, c)| PceElement { is_cpe: c == 'P', tag: i as u8 }).collect()
+        spec.chars()
+            .enumerate()
+            .map(|(i, c)| PceElement {
+                is_cpe: c == 'P',
+                tag: i as u8,
+            })
+            .collect()
     };
     let pce = ProgramConfig {
         object_type: 1,
@@ -602,10 +610,18 @@ fn pce_asc(front: &str, side: &str, back: &str, lfe: usize) -> Vec<u8> {
 /// with version and flags 0 and neither a bitmap nor descriptions.
 fn chan_tag(chan: &[u8]) -> u32 {
     assert_eq!(chan.len(), 24, "8 header + 16 body: {chan:02X?}");
-    assert_eq!(u32::from_be_bytes(chan[0..4].try_into().unwrap()) as usize, chan.len(), "size field");
+    assert_eq!(
+        u32::from_be_bytes(chan[0..4].try_into().unwrap()) as usize,
+        chan.len(),
+        "size field"
+    );
     assert_eq!(&chan[4..8], b"chan");
     assert_eq!(&chan[8..12], &[0, 0, 0, 0], "version and flags must be 0");
-    assert_eq!(&chan[16..24], &[0u8; 8], "mChannelBitmap and mNumberChannelDescriptions must be 0 in the tag form");
+    assert_eq!(
+        &chan[16..24],
+        &[0u8; 8],
+        "mChannelBitmap and mNumberChannelDescriptions must be 0 in the tag form"
+    );
     u32::from_be_bytes(chan[12..16].try_into().unwrap())
 }
 
@@ -613,13 +629,25 @@ fn chan_tag(chan: &[u8]) -> u32 {
 /// including an HE-AAC v2 mono core, which the decoder turns into stereo.
 #[test]
 fn chan_box_omitted_for_mono_and_stereo() {
-    assert!(build_chan_box(&asc_for_configuration(1)).is_none(), "mono should not emit chan");
-    assert!(build_chan_box(&asc_for_configuration(2)).is_none(), "stereo should not emit chan");
+    assert!(
+        build_chan_box(&asc_for_configuration(1)).is_none(),
+        "mono should not emit chan"
+    );
+    assert!(
+        build_chan_box(&asc_for_configuration(2)).is_none(),
+        "stereo should not emit chan"
+    );
     // AOT=29 (PS) | SFI=3 | cfg=1 | ext SFI=3 | core AOT=2 | GA 000.
     let ps = [0xE9, 0x89, 0x88, 0x80];
     let parsed = crate::aac_asc::parse_aac_asc(&ps).expect("PS ASC parses");
-    assert!(parsed.ps_present && parsed.channel_configuration == 1, "{parsed:?}");
-    assert!(build_chan_box(&ps).is_none(), "HE-AAC v2 (PS) mono core decodes to stereo");
+    assert!(
+        parsed.ps_present && parsed.channel_configuration == 1,
+        "{parsed:?}"
+    );
+    assert!(
+        build_chan_box(&ps).is_none(),
+        "HE-AAC v2 (PS) mono core decodes to stereo"
+    );
 }
 
 /// A layout no tag names gets no box rather than a wrong one: 22.2
@@ -629,13 +657,22 @@ fn chan_box_omitted_for_mono_and_stereo() {
 #[test]
 fn chan_box_omitted_for_layouts_no_tag_names() {
     for cfg in [0u8, 8, 9, 10, 13, 15] {
-        assert!(build_chan_box(&asc_for_configuration(cfg)).is_none(), "channelConfiguration {cfg} must not emit chan");
+        assert!(
+            build_chan_box(&asc_for_configuration(cfg)).is_none(),
+            "channelConfiguration {cfg} must not emit chan"
+        );
     }
     assert!(build_chan_box(&[]).is_none(), "no ASC");
     assert!(build_chan_box(&[0x11]).is_none(), "truncated ASC");
     // A PCE whose front is three single channels.
     let pce = crate::aac_asc::ProgramConfig {
-        front: vec![crate::aac_asc::PceElement { is_cpe: false, tag: 0 }; 3],
+        front: vec![
+            crate::aac_asc::PceElement {
+                is_cpe: false,
+                tag: 0
+            };
+            3
+        ],
         ..Default::default()
     };
     assert!(build_chan_box(&crate::aac_asc::synthesize_asc_with_pce(2, 3, &pce)).is_none());
@@ -662,7 +699,10 @@ fn chan_tag_follows_the_channel_configuration() {
     ];
     for (cfg, tag) in want {
         let got = build_chan_box(&asc_for_configuration(cfg)).map(|chan| chan_tag(&chan));
-        assert_eq!(got, tag, "channelConfiguration {cfg}: got {got:08X?}, want {tag:08X?}");
+        assert_eq!(
+            got, tag,
+            "channelConfiguration {cfg}: got {got:08X?}, want {tag:08X?}"
+        );
     }
 }
 
@@ -674,18 +714,32 @@ fn chan_tag_follows_the_channel_configuration() {
 #[test]
 fn chan_tag_follows_the_pce() {
     let want: [(&str, Vec<u8>, u32); 9] = [
-        ("5.1, back pair", pce_asc("SP", "", "P", 1), (124 << 16) | 6),     // C L R Ls Rs LFE = MPEG_5_1_D
-        ("5.1, side pair", pce_asc("SP", "P", "", 1), (124 << 16) | 6),     // the same speakers
-        ("6.0", pce_asc("SP", "P", "S", 0), (141 << 16) | 6),               // C L R Ls Rs Cs = AAC_6_0
-        ("6.1", pce_asc("SP", "P", "S", 1), (142 << 16) | 7),               // C L R Ls Rs Cs LFE = AAC_6_1
-        ("7.0", pce_asc("SP", "P", "P", 0), (143 << 16) | 7),               // C L R Ls Rs Rls Rrs = AAC_7_0
-        ("7.1, rear", pce_asc("SP", "P", "P", 1), (183 << 16) | 8),         // C L R Ls Rs Rls Rrs LFE = AAC_7_1_B
-        ("7.1, front wide", pce_asc("SPP", "", "P", 1), (127 << 16) | 8),   // C Lc Rc L R Ls Rs LFE = MPEG_7_1_B
-        ("octagonal", pce_asc("SP", "P", "PS", 0), (144 << 16) | 8),        // C L R Ls Rs Rls Rrs Cs = AAC_Octagonal
-        ("front-pair 2.1", front_pair_first_asc("2.1"), (133 << 16) | 3),             // L R LFE = DVD_4
+        ("5.1, back pair", pce_asc("SP", "", "P", 1), (124 << 16) | 6), // C L R Ls Rs LFE = MPEG_5_1_D
+        ("5.1, side pair", pce_asc("SP", "P", "", 1), (124 << 16) | 6), // the same speakers
+        ("6.0", pce_asc("SP", "P", "S", 0), (141 << 16) | 6),           // C L R Ls Rs Cs = AAC_6_0
+        ("6.1", pce_asc("SP", "P", "S", 1), (142 << 16) | 7), // C L R Ls Rs Cs LFE = AAC_6_1
+        ("7.0", pce_asc("SP", "P", "P", 0), (143 << 16) | 7), // C L R Ls Rs Rls Rrs = AAC_7_0
+        ("7.1, rear", pce_asc("SP", "P", "P", 1), (183 << 16) | 8), // C L R Ls Rs Rls Rrs LFE = AAC_7_1_B
+        (
+            "7.1, front wide",
+            pce_asc("SPP", "", "P", 1),
+            (127 << 16) | 8,
+        ), // C Lc Rc L R Ls Rs LFE = MPEG_7_1_B
+        ("octagonal", pce_asc("SP", "P", "PS", 0), (144 << 16) | 8), // C L R Ls Rs Rls Rrs Cs = AAC_Octagonal
+        (
+            "front-pair 2.1",
+            front_pair_first_asc("2.1"),
+            (133 << 16) | 3,
+        ), // L R LFE = DVD_4
     ];
     for (layout, asc, tag) in want {
-        assert_eq!(crate::aac_asc::parse_aac_asc(&asc).expect("parses").channel_configuration, 0, "{layout}");
+        assert_eq!(
+            crate::aac_asc::parse_aac_asc(&asc)
+                .expect("parses")
+                .channel_configuration,
+            0,
+            "{layout}"
+        );
         let got = build_chan_box(&asc).map(|chan| chan_tag(&chan));
         assert_eq!(got, Some(tag), "{layout}: got {got:08X?}, want {tag:08X}");
     }
@@ -698,11 +752,26 @@ fn chan_tag_follows_the_pce() {
 /// not have in that order.
 #[test]
 fn front_pair_first_pce_arrangements_are_not_guessed() {
-    for layout in ["3.1", "4.1", "5.0(side)", "5.1(side)", "6.0", "hexagonal", "6.1", "7.0", "7.1(wide)", "octagonal"] {
+    for layout in [
+        "3.1",
+        "4.1",
+        "5.0(side)",
+        "5.1(side)",
+        "6.0",
+        "hexagonal",
+        "6.1",
+        "7.0",
+        "7.1(wide)",
+        "octagonal",
+    ] {
         let asc = front_pair_first_asc(layout);
         let parsed = crate::aac_asc::parse_aac_asc(&asc).expect("the ASC parses");
         assert_eq!(parsed.channel_configuration, 0, "{layout} is PCE-described");
-        assert!(build_chan_box(&asc).is_none(), "{layout}: {:02X?}", build_chan_box(&asc));
+        assert!(
+            build_chan_box(&asc).is_none(),
+            "{layout}: {:02X?}",
+            build_chan_box(&asc)
+        );
     }
 }
 
@@ -713,7 +782,11 @@ fn front_pair_first_pce_arrangements_are_not_guessed() {
 #[test]
 fn chan_box_5_1_layout_and_size() {
     let chan = build_chan_box(&[0x11, 0xB0]).expect("5.1 must emit chan");
-    assert_eq!(chan_tag(&chan), 0x007C0006u32, "5.1 tag must be kAudioChannelLayoutTag_AAC_5_1 = 0x007C0006");
+    assert_eq!(
+        chan_tag(&chan),
+        0x007C0006u32,
+        "5.1 tag must be kAudioChannelLayoutTag_AAC_5_1 = 0x007C0006"
+    );
 }
 
 /// The `chan` box's tag read as Apple defines it, and the speakers it names
@@ -740,18 +813,30 @@ fn chan_box_reads_back_as_aacs_own_layout_by_apples_tag_definitions() {
             return None;
         }
         let map: &[(u32, &'static [&'static str])] = &[
-            ((114 << 16) | 3, &["C", "L", "R"]),                                  // MPEG_3_0_B
-            ((116 << 16) | 4, &["C", "L", "R", "Cs"]),                            // MPEG_4_0_B
-            ((120 << 16) | 5, &["C", "L", "R", "Ls", "Rs"]),                      // MPEG_5_0_D
-            ((124 << 16) | 6, &["C", "L", "R", "Ls", "Rs", "LFE"]),               // MPEG_5_1_D
-            ((127 << 16) | 8, &["C", "Lc", "Rc", "L", "R", "Ls", "Rs", "LFE"]),   // MPEG_7_1_B
-            ((133 << 16) | 3, &["L", "R", "LFE"]),                                // DVD_4
-            ((141 << 16) | 6, &["C", "L", "R", "Ls", "Rs", "Cs"]),                // AAC_6_0
-            ((142 << 16) | 7, &["C", "L", "R", "Ls", "Rs", "Cs", "LFE"]),         // AAC_6_1
-            ((143 << 16) | 7, &["C", "L", "R", "Ls", "Rs", "Rls", "Rrs"]),        // AAC_7_0
-            ((144 << 16) | 8, &["C", "L", "R", "Ls", "Rs", "Rls", "Rrs", "Cs"]),  // AAC_Octagonal
-            ((183 << 16) | 8, &["C", "L", "R", "Ls", "Rs", "Rls", "Rrs", "LFE"]), // AAC_7_1_B
-            ((184 << 16) | 8, &["C", "L", "R", "Ls", "Rs", "LFE", "Vhl", "Vhr"]), // AAC_7_1_C
+            ((114 << 16) | 3, &["C", "L", "R"]),             // MPEG_3_0_B
+            ((116 << 16) | 4, &["C", "L", "R", "Cs"]),       // MPEG_4_0_B
+            ((120 << 16) | 5, &["C", "L", "R", "Ls", "Rs"]), // MPEG_5_0_D
+            ((124 << 16) | 6, &["C", "L", "R", "Ls", "Rs", "LFE"]), // MPEG_5_1_D
+            (
+                (127 << 16) | 8,
+                &["C", "Lc", "Rc", "L", "R", "Ls", "Rs", "LFE"],
+            ), // MPEG_7_1_B
+            ((133 << 16) | 3, &["L", "R", "LFE"]),           // DVD_4
+            ((141 << 16) | 6, &["C", "L", "R", "Ls", "Rs", "Cs"]), // AAC_6_0
+            ((142 << 16) | 7, &["C", "L", "R", "Ls", "Rs", "Cs", "LFE"]), // AAC_6_1
+            ((143 << 16) | 7, &["C", "L", "R", "Ls", "Rs", "Rls", "Rrs"]), // AAC_7_0
+            (
+                (144 << 16) | 8,
+                &["C", "L", "R", "Ls", "Rs", "Rls", "Rrs", "Cs"],
+            ), // AAC_Octagonal
+            (
+                (183 << 16) | 8,
+                &["C", "L", "R", "Ls", "Rs", "Rls", "Rrs", "LFE"],
+            ), // AAC_7_1_B
+            (
+                (184 << 16) | 8,
+                &["C", "L", "R", "Ls", "Rs", "LFE", "Vhl", "Vhr"],
+            ), // AAC_7_1_C
         ];
         map.iter().find(|(t, _)| *t == tag).map(|(_, names)| *names)
     }
@@ -772,13 +857,24 @@ fn chan_box_reads_back_as_aacs_own_layout_by_apples_tag_definitions() {
             Speaker::Vhr => "Vhr",
         }
     }
-    let mut ascs: Vec<(String, Vec<u8>)> =
-        [3u8, 4, 5, 6, 7, 11, 12, 14].into_iter().map(|cfg| (format!("config {cfg}"), asc_for_configuration(cfg))).collect();
+    let mut ascs: Vec<(String, Vec<u8>)> = [3u8, 4, 5, 6, 7, 11, 12, 14]
+        .into_iter()
+        .map(|cfg| (format!("config {cfg}"), asc_for_configuration(cfg)))
+        .collect();
     ascs.push(("front-pair 2.1".into(), front_pair_first_asc("2.1")));
-    for (front, side, back, lfe) in
-        [("SP", "", "P", 1), ("SP", "P", "S", 0), ("SP", "P", "S", 1), ("SP", "P", "P", 0), ("SP", "P", "P", 1), ("SPP", "", "P", 1), ("SP", "P", "PS", 0)]
-    {
-        ascs.push((format!("PCE {front}/{side}/{back}/{lfe}"), pce_asc(front, side, back, lfe)));
+    for (front, side, back, lfe) in [
+        ("SP", "", "P", 1),
+        ("SP", "P", "S", 0),
+        ("SP", "P", "S", 1),
+        ("SP", "P", "P", 0),
+        ("SP", "P", "P", 1),
+        ("SPP", "", "P", 1),
+        ("SP", "P", "PS", 0),
+    ] {
+        ascs.push((
+            format!("PCE {front}/{side}/{back}/{lfe}"),
+            pce_asc(front, side, back, lfe),
+        ));
     }
     for (what, asc) in ascs {
         let order = speaker_order(&parse_aac_asc(&asc).unwrap()).expect("a named layout");
@@ -842,7 +938,6 @@ fn chan_absent_from_stereo_mp4a() {
     );
 }
 
-
 /// Eight channels are three AAC layouts (channelConfiguration 7, 12 and 14,
 /// or a PCE describing any of them), and the gate accepts all three at 8:
 /// the tag comes from the layout, so they get three different tags.
@@ -850,7 +945,12 @@ fn chan_absent_from_stereo_mp4a() {
 fn aac_eight_channels_are_three_layouts() {
     let tags: Vec<u32> = [7u8, 12, 14]
         .into_iter()
-        .map(|cfg| chan_tag(&build_chan_box(&asc_for_configuration(cfg)).expect("8-channel AAC gets a chan box")))
+        .map(|cfg| {
+            chan_tag(
+                &build_chan_box(&asc_for_configuration(cfg))
+                    .expect("8-channel AAC gets a chan box"),
+            )
+        })
         .collect();
     assert_eq!(tags, vec![0x007F_0008, 0x00B7_0008, 0x00B8_0008]);
 }
@@ -868,15 +968,33 @@ fn with_audio_takes_every_aac_layout_up_to_eight_channels() {
         asc_bytes,
         codec_private: Vec::new(),
     };
-    for (cfg, channels) in [(1u8, 1u16), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 8), (11, 7), (12, 8), (14, 8)] {
+    for (cfg, channels) in [
+        (1u8, 1u16),
+        (2, 2),
+        (3, 3),
+        (4, 4),
+        (5, 5),
+        (6, 6),
+        (7, 8),
+        (11, 7),
+        (12, 8),
+        (14, 8),
+    ] {
         let info = aac(channels, asc_for_configuration(cfg));
-        Av1Mp4Muxer::check_audio(&info).unwrap_or_else(|e| panic!("channelConfiguration {cfg}: {e:#}"));
+        Av1Mp4Muxer::check_audio(&info)
+            .unwrap_or_else(|e| panic!("channelConfiguration {cfg}: {e:#}"));
         let mut muxer = Av1Mp4Muxer::new(640, 480, 30.0).unwrap();
-        muxer.with_audio(info).unwrap_or_else(|e| panic!("channelConfiguration {cfg}: {e:#}"));
+        muxer
+            .with_audio(info)
+            .unwrap_or_else(|e| panic!("channelConfiguration {cfg}: {e:#}"));
     }
     let two_one = aac(3, front_pair_first_asc("2.1"));
     Av1Mp4Muxer::check_audio(&two_one).expect("a PCE 2.1 is taken");
-    assert!(build_mp4a(&two_one).windows(4).any(|w| w == b"chan"), "2.1 carries its DVD_4 tag");
-    let e = Av1Mp4Muxer::check_audio(&aac(24, asc_for_configuration(13))).expect_err("22.2 is refused");
+    assert!(
+        build_mp4a(&two_one).windows(4).any(|w| w == b"chan"),
+        "2.1 carries its DVD_4 tag"
+    );
+    let e =
+        Av1Mp4Muxer::check_audio(&aac(24, asc_for_configuration(13))).expect_err("22.2 is refused");
     assert!(format!("{e:#}").contains("got 24 channels"), "{e:#}");
 }

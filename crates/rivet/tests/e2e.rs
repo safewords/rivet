@@ -174,7 +174,10 @@ fn real_media_pipeline_if_sample_exists() {
     // Diagnostic gate so we can see exactly where execution crashes on
     // GPU boxes. Each println is flushed via `eprintln!` so stdout
     // buffering doesn't hide the last step before a hard segfault.
-    eprintln!("e2e real_media: test_media_dir={}", test_media_dir.display());
+    eprintln!(
+        "e2e real_media: test_media_dir={}",
+        test_media_dir.display()
+    );
     eprintln!(
         "e2e real_media: test_media_dir={}",
         test_media_dir.display()

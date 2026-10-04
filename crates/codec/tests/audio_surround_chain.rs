@@ -23,7 +23,12 @@ fn surround_pcm(channels: u8, frames: usize) -> AudioFrame {
             })
         })
         .collect();
-    AudioFrame { samples, sample_rate: 48_000, channels, pts: 0 }
+    AudioFrame {
+        samples,
+        sample_rate: 48_000,
+        channels,
+        pts: 0,
+    }
 }
 
 /// Split a family-1 `dOps` body into its parts, per RFC 7845 §5.1.1:
@@ -54,7 +59,12 @@ fn five_one_side_to_back_relabel_reaches_a_family_1_opus_encoder() {
     let out_channels = output_channels(&chain, 6).unwrap();
     assert_eq!(out_channels, 6);
 
-    let mut enc = create_encoder(AudioEncoderConfig::new(AudioCodec::Opus, 48_000, out_channels, 240_000))
+    let mut enc = create_encoder(AudioEncoderConfig::new(
+        AudioCodec::Opus,
+        48_000,
+        out_channels,
+        240_000,
+    ))
     .expect("opus multistream encoder for 5.1");
 
     // dOps must announce channel-mapping family 1 with RFC 7845's 5.1
@@ -79,7 +89,10 @@ fn five_one_side_to_back_relabel_reaches_a_family_1_opus_encoder() {
         }
     }
     packets += enc.flush().unwrap().len();
-    assert!(packets >= 40, "expected ~50 packets for 1 s of audio, got {packets}");
+    assert!(
+        packets >= 40,
+        "expected ~50 packets for 1 s of audio, got {packets}"
+    );
 }
 
 #[test]
@@ -90,10 +103,19 @@ fn a_downmixing_map_resizes_the_encoder() {
     let out_channels = output_channels(&chain, 6).unwrap();
     assert_eq!(out_channels, 2);
 
-    let mut enc = create_encoder(AudioEncoderConfig::new(AudioCodec::Opus, 48_000, out_channels, 96_000))
+    let mut enc = create_encoder(AudioEncoderConfig::new(
+        AudioCodec::Opus,
+        48_000,
+        out_channels,
+        96_000,
+    ))
     .unwrap();
     let (channels, family, ..) = parse_dops(&enc.extra_data());
-    assert_eq!((channels, family), (2, 0), "stereo stays on channel-mapping family 0");
+    assert_eq!(
+        (channels, family),
+        (2, 0),
+        "stereo stays on channel-mapping family 0"
+    );
 
     let filtered = apply_chain(&surround_pcm(6, 960), &chain).unwrap();
     assert_eq!(filtered.samples.len(), 960 * 2);
@@ -106,7 +128,12 @@ fn every_surround_width_builds_an_encoder() {
     // and its default bitrate must scale with the stream count rather than
     // falling back to a stereo-sized one.
     for channels in 1u8..=8 {
-        let enc = create_encoder(AudioEncoderConfig::new(AudioCodec::Opus, 48_000, channels, 0)) // 0 = derive from the layout
+        let enc = create_encoder(AudioEncoderConfig::new(
+            AudioCodec::Opus,
+            48_000,
+            channels,
+            0,
+        )) // 0 = derive from the layout
         .unwrap_or_else(|e| panic!("{channels}-channel Opus encoder: {e}"));
         let (got, family, streams, coupled, _) = parse_dops(&enc.extra_data());
         assert_eq!(got, channels);
@@ -114,7 +141,10 @@ fn every_surround_width_builds_an_encoder() {
             assert_eq!(family, 0, "{channels}ch should stay on family 0");
         } else {
             assert_eq!(family, 1, "{channels}ch needs family 1");
-            assert!(streams >= coupled, "{channels}ch: coupled exceeds total streams");
+            assert!(
+                streams >= coupled,
+                "{channels}ch: coupled exceeds total streams"
+            );
             assert_eq!(
                 streams + coupled,
                 channels,

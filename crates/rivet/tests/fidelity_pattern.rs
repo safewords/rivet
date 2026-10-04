@@ -234,9 +234,9 @@ fn structured_pattern_round_trip_recovers_frame_indices() {
     // dav1d_flush inside finish() wipes any queued pictures, so we MUST
     // drain before finish.
     let drain = |decoder: &mut Box<dyn Decoder>,
-                     recovered: &mut Vec<u32>,
-                     total_confident: &mut u32,
-                     total_bits: &mut u32| {
+                 recovered: &mut Vec<u32>,
+                 total_confident: &mut u32,
+                 total_bits: &mut u32| {
         while let Some(frame) = decoder.decode_next().expect("decode_next") {
             let (idx, confident) = recover_index(&frame);
             recovered.push(idx);

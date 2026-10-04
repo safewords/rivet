@@ -322,12 +322,12 @@ pub fn parse_av1_frame_header(sample: &[u8], seq: &Av1SequenceHeader) -> Option<
 
     // refresh_frame_flags
     let all_frames = 0xFFu8;
-    h.refresh_frame_flags = if (matches!(h.frame_type, Av1FrameType::Key) && h.show_frame) || is_switch
-    {
-        all_frames
-    } else {
-        br.read_bits(8)? as u8
-    };
+    h.refresh_frame_flags =
+        if (matches!(h.frame_type, Av1FrameType::Key) && h.show_frame) || is_switch {
+            all_frames
+        } else {
+            br.read_bits(8)? as u8
+        };
 
     // ─── Phase 2: size / render size / ref frames ──────────────
     let (frame_width, frame_height) = if frame_is_intra {

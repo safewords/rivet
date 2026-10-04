@@ -4,8 +4,8 @@
 //! allocation and the last sync point produced by `EncodeFrameAsync` on
 //! that slot.
 
-use crate::qsv_ffi::MfxFrameSurface1;
 use super::ffi::MfxSyncPoint;
+use crate::qsv_ffi::MfxFrameSurface1;
 
 /// What we advertise to the runtime as `mfxVideoParam.AsyncDepth` — how many
 /// submissions it may have in flight at once.  Upstream oneVPL

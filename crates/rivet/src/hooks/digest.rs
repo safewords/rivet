@@ -12,7 +12,11 @@ pub enum DigestAlgorithm {
 }
 
 impl DigestAlgorithm {
-    pub const ALL: [DigestAlgorithm; 3] = [DigestAlgorithm::Sha256, DigestAlgorithm::Sha1, DigestAlgorithm::Md5];
+    pub const ALL: [DigestAlgorithm; 3] = [
+        DigestAlgorithm::Sha256,
+        DigestAlgorithm::Sha1,
+        DigestAlgorithm::Md5,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -46,12 +50,14 @@ impl std::fmt::Display for DigestAlgorithm {
 impl std::str::FromStr for DigestAlgorithm {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self> {
-        Ok(match s.trim().to_ascii_lowercase().replace('-', "").as_str() {
-            "sha256" => DigestAlgorithm::Sha256,
-            "sha1" => DigestAlgorithm::Sha1,
-            "md5" => DigestAlgorithm::Md5,
-            other => bail!("unknown digest `{other}` (sha256, sha1, md5)"),
-        })
+        Ok(
+            match s.trim().to_ascii_lowercase().replace('-', "").as_str() {
+                "sha256" => DigestAlgorithm::Sha256,
+                "sha1" => DigestAlgorithm::Sha1,
+                "md5" => DigestAlgorithm::Md5,
+                other => bail!("unknown digest `{other}` (sha256, sha1, md5)"),
+            },
+        )
     }
 }
 

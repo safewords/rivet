@@ -25,14 +25,15 @@
 use crate::audio::filter::{ChannelLabel, ChannelLayout};
 use crate::audio::resample::AlignedResampler;
 use crate::audio::{
-    AudioCodec, AudioEncoder, AudioEncoderConfig, AudioError, AudioFrame, EncodedAudioPacket, dolby_dts_sample_rate,
+    AudioCodec, AudioEncoder, AudioEncoderConfig, AudioError, AudioFrame, EncodedAudioPacket,
+    dolby_dts_sample_rate,
 };
 
 /// The bit rates of ETSI TS 102 114 Table 5-7, bits per second.
 pub const DTS_BITRATES: [u32; 25] = [
-    32_000, 56_000, 64_000, 96_000, 112_000, 128_000, 192_000, 224_000, 256_000, 320_000, 384_000, 448_000,
-    512_000, 576_000, 640_000, 768_000, 960_000, 1_024_000, 1_152_000, 1_280_000, 1_344_000, 1_408_000,
-    1_411_200, 1_472_000, 1_536_000,
+    32_000, 56_000, 64_000, 96_000, 112_000, 128_000, 192_000, 224_000, 256_000, 320_000, 384_000,
+    448_000, 512_000, 576_000, 640_000, 768_000, 960_000, 1_024_000, 1_152_000, 1_280_000,
+    1_344_000, 1_408_000, 1_411_200, 1_472_000, 1_536_000,
 ];
 
 /// The default bit rate at a coded `sample_rate`: the format's full rate.
@@ -83,33 +84,51 @@ pub struct DtsEncoder {
 impl DtsEncoder {
     pub fn new(config: &AudioEncoderConfig) -> Result<Self, AudioError> {
         if config.codec != AudioCodec::Dts {
-            return Err(AudioError::Encode(format!("DtsEncoder constructed with codec {:?}", config.codec)));
+            return Err(AudioError::Encode(format!(
+                "DtsEncoder constructed with codec {:?}",
+                config.codec
+            )));
         }
         if config.sample_rate == 0 {
             return Err(AudioError::Encode("input sample_rate is 0".into()));
         }
         let layout = match &config.layout {
             Some(l) => l.clone(),
-            None => ChannelLayout::default_for(config.channels)
-                .map_err(|e| AudioError::Unsupported(format!("{} channels: {e}", config.channels)))?,
+            None => ChannelLayout::default_for(config.channels).map_err(|e| {
+                AudioError::Unsupported(format!("{} channels: {e}", config.channels))
+            })?,
         };
         if layout.len() != usize::from(config.channels) {
-            return Err(AudioError::Encode(format!("layout {layout} for {} channels", config.channels)));
+            return Err(AudioError::Encode(format!(
+                "layout {layout} for {} channels",
+                config.channels
+            )));
         }
-        let speakers: Vec<::dts::Speaker> = layout.labels().iter().map(|&l| dts_speaker(l)).collect();
+        let speakers: Vec<::dts::Speaker> =
+            layout.labels().iter().map(|&l| dts_speaker(l)).collect();
         let dts_layout = ::dts::Layout::from_speakers(&speakers);
         let out_rate = dolby_dts_sample_rate(config.sample_rate);
-        let bitrate = if config.bitrate == 0 { default_bitrate(out_rate) } else { config.bitrate };
+        let bitrate = if config.bitrate == 0 {
+            default_bitrate(out_rate)
+        } else {
+            config.bitrate
+        };
         if !DTS_BITRATES.contains(&bitrate) {
             return Err(AudioError::Unsupported(format!(
                 "{bitrate} bps is not a DTS bit rate (ETSI TS 102 114 Table 5-7: 32k to 1536k)"
             )));
         }
-        let inner = ::dts::Encoder::new(::dts::EncoderConfig::new(out_rate, dts_layout, bitrate)).map_err(encode_error)?;
+        let inner = ::dts::Encoder::new(::dts::EncoderConfig::new(out_rate, dts_layout, bitrate))
+            .map_err(encode_error)?;
         let order = dts_layout
             .speakers()
             .iter()
-            .map(|&s| speakers.iter().position(|&x| x == s).expect("the layout was built from these speakers"))
+            .map(|&s| {
+                speakers
+                    .iter()
+                    .position(|&x| x == s)
+                    .expect("the layout was built from these speakers")
+            })
             .collect();
         Ok(Self {
             inner,
@@ -144,7 +163,11 @@ impl DtsEncoder {
             .map(|data| {
                 let pts = first + (self.samples_out * 1_000_000 / u64::from(self.out_rate)) as i64;
                 self.samples_out += step;
-                EncodedAudioPacket { data, pts, duration: step as i64 }
+                EncodedAudioPacket {
+                    data,
+                    pts,
+                    duration: step as i64,
+                }
             })
             .collect())
     }
@@ -212,11 +235,25 @@ mod tests {
 
     #[test]
     fn layouts_and_rates_are_checked() {
-        for name in ["mono", "stereo", "2.1", "3.0", "3.0(back)", "3.1", "4.0", "quad(side)", "4.1", "5.0(side)", "5.1(side)"]
-        {
+        for name in [
+            "mono",
+            "stereo",
+            "2.1",
+            "3.0",
+            "3.0(back)",
+            "3.1",
+            "4.0",
+            "quad(side)",
+            "4.1",
+            "5.0(side)",
+            "5.1(side)",
+        ] {
             assert!(DtsEncoder::new(&config(48_000, name, 0)).is_ok(), "{name}");
         }
-        assert!(DtsEncoder::new(&config(48_000, "7.1", 0)).is_err(), "not a core arrangement");
+        assert!(
+            DtsEncoder::new(&config(48_000, "7.1", 0)).is_err(),
+            "not a core arrangement"
+        );
         assert!(DtsEncoder::new(&config(48_000, "stereo", 100_000)).is_err());
         let e = DtsEncoder::new(&config(88_200, "stereo", 0)).unwrap();
         assert_eq!((e.sample_rate(), e.pre_skip()), (44_100, 512));
@@ -229,12 +266,22 @@ mod tests {
         let freqs = [300.0f32, 500.0, 700.0, 60.0, 1100.0, 1300.0];
         let n = 48_000;
         let pcm: Vec<f32> = (0..n * 6)
-            .map(|i| 0.3 * (2.0 * std::f32::consts::PI * freqs[i % 6] * (i / 6) as f32 / 48_000.0).sin())
+            .map(|i| {
+                0.3 * (2.0 * std::f32::consts::PI * freqs[i % 6] * (i / 6) as f32 / 48_000.0).sin()
+            })
             .collect();
         let mut enc = DtsEncoder::new(&config(48_000, "5.1(side)", 768_000)).unwrap();
         let mut packets = Vec::new();
         for c in pcm.chunks(6 * 1000) {
-            packets.extend(enc.encode(&AudioFrame { samples: c.to_vec(), sample_rate: 48_000, channels: 6, pts: 0 }).unwrap());
+            packets.extend(
+                enc.encode(&AudioFrame {
+                    samples: c.to_vec(),
+                    sample_rate: 48_000,
+                    channels: 6,
+                    pts: 0,
+                })
+                .unwrap(),
+            );
         }
         packets.extend(enc.flush().unwrap());
         assert!(packets.iter().all(|p| p.duration == 512));

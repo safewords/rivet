@@ -48,7 +48,9 @@ fn id3v2_len(data: &[u8]) -> usize {
     // excludes the 10-byte header and a 10-byte footer if flagged.
     while data.len() >= start + 10 && &data[start..start + 3] == b"ID3" {
         let s = &data[start + 6..start + 10];
-        let size = s.iter().fold(0usize, |acc, &b| (acc << 7) | usize::from(b & 0x7F));
+        let size = s
+            .iter()
+            .fold(0usize, |acc, &b| (acc << 7) | usize::from(b & 0x7F));
         let footer = if data[start + 5] & 0x10 != 0 { 10 } else { 0 };
         start += 10 + size + footer;
     }
@@ -106,13 +108,20 @@ fn dts_len(b: &[u8]) -> Option<usize> {
         let ext = &b[core.frame_size..];
         let bits = u64::from_be_bytes(ext.get(4..12)?.try_into().ok()?);
         let long = (bits >> 53) & 1 == 1;
-        let size = if long { ((bits >> 21) & 0xF_FFFF) + 1 } else { ((bits >> 29) & 0xFFFF) + 1 };
+        let size = if long {
+            ((bits >> 21) & 0xF_FFFF) + 1
+        } else {
+            ((bits >> 29) & 0xFFFF) + 1
+        };
         let end = core.frame_size + size as usize;
         if end == b.len() || b.get(end..end + 4) == Some(&[0x7F, 0xFE, 0x80, 0x01]) {
             return Some(end);
         }
         // Not where the header says: the next core sync ends the frame.
-        let next = b.get(core.frame_size..)?.windows(4).position(|w| w == [0x7F, 0xFE, 0x80, 0x01])?;
+        let next = b
+            .get(core.frame_size..)?
+            .windows(4)
+            .position(|w| w == [0x7F, 0xFE, 0x80, 0x01])?;
         return Some(core.frame_size + next);
     }
     Some(core.frame_size)
@@ -148,14 +157,23 @@ pub fn read_adts(data: &[u8]) -> Result<AudioTrack> {
 /// A bare AC-3 or E-AC-3 stream as a track: the first syncframe's `bsid`
 /// says which.
 pub fn read_ac3(data: &[u8]) -> Result<AudioTrack> {
-    let eac3 = matches!(crate::ac3_sync::parse_sync_info(data), Ok(crate::ac3_sync::SyncInfo::Eac3(_)));
-    let found = if eac3 { crate::ts::audio::eac3_from_es(data)? } else { crate::ts::audio::ac3_from_es(data)? };
+    let eac3 = matches!(
+        crate::ac3_sync::parse_sync_info(data),
+        Ok(crate::ac3_sync::SyncInfo::Eac3(_))
+    );
+    let found = if eac3 {
+        crate::ts::audio::eac3_from_es(data)?
+    } else {
+        crate::ts::audio::ac3_from_es(data)?
+    };
     Ok(found.context("no AC-3 syncframe")?.0)
 }
 
 /// A bare DTS stream as a track.
 pub fn read_dts(data: &[u8]) -> Result<AudioTrack> {
-    Ok(crate::ts::audio::dts_from_es(data)?.context("no DTS core frame")?.0)
+    Ok(crate::ts::audio::dts_from_es(data)?
+        .context("no DTS core frame")?
+        .0)
 }
 
 /// Frames to a PCM packet.
@@ -180,14 +198,25 @@ pub fn read_wav(data: &[u8]) -> Result<AudioTrack> {
             (b"data", Some(big)) if rf64 && size32 == u32::MAX => big,
             _ => u64::from(size32),
         };
-        let end = usize::try_from(size).ok().and_then(|s| body_at.checked_add(s)).unwrap_or(usize::MAX);
+        let end = usize::try_from(size)
+            .ok()
+            .and_then(|s| body_at.checked_add(s))
+            .unwrap_or(usize::MAX);
         match id {
             b"fmt " => fmt = data.get(body_at..end.min(data.len())),
             // ds64: RIFF size (8), data size (8), sample count (8), table.
-            b"ds64" => ds64_data = data.get(body_at + 8..body_at + 16).map(|b| u64::from_le_bytes(b.try_into().unwrap())),
+            b"ds64" => {
+                ds64_data = data
+                    .get(body_at + 8..body_at + 16)
+                    .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            }
             b"data" => {
                 // A size never written (0) or one past the end: to the end.
-                let end = if size == 0 || end > data.len() { data.len() } else { end };
+                let end = if size == 0 || end > data.len() {
+                    data.len()
+                } else {
+                    end
+                };
                 payload = Some(&data[body_at.min(data.len())..end]);
                 break;
             }
@@ -219,9 +248,17 @@ pub fn read_wav(data: &[u8]) -> Result<AudioTrack> {
     let layout: PcmLayout = match crate::demux::audio::wave_format_pcm(fmt) {
         Some(Ok(layout)) => layout,
         Some(Err(_)) => {
-            let real = if tag == 0xFFFE { u16::from_le_bytes([fmt[24], fmt[25]]) } else { tag };
+            let real = if tag == 0xFFFE {
+                u16::from_le_bytes([fmt[24], fmt[25]])
+            } else {
+                tag
+            };
             return Ok(match crate::avi::wave_format_codec(real) {
-                Some("mp3") => crate::ts::audio::mpeg_audio_from_es(payload).context("WAVE: no MPEG audio frame")?.0,
+                Some("mp3") => {
+                    crate::ts::audio::mpeg_audio_from_es(payload)
+                        .context("WAVE: no MPEG audio frame")?
+                        .0
+                }
                 Some("ac3") => read_ac3(payload)?,
                 Some("dts") => read_dts(payload)?,
                 _ => {
@@ -281,7 +318,10 @@ mod tests {
         assert!(sniff_adts(&three));
         let mut broken = three.clone();
         broken[20] = 0;
-        assert!(!sniff_adts(&broken), "the second header is not where the first ends");
+        assert!(
+            !sniff_adts(&broken),
+            "the second header is not where the first ends"
+        );
         assert!(!sniff_adts(&adts(20)), "one frame is not a stream");
         let mut tagged = b"ID3\x04\x00\x00\x00\x00\x00\x05hello".to_vec();
         tagged.extend_from_slice(&three);

@@ -106,9 +106,12 @@ pub struct CuVideoParserParams {
     /// We zero-init and never set any bits; SDK layout compatible.
     pub reserved1: [c_uint; 5],
     pub user_data: *mut c_void,
-    pub pfn_sequence_callback: Option<unsafe extern "C" fn(*mut c_void, *mut CuVideoFormat) -> c_int>,
-    pub pfn_decode_picture: Option<unsafe extern "C" fn(*mut c_void, *mut CuVideoPicParams) -> c_int>,
-    pub pfn_display_picture: Option<unsafe extern "C" fn(*mut c_void, *mut CuVideoDispInfo) -> c_int>,
+    pub pfn_sequence_callback:
+        Option<unsafe extern "C" fn(*mut c_void, *mut CuVideoFormat) -> c_int>,
+    pub pfn_decode_picture:
+        Option<unsafe extern "C" fn(*mut c_void, *mut CuVideoPicParams) -> c_int>,
+    pub pfn_display_picture:
+        Option<unsafe extern "C" fn(*mut c_void, *mut CuVideoDispInfo) -> c_int>,
     pub pfn_get_operating_point: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int>,
     pub pfn_get_sei_msg: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int>,
     /// SDK: `void *pvReserved2[5]`.

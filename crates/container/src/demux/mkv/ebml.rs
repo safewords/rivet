@@ -93,7 +93,9 @@ pub(crate) fn scan_mkv_audio_trims(data: &[u8], track_number: u64) -> Option<Mkv
                     }
                     let entry = &body[entry.body_start..entry.body_start + entry.body_len];
                     if find_ebml_child(entry, 0xD7).and_then(read_unsigned) == Some(track_number) {
-                        trims.codec_delay_ns = find_ebml_child(entry, CODEC_DELAY).and_then(read_unsigned).unwrap_or(0);
+                        trims.codec_delay_ns = find_ebml_child(entry, CODEC_DELAY)
+                            .and_then(read_unsigned)
+                            .unwrap_or(0);
                     }
                 }
             }
@@ -106,7 +108,9 @@ pub(crate) fn scan_mkv_audio_trims(data: &[u8], track_number: u64) -> Option<Mkv
             }
             BLOCK_GROUP => {
                 if find_ebml_child(body, BLOCK).and_then(block_track) == Some(track_number) {
-                    let padding = find_ebml_child(body, DISCARD_PADDING).and_then(read_signed).unwrap_or(0);
+                    let padding = find_ebml_child(body, DISCARD_PADDING)
+                        .and_then(read_signed)
+                        .unwrap_or(0);
                     if !seen_block {
                         seen_block = true;
                         trims.first_padding_ns = padding;
@@ -127,7 +131,11 @@ fn element_header(buf: &[u8], off: usize) -> Option<(u32, usize, Option<usize>)>
     let (id, id_len) = read_id_vint(buf.get(off..)?)?;
     let (size, size_len) = read_size_vint(buf.get(off + id_len..)?)?;
     let unknown = size == (1u64 << (7 * size_len as u32)) - 1;
-    Some((id, off + id_len + size_len, (!unknown).then_some(size as usize)))
+    Some((
+        id,
+        off + id_len + size_len,
+        (!unknown).then_some(size as usize),
+    ))
 }
 
 /// A big-endian two's-complement integer (0..=8 bytes).
@@ -135,7 +143,9 @@ fn read_signed(buf: &[u8]) -> Option<i64> {
     if buf.len() > 8 {
         return None;
     }
-    let Some(&first) = buf.first() else { return Some(0) };
+    let Some(&first) = buf.first() else {
+        return Some(0);
+    };
     let mut v: i64 = if first & 0x80 != 0 { -1 } else { 0 };
     for &b in buf {
         v = (v << 8) | i64::from(b);
@@ -211,8 +221,12 @@ pub(super) fn scan_mkv_rotation_raw(data: &[u8]) -> Option<u32> {
             continue;
         }
 
-        let Some(video) = find_ebml_child(entry, 0xE0) else { continue };
-        let Some(projection) = find_ebml_child(video, PROJECTION) else { continue };
+        let Some(video) = find_ebml_child(entry, 0xE0) else {
+            continue;
+        };
+        let Some(projection) = find_ebml_child(video, PROJECTION) else {
+            continue;
+        };
         let Some(roll) = find_ebml_child(projection, PROJECTION_POSE_ROLL).and_then(read_float)
         else {
             continue;
@@ -474,7 +488,10 @@ mod rotation_tests {
         let mut out = id.to_vec();
         // Sizes here are small, so the one-byte vint form (0x80 | len) is
         // enough and keeps the fixtures readable.
-        assert!(body.len() < 0x7F, "fixture body outgrew the one-byte size vint");
+        assert!(
+            body.len() < 0x7F,
+            "fixture body outgrew the one-byte size vint"
+        );
         out.push(0x80 | body.len() as u8);
         out.extend_from_slice(body);
         out
@@ -557,4 +574,3 @@ mod rotation_tests {
         assert_eq!(scan_mkv_rotation_raw(&file), None);
     }
 }
-

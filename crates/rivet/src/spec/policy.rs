@@ -89,7 +89,10 @@ impl VideoCodecPolicy {
     pub fn hls_ready(self) -> bool {
         matches!(
             self,
-            VideoCodecPolicy::Av1 | VideoCodecPolicy::H264 | VideoCodecPolicy::H265 | VideoCodecPolicy::Vp9
+            VideoCodecPolicy::Av1
+                | VideoCodecPolicy::H264
+                | VideoCodecPolicy::H265
+                | VideoCodecPolicy::Vp9
         )
     }
 
@@ -98,7 +101,10 @@ impl VideoCodecPolicy {
     /// five are software (the chunks would buy nothing on the GPUs the engine
     /// spreads over), and MPEG-2's open GOPs would not stand alone.
     pub fn chunkable(self) -> bool {
-        matches!(self, VideoCodecPolicy::Av1 | VideoCodecPolicy::H264 | VideoCodecPolicy::H265)
+        matches!(
+            self,
+            VideoCodecPolicy::Av1 | VideoCodecPolicy::H264 | VideoCodecPolicy::H265
+        )
     }
 
     /// The settings spelling: `av1`, `h264`, `h265`, `vp8`, `vp9`, `mpeg2`,
@@ -341,8 +347,9 @@ pub struct AudioDecodeDeny(u16);
 
 impl AudioDecodeDeny {
     /// Every name the setting takes.
-    pub const CODECS: [&'static str; 11] =
-        ["aac", "ac3", "alac", "dts", "eac3", "flac", "mp2", "mp3", "opus", "pcm", "vorbis"];
+    pub const CODECS: [&'static str; 11] = [
+        "aac", "ac3", "alac", "dts", "eac3", "flac", "mp2", "mp3", "opus", "pcm", "vorbis",
+    ];
 
     /// No codec denied.
     pub const NONE: Self = Self(0);
@@ -360,7 +367,11 @@ impl AudioDecodeDeny {
 
     /// The denied names, in [`Self::CODECS`] order.
     pub fn names(self) -> impl Iterator<Item = &'static str> {
-        Self::CODECS.into_iter().enumerate().filter(move |(i, _)| self.0 & (1 << i) != 0).map(|(_, c)| c)
+        Self::CODECS
+            .into_iter()
+            .enumerate()
+            .filter(move |(i, _)| self.0 & (1 << i) != 0)
+            .map(|(_, c)| c)
     }
 
     /// The settings value: the denied names, comma-separated (`""` for none).
@@ -704,7 +715,11 @@ impl std::str::FromStr for DecodePolicy {
             )
         };
         if let Some(n) = s.strip_prefix("gpu:").or_else(|| s.strip_prefix("gpu=")) {
-            return n.trim().parse::<u32>().map(DecodePolicy::SpecificGpu).map_err(|_| bad());
+            return n
+                .trim()
+                .parse::<u32>()
+                .map(DecodePolicy::SpecificGpu)
+                .map_err(|_| bad());
         }
         if let Some(n) = s
             .strip_prefix("ranges:")
@@ -712,13 +727,20 @@ impl std::str::FromStr for DecodePolicy {
             .or_else(|| s.strip_prefix("split:"))
             .or_else(|| s.strip_prefix("split="))
         {
-            return n.trim().parse::<usize>().map(DecodePolicy::Ranges).map_err(|_| bad());
+            return n
+                .trim()
+                .parse::<usize>()
+                .map(DecodePolicy::Ranges)
+                .map_err(|_| bad());
         }
         match s.as_str() {
             "" | "auto" | "split" => Ok(DecodePolicy::Auto),
             "whole" | "none" | "single" => Ok(DecodePolicy::Whole),
             "fastest" => Ok(DecodePolicy::FastestGpu),
-            other => other.parse::<u32>().map(DecodePolicy::SpecificGpu).map_err(|_| bad()),
+            other => other
+                .parse::<u32>()
+                .map(DecodePolicy::SpecificGpu)
+                .map_err(|_| bad()),
         }
     }
 }
@@ -789,9 +811,16 @@ impl std::str::FromStr for EncodePolicy {
             )
         };
         if let Some(n) = s.strip_prefix("gpu:").or_else(|| s.strip_prefix("gpu=")) {
-            return n.trim().parse::<u32>().map(|i| EncodePolicy::SingleGpu(Some(i))).map_err(|_| bad());
+            return n
+                .trim()
+                .parse::<u32>()
+                .map(|i| EncodePolicy::SingleGpu(Some(i)))
+                .map_err(|_| bad());
         }
-        if let Some(f) = s.strip_prefix("family:").or_else(|| s.strip_prefix("family=")) {
+        if let Some(f) = s
+            .strip_prefix("family:")
+            .or_else(|| s.strip_prefix("family="))
+        {
             return match f.trim() {
                 "nvidia" => Ok(EncodePolicy::Family(GpuFamily::Nvidia)),
                 "amd" => Ok(EncodePolicy::Family(GpuFamily::Amd)),

@@ -37,7 +37,12 @@ pub(crate) struct Picture {
 impl Picture {
     pub(crate) fn new(rgba: RgbaImage, profile: Option<Profile>) -> Self {
         let alpha = rgba.has_alpha();
-        Self { rgba, alpha, profile, sample_aspect: (1, 1) }
+        Self {
+            rgba,
+            alpha,
+            profile,
+            sample_aspect: (1, 1),
+        }
     }
 }
 
@@ -67,7 +72,11 @@ pub(crate) fn sniff(data: &[u8]) -> Option<SourceFormat> {
         return Some(SourceFormat::Webp);
     }
     // Classic TIFF and BigTIFF, either byte order.
-    if data.starts_with(b"II*\0") || data.starts_with(b"MM\0*") || data.starts_with(b"II+\0") || data.starts_with(b"MM\0+") {
+    if data.starts_with(b"II*\0")
+        || data.starts_with(b"MM\0*")
+        || data.starts_with(b"II+\0")
+        || data.starts_with(b"MM\0+")
+    {
         return Some(SourceFormat::Tiff);
     }
     // `BM` is two bytes of pattern, so the DIB header's own size has to be
@@ -92,11 +101,19 @@ pub(crate) fn exif_orientation(exif: &[u8]) -> Option<u16> {
     };
     let u16_at = |at: usize| -> Option<u16> {
         let b: [u8; 2] = tiff.get(at..at + 2)?.try_into().ok()?;
-        Some(if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) })
+        Some(if le {
+            u16::from_le_bytes(b)
+        } else {
+            u16::from_be_bytes(b)
+        })
     };
     let u32_at = |at: usize| -> Option<u32> {
         let b: [u8; 4] = tiff.get(at..at + 4)?.try_into().ok()?;
-        Some(if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) })
+        Some(if le {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        })
     };
     let ifd = u32_at(4)? as usize;
     let count = usize::from(u16_at(ifd)?);
@@ -104,7 +121,11 @@ pub(crate) fn exif_orientation(exif: &[u8]) -> Option<u16> {
         .find_map(|i| {
             let at = ifd + 2 + i * 12;
             // SHORT (3), one value, in the first two bytes of the value field.
-            if u16_at(at)? == 0x0112 && u16_at(at + 2)? == 3 { u16_at(at + 8) } else { None }
+            if u16_at(at)? == 0x0112 && u16_at(at + 2)? == 3 {
+                u16_at(at + 8)
+            } else {
+                None
+            }
         })
         .filter(|o| (1..=8).contains(o))
 }
@@ -165,8 +186,16 @@ pub(crate) fn read_header(data: &[u8], format: SourceFormat) -> Result<Header> {
             let h = rpng::read_header(data).map_err(|e| anyhow!("{e}"))?;
             // The orientation is in an `eXIf` chunk, which is read with the
             // chunks; the pixels are not decoded for it.
-            let orientation = png_exif(data).as_deref().and_then(exif_orientation).unwrap_or(1);
-            header(h.width, h.height, orientation, png_format(h.color_type, h.bit_depth))
+            let orientation = png_exif(data)
+                .as_deref()
+                .and_then(exif_orientation)
+                .unwrap_or(1);
+            header(
+                h.width,
+                h.height,
+                orientation,
+                png_format(h.color_type, h.bit_depth),
+            )
         }
         SourceFormat::Gif => {
             let info = gif::read_info(data).map_err(|e| anyhow!("{e}"))?;
@@ -181,11 +210,25 @@ pub(crate) fn read_header(data: &[u8], format: SourceFormat) -> Result<Header> {
                 3 => "Rgb",
                 _ => "Rgba",
             };
-            header(page.width, page.height, page.orientation, format!("{channels}{}", if bits > 8 { 16 } else { 8 }))
+            header(
+                page.width,
+                page.height,
+                page.orientation,
+                format!("{channels}{}", if bits > 8 { 16 } else { 8 }),
+            )
         }
         SourceFormat::Bmp => {
             let info = bmp::read_info(data).map_err(|e| anyhow!("{e}"))?;
-            header(info.width, info.height, 1, if info.bits_per_pixel == 32 { "Rgba8" } else { "Rgb8" })
+            header(
+                info.width,
+                info.height,
+                1,
+                if info.bits_per_pixel == 32 {
+                    "Rgba8"
+                } else {
+                    "Rgb8"
+                },
+            )
         }
         SourceFormat::Webp => {
             let (w, h) = super::webp::read_header(data)?;
@@ -224,7 +267,10 @@ pub(crate) fn decode(data: &[u8], format: SourceFormat) -> Result<Picture> {
         SourceFormat::Avif | SourceFormat::Heic => return heif::decode(data, format),
         SourceFormat::Webp => return super::webp::decode(data),
         SourceFormat::Jpeg => {
-            let options = jpeg::DecodeOptions { max_pixels: Some(limit), ..Default::default() };
+            let options = jpeg::DecodeOptions {
+                max_pixels: Some(limit),
+                ..Default::default()
+            };
             let img = jpeg::decode_with(data, &options).map_err(|e| anyhow!("{e}"))?;
             for w in &img.warnings {
                 tracing::debug!(warning = %w, "JPEG decode");
@@ -235,8 +281,17 @@ pub(crate) fn decode(data: &[u8], format: SourceFormat) -> Result<Picture> {
             (rgba, img.info.icc_profile.clone(), orientation)
         }
         SourceFormat::Png => {
-            let png = rpng::Decoder::new().max_pixels(limit).animation(false).decode(data).map_err(|e| anyhow!("{e}"))?;
-            let orientation = png.metadata.exif.as_deref().and_then(exif_orientation).unwrap_or(1);
+            let png = rpng::Decoder::new()
+                .max_pixels(limit)
+                .animation(false)
+                .decode(data)
+                .map_err(|e| anyhow!("{e}"))?;
+            let orientation = png
+                .metadata
+                .exif
+                .as_deref()
+                .and_then(exif_orientation)
+                .unwrap_or(1);
             let icc = png.metadata.icc_profile.as_ref().map(|p| p.profile.clone());
             let rgba = RgbaImage::from_raw(png.image.width, png.image.height, png.image.to_rgba8())
                 .context("the PNG decoder returned the wrong number of pixels")?;
@@ -245,29 +300,48 @@ pub(crate) fn decode(data: &[u8], format: SourceFormat) -> Result<Picture> {
         SourceFormat::Gif => {
             // The first frame, composited onto the logical screen: what a
             // viewer shows before the animation moves.
-            let limits = gif::Limits { max_pixels: limit, max_frames: 1, ..Default::default() };
-            let mut decoder = gif::Decoder::with_limits(data, limits).map_err(|e| anyhow!("{e}"))?;
-            let (w, h) = (u32::from(decoder.info().width), u32::from(decoder.info().height));
-            let frame = decoder.next_frame().map_err(|e| anyhow!("{e}"))?.context("the GIF has no image")?;
-            let rgba = RgbaImage::from_raw(w, h, frame.rgba).context("the GIF decoder returned the wrong number of pixels")?;
+            let limits = gif::Limits {
+                max_pixels: limit,
+                max_frames: 1,
+                ..Default::default()
+            };
+            let mut decoder =
+                gif::Decoder::with_limits(data, limits).map_err(|e| anyhow!("{e}"))?;
+            let (w, h) = (
+                u32::from(decoder.info().width),
+                u32::from(decoder.info().height),
+            );
+            let frame = decoder
+                .next_frame()
+                .map_err(|e| anyhow!("{e}"))?
+                .context("the GIF has no image")?;
+            let rgba = RgbaImage::from_raw(w, h, frame.rgba)
+                .context("the GIF decoder returned the wrong number of pixels")?;
             (rgba, None, 1)
         }
         SourceFormat::Tiff => {
-            let limits = tiff::Limits { max_pixels: limit, ..Default::default() };
+            let limits = tiff::Limits {
+                max_pixels: limit,
+                ..Default::default()
+            };
             let page = tiff::decode_with_limits(data, limits).map_err(|e| anyhow!("{e}"))?;
             let rgba = RgbaImage::from_raw(page.width, page.height, page.to_rgba8())
                 .context("the TIFF decoder returned the wrong number of pixels")?;
             (rgba, page.info.icc_profile.clone(), page.info.orientation)
         }
         SourceFormat::Bmp => {
-            let img = bmp::decode_with_limits(data, bmp::Limits { max_pixels: limit }).map_err(|e| anyhow!("{e}"))?;
+            let img = bmp::decode_with_limits(data, bmp::Limits { max_pixels: limit })
+                .map_err(|e| anyhow!("{e}"))?;
             let rgba = RgbaImage::from_raw(img.width, img.height, img.rgba)
                 .context("the BMP decoder returned the wrong number of pixels")?;
             (rgba, img.icc_profile, 1)
         }
     };
     let icc = icc.filter(|p| !p.is_empty());
-    Ok(Picture::new(rgba.oriented(orientation), icc.map(Profile::Icc)))
+    Ok(Picture::new(
+        rgba.oriented(orientation),
+        icc.map(Profile::Icc),
+    ))
 }
 
 /// Refuse a picture larger than [`MAX_SOURCE_PIXELS`].
@@ -286,7 +360,10 @@ pub(crate) fn check_size(width: u32, height: u32) -> Result<()> {
 
 /// The stills `selection` picks from a video, each with its position in the
 /// selection and its time in seconds, and the video's codec.
-pub(crate) fn video_stills(input: &Bytes, selection: &FrameSelection) -> Result<(String, Vec<(usize, f64, Picture)>)> {
+pub(crate) fn video_stills(
+    input: &Bytes,
+    selection: &FrameSelection,
+) -> Result<(String, Vec<(usize, f64, Picture)>)> {
     // Filled in by `pick`, which is handed the stream before any frame is
     // decoded: which requested still each frame index serves.
     let mut wanted: Vec<u64> = Vec::new();
@@ -310,11 +387,17 @@ pub(crate) fn video_stills(input: &Bytes, selection: &FrameSelection) -> Result<
             .find(|(i, _)| *i <= index)
             .or_else(|| frames.first())
             .ok_or_else(|| anyhow!("no frame for still {position}"))?;
-        let (rgb, w, h) = thumbnail::frame_to_rgb8(&captured.frame, captured.color).context("converting the frame to RGB")?;
-        let rgba = RgbaImage::from_rgb(w, h, &rgb).context("the frame converted to the wrong number of pixels")?;
+        let (rgb, w, h) = thumbnail::frame_to_rgb8(&captured.frame, captured.color)
+            .context("converting the frame to RGB")?;
+        let rgba = RgbaImage::from_rgb(w, h, &rgb)
+            .context("the frame converted to the wrong number of pixels")?;
         let mut picture = Picture::new(rgba, None);
         picture.sample_aspect = source.sample_aspect;
-        let seconds = if rate > 0.0 { *taken as f64 / rate } else { 0.0 };
+        let seconds = if rate > 0.0 {
+            *taken as f64 / rate
+        } else {
+            0.0
+        };
         stills.push((position, seconds, picture));
     }
     Ok((source.codec, stills))
@@ -333,13 +416,19 @@ fn frame_rate(source: &thumbnail::StillSource) -> f64 {
 }
 
 /// The frame index of each requested still, in request order.
-pub(crate) fn frame_indices(source: &thumbnail::StillSource, rate: f64, selection: &FrameSelection) -> Result<Vec<u64>> {
+pub(crate) fn frame_indices(
+    source: &thumbnail::StillSource,
+    rate: f64,
+    selection: &FrameSelection,
+) -> Result<Vec<u64>> {
     let total = source.total_frames.max(1);
     let last = total - 1;
     let at_fraction = |f: f64| (((total as f64) * f) as u64).min(last);
     Ok(match selection {
         FrameSelection::Poster => vec![at_fraction(thumbnail::DEFAULT_THUMBNAIL_FRACTION)],
-        FrameSelection::Count(n) => (0..*n).map(|i| at_fraction((f64::from(i) + 0.5) / f64::from(*n))).collect(),
+        FrameSelection::Count(n) => (0..*n)
+            .map(|i| at_fraction((f64::from(i) + 0.5) / f64::from(*n)))
+            .collect(),
         FrameSelection::At(times) => {
             let duration = if source.duration > 0.0 {
                 source.duration
@@ -351,7 +440,9 @@ pub(crate) fn frame_indices(source: &thumbnail::StillSource, rate: f64, selectio
             let mut indices = Vec::with_capacity(times.len());
             for &t in times {
                 if duration > 0.0 && t > duration {
-                    bail!("invalid output spec: a frame at {t}s is past the end of the video ({duration:.3}s)");
+                    bail!(
+                        "invalid output spec: a frame at {t}s is past the end of the video ({duration:.3}s)"
+                    );
                 }
                 let index = if rate > 0.0 { (t * rate) as u64 } else { 0 };
                 indices.push(index.min(last));

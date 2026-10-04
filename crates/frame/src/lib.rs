@@ -103,11 +103,14 @@ impl ProresProfile {
     /// `422`) or its sample entry code (`apch`), any case.
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim().to_ascii_lowercase();
-        Self::ALL.into_iter().find(|p| p.name() == s || p.fourcc() == s).or(match s.as_str() {
-            "standard" | "std" | "sq" => Some(ProresProfile::Standard),
-            "4444-xq" | "xq" => Some(ProresProfile::P4444Xq),
-            _ => None,
-        })
+        Self::ALL
+            .into_iter()
+            .find(|p| p.name() == s || p.fourcc() == s)
+            .or(match s.as_str() {
+                "standard" | "std" | "sq" => Some(ProresProfile::Standard),
+                "4444-xq" | "xq" => Some(ProresProfile::P4444Xq),
+                _ => None,
+            })
     }
 
     /// Whether the profile is 4:4:4 (4444, 4444 XQ) rather than 4:2:2.

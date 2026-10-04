@@ -61,7 +61,10 @@ pub fn format_timestamp(ms: u64) -> String {
 /// a blank line inside the text is collapsed, because a blank line ends a
 /// cue.
 pub fn escape_cue_text(text: &str) -> String {
-    let escaped = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let escaped = text
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
     escaped
         .lines()
         .map(str::trim_end)
@@ -146,7 +149,10 @@ pub fn write_webvtt_rendition(
             duration_ticks: g.duration_ticks,
         });
     }
-    Ok(WebVttManifest { segments, timescale: grid.timescale })
+    Ok(WebVttManifest {
+        segments,
+        timescale: grid.timescale,
+    })
 }
 
 #[cfg(test)]
@@ -155,11 +161,20 @@ mod tests {
     use crate::demux::subtitle::SubtitleCue;
 
     fn cue(start: u64, duration: u32, text: &str) -> SubtitleCue {
-        SubtitleCue { start, duration, text: text.into() }
+        SubtitleCue {
+            start,
+            duration,
+            text: text.into(),
+        }
     }
 
     fn track(cues: Vec<SubtitleCue>) -> SubtitleTrack {
-        SubtitleTrack { codec: "subrip".into(), cues, timescale: 1_000, language: "eng".into() }
+        SubtitleTrack {
+            codec: "subrip".into(),
+            cues,
+            timescale: 1_000,
+            language: "eng".into(),
+        }
     }
 
     /// A small reader for the documents this module writes: the header line,
@@ -205,15 +220,27 @@ mod tests {
     #[test]
     fn cue_text_is_escaped_and_blank_lines_collapse() {
         assert_eq!(escape_cue_text("Tom & Jerry <3"), "Tom &amp; Jerry &lt;3");
-        assert_eq!(escape_cue_text("a\n\nb"), "a\nb", "a blank line would end the cue");
-        assert_eq!(escape_cue_text("x --> y"), "x --&gt; y", "an arrow can't be mistaken for a timing line");
+        assert_eq!(
+            escape_cue_text("a\n\nb"),
+            "a\nb",
+            "a blank line would end the cue"
+        );
+        assert_eq!(
+            escape_cue_text("x --> y"),
+            "x --&gt; y",
+            "an arrow can't be mistaken for a timing line"
+        );
     }
 
     #[test]
     fn a_cue_lands_in_every_segment_it_overlaps_with_absolute_times() {
         // 4 s segments at a 30 kHz grid; a cue from 3.0 s to 5.5 s crosses
         // the first boundary and must appear in segments 1 and 2, unchanged.
-        let t = track(vec![cue(500, 1_500, "first"), cue(3_000, 2_500, "crossing"), cue(9_000, 500, "late")]);
+        let t = track(vec![
+            cue(500, 1_500, "first"),
+            cue(3_000, 2_500, "crossing"),
+            cue(9_000, 500, "late"),
+        ]);
         let seg = |i: u64| render_segment(&t, i * 120_000, (i + 1) * 120_000, 30_000);
 
         let (magic, map, cues) = parse(&seg(0));
@@ -222,19 +249,38 @@ mod tests {
         assert_eq!(
             cues,
             vec![
-                ("00:00:00.500".to_string(), "00:00:02.000".to_string(), "first".to_string()),
-                ("00:00:03.000".to_string(), "00:00:05.500".to_string(), "crossing".to_string()),
+                (
+                    "00:00:00.500".to_string(),
+                    "00:00:02.000".to_string(),
+                    "first".to_string()
+                ),
+                (
+                    "00:00:03.000".to_string(),
+                    "00:00:05.500".to_string(),
+                    "crossing".to_string()
+                ),
             ]
         );
         let (_, _, cues) = parse(&seg(1));
-        assert_eq!(cues, vec![("00:00:03.000".to_string(), "00:00:05.500".to_string(), "crossing".to_string())]);
+        assert_eq!(
+            cues,
+            vec![(
+                "00:00:03.000".to_string(),
+                "00:00:05.500".to_string(),
+                "crossing".to_string()
+            )]
+        );
         // Segment 3 (8–12 s) holds only the late cue; a cue ending exactly at
         // a boundary does not spill into the next segment.
         let (_, _, cues) = parse(&seg(2));
         assert_eq!(cues.len(), 1);
         assert_eq!(cues[0].2, "late");
         let t2 = track(vec![cue(0, 4_000, "edge")]);
-        assert!(parse(&render_segment(&t2, 120_000, 240_000, 30_000)).2.is_empty());
+        assert!(
+            parse(&render_segment(&t2, 120_000, 240_000, 30_000))
+                .2
+                .is_empty()
+        );
     }
 
     #[test]
@@ -243,7 +289,10 @@ mod tests {
         let doc = render_segment(&t, 0, 120_000, 30_000);
         let (magic, map, cues) = parse(&doc);
         assert!(magic && map.is_some() && cues.is_empty());
-        assert_eq!(doc, "WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000\n\n");
+        assert_eq!(
+            doc,
+            "WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000\n\n"
+        );
     }
 
     #[test]
@@ -267,14 +316,26 @@ mod tests {
         let m = write_webvtt_rendition(&dir.path().join("subs"), &t, &grid).unwrap();
         assert_eq!(m.timescale, 30_000);
         let durations: Vec<u64> = m.segments.iter().map(|s| s.duration_ticks).collect();
-        assert_eq!(durations, vec![120_000, 120_000, 87_500], "segment durations are the video's");
+        assert_eq!(
+            durations,
+            vec![120_000, 120_000, 87_500],
+            "segment durations are the video's"
+        );
         assert_eq!(m.segments.len(), grid.segments.len());
         for (i, s) in m.segments.iter().enumerate() {
             assert_eq!(s.sequence_number as usize, i + 1);
             assert!(s.path.exists(), "{} written", s.path.display());
             assert_eq!(s.byte_size, fs::metadata(&s.path).unwrap().len());
         }
-        let cues_in = |i: usize| parse(&fs::read_to_string(&m.segments[i].path).unwrap()).2.len();
-        assert_eq!((cues_in(0), cues_in(1), cues_in(2)), (1, 1, 1), "cue 'one' straddles 4 s, so it is in segments 1 and 2");
+        let cues_in = |i: usize| {
+            parse(&fs::read_to_string(&m.segments[i].path).unwrap())
+                .2
+                .len()
+        };
+        assert_eq!(
+            (cues_in(0), cues_in(1), cues_in(2)),
+            (1, 1, 1),
+            "cue 'one' straddles 4 s, so it is in segments 1 and 2"
+        );
     }
 }

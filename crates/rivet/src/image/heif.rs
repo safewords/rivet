@@ -37,7 +37,10 @@ use crate::thumbnail::{SourceColor, YuvMatrix};
 
 /// The auxiliary types that mark an item as its master's alpha plane: MPEG's
 /// generic one (what AVIF uses) and HEVC's.
-const ALPHA_URNS: [&str; 2] = ["urn:mpeg:mpegB:cicp:systems:auxiliary:alpha", "urn:mpeg:hevc:2015:auxid:1"];
+const ALPHA_URNS: [&str; 2] = [
+    "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha",
+    "urn:mpeg:hevc:2015:auxid:1",
+];
 
 /// Sniff a HEIF still: an `ftyp` naming a HEIF brand, and a top-level `meta`.
 /// Which of AVIF and HEIC it is follows the primary item's coding when it can
@@ -60,18 +63,27 @@ pub(crate) fn sniff(data: &[u8]) -> Option<SourceFormat> {
     if !has_meta || ftyp.len() < 8 {
         return None;
     }
-    let brands: Vec<&[u8]> = std::iter::once(&ftyp[..4]).chain(ftyp[8..].chunks_exact(4)).collect();
+    let brands: Vec<&[u8]> = std::iter::once(&ftyp[..4])
+        .chain(ftyp[8..].chunks_exact(4))
+        .collect();
     let has = |names: &[&[u8; 4]]| brands.iter().any(|b| names.iter().any(|n| *b == &n[..]));
     let avif = has(&[b"avif", b"avis"]);
     let heic = has(&[b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx"]);
     if !avif && !heic && !has(&[b"mif1", b"msf1"]) {
         return None;
     }
-    let by_coding = Heif::parse(data).ok().and_then(|h| h.coding(h.primary).ok()).map(|c| match c {
-        Coding::Av1 => SourceFormat::Avif,
-        Coding::Hevc => SourceFormat::Heic,
-    });
-    Some(by_coding.unwrap_or(if avif { SourceFormat::Avif } else { SourceFormat::Heic }))
+    let by_coding = Heif::parse(data)
+        .ok()
+        .and_then(|h| h.coding(h.primary).ok())
+        .map(|c| match c {
+            Coding::Av1 => SourceFormat::Avif,
+            Coding::Hevc => SourceFormat::Heic,
+        });
+    Some(by_coding.unwrap_or(if avif {
+        SourceFormat::Avif
+    } else {
+        SourceFormat::Heic
+    }))
 }
 
 /// What [`super::probe`] reports.
@@ -85,10 +97,24 @@ pub(crate) struct Header {
 
 pub(crate) fn read_header(data: &[u8]) -> Result<Header> {
     let heif = Heif::parse(data)?;
-    let (w, h) = heif.ispe(heif.primary).context("the primary item has no size (ispe)")?;
-    let turned = heif.props(heif.primary).filter(|p| matches!(p, Property::Irot(1 | 3))).count() % 2 == 1;
-    let first_coded = heif.coded_items(heif.primary)?.first().copied().unwrap_or(heif.primary);
-    let pixel_format = heif.config(first_coded).map(|c| format!("{:?}", c.pixel_format)).unwrap_or_default();
+    let (w, h) = heif
+        .ispe(heif.primary)
+        .context("the primary item has no size (ispe)")?;
+    let turned = heif
+        .props(heif.primary)
+        .filter(|p| matches!(p, Property::Irot(1 | 3)))
+        .count()
+        % 2
+        == 1;
+    let first_coded = heif
+        .coded_items(heif.primary)?
+        .first()
+        .copied()
+        .unwrap_or(heif.primary);
+    let pixel_format = heif
+        .config(first_coded)
+        .map(|c| format!("{:?}", c.pixel_format))
+        .unwrap_or_default();
     Ok(Header {
         width: if turned { h } else { w },
         height: if turned { w } else { h },
@@ -102,7 +128,9 @@ pub(crate) fn read_header(data: &[u8]) -> Result<Header> {
 pub(crate) fn decode(data: &[u8], format: SourceFormat) -> Result<Picture> {
     let heif = Heif::parse(data)?;
     let primary = heif.primary;
-    let (w, h) = heif.ispe(primary).context("the primary item has no size (ispe)")?;
+    let (w, h) = heif
+        .ispe(primary)
+        .context("the primary item has no size (ispe)")?;
     check_size(w, h)?;
     let coding = heif.coding(primary)?;
     let expected = match format {
@@ -128,7 +156,9 @@ pub(crate) fn decode(data: &[u8], format: SourceFormat) -> Result<Picture> {
                 picture = ?rgba.dimensions(),
                 "the alpha plane is not the picture's size; the picture is used opaque"
             ),
-            Err(e) => tracing::warn!(error = %e, "the alpha plane could not be decoded; the picture is used opaque"),
+            Err(e) => {
+                tracing::warn!(error = %e, "the alpha plane could not be decoded; the picture is used opaque")
+            }
         }
     }
 
@@ -281,7 +311,10 @@ impl<'a> Heif<'a> {
     }
 
     fn item(&self, id: u32) -> Result<&Item> {
-        self.items.iter().find(|i| i.id == id).ok_or_else(|| anyhow!("HEIF item {id} is not listed"))
+        self.items
+            .iter()
+            .find(|i| i.id == id)
+            .ok_or_else(|| anyhow!("HEIF item {id} is not listed"))
     }
 
     fn props(&self, id: u32) -> impl Iterator<Item = &Property<'a>> {
@@ -300,7 +333,11 @@ impl<'a> Heif<'a> {
     }
 
     fn refs(&self, kind: &[u8; 4], from: u32) -> Vec<u32> {
-        self.references.iter().filter(|r| &r.kind == kind && r.from == from).flat_map(|r| r.to.iter().copied()).collect()
+        self.references
+            .iter()
+            .filter(|r| &r.kind == kind && r.from == from)
+            .flat_map(|r| r.to.iter().copied())
+            .collect()
     }
 
     /// The coded items behind `id`: itself, or a grid's tiles.
@@ -342,7 +379,11 @@ impl<'a> Heif<'a> {
 
     /// The item's bytes, from the file or from `idat`.
     fn item_data(&self, id: u32) -> Result<Cow<'a, [u8]>> {
-        let (_, loc) = self.locations.iter().find(|(i, _)| *i == id).ok_or_else(|| anyhow!("HEIF item {id} has no location"))?;
+        let (_, loc) = self
+            .locations
+            .iter()
+            .find(|(i, _)| *i == id)
+            .ok_or_else(|| anyhow!("HEIF item {id} has no location"))?;
         let source = match loc.method {
             0 => self.data,
             1 => self.idat.context("an item is in idat, and there is none")?,
@@ -350,8 +391,16 @@ impl<'a> Heif<'a> {
         };
         let slice = |offset: u64, length: u64| -> Result<&'a [u8]> {
             let start = usize::try_from(loc.base + offset)?;
-            let end = if length == 0 { source.len() } else { start.checked_add(usize::try_from(length)?).context("extent")? };
-            source.get(start..end).ok_or_else(|| anyhow!("HEIF item {id} runs past the end of the file"))
+            let end = if length == 0 {
+                source.len()
+            } else {
+                start
+                    .checked_add(usize::try_from(length)?)
+                    .context("extent")?
+            };
+            source
+                .get(start..end)
+                .ok_or_else(|| anyhow!("HEIF item {id} runs past the end of the file"))
         };
         match loc.extents.as_slice() {
             [] => Ok(Cow::Borrowed(&[])),
@@ -391,10 +440,16 @@ impl<'a> Heif<'a> {
         {
             nclx = container::demux::colour_from_parameter_sets("hevc", &config.parameter_sets);
         }
-        let matrix = nclx.map(|n| Matrix { coefficients: n.matrix, full_range: n.full_range });
+        let matrix = nclx.map(|n| Matrix {
+            coefficients: n.matrix,
+            full_range: n.full_range,
+        });
         let profile = match (icc, nclx) {
             (Some(icc), _) => Some(Profile::Icc(icc)),
-            (None, Some(n)) => Some(Profile::Cicp { primaries: n.primaries, transfer: n.transfer }),
+            (None, Some(n)) => Some(Profile::Cicp {
+                primaries: n.primaries,
+                transfer: n.transfer,
+            }),
             (None, None) => None,
         };
         Colour { matrix, profile }
@@ -402,9 +457,14 @@ impl<'a> Heif<'a> {
 
     /// The alpha plane of `id`, if it has one.
     fn alpha_item(&self, id: u32) -> Option<u32> {
-        self.references.iter().filter(|r| &r.kind == b"auxl" && r.to.contains(&id)).map(|r| r.from).find(|&aux| {
-            self.props(aux).any(|p| matches!(p, Property::AuxC(urn) if ALPHA_URNS.contains(&urn.as_str())))
-        })
+        self.references
+            .iter()
+            .filter(|r| &r.kind == b"auxl" && r.to.contains(&id))
+            .map(|r| r.from)
+            .find(|&aux| {
+                self.props(aux)
+                    .any(|p| matches!(p, Property::AuxC(urn) if ALPHA_URNS.contains(&urn.as_str())))
+            })
     }
 
     /// Decode `id` — a coded item, or a grid of them — into one picture.
@@ -415,7 +475,10 @@ impl<'a> Heif<'a> {
             Plane::Colour(Some(m)) => Plane::Colour(Some(m)),
             // No `nclx` and no VUI: AVIF's writers default to full range, and
             // an unspecified matrix on a still is BT.601, as in JPEG.
-            Plane::Colour(None) => Plane::Colour(Some(Matrix { coefficients: 2, full_range: true })),
+            Plane::Colour(None) => Plane::Colour(Some(Matrix {
+                coefficients: 2,
+                full_range: true,
+            })),
             Plane::Luma => Plane::Luma,
         };
         let tile_images = frames
@@ -428,7 +491,10 @@ impl<'a> Heif<'a> {
             .collect::<Result<Vec<_>>>()?;
 
         if &self.item(id)?.kind != b"grid" {
-            return tile_images.into_iter().next().context("the decoder gave no picture");
+            return tile_images
+                .into_iter()
+                .next()
+                .context("the decoder gave no picture");
         }
         let grid = self.item_data(id)?;
         let mut r = Reader::new(&grid);
@@ -436,10 +502,17 @@ impl<'a> Heif<'a> {
         let flags = r.u8()?;
         let rows = u32::from(r.u8()?) + 1;
         let columns = u32::from(r.u8()?) + 1;
-        let (out_w, out_h) = if flags & 1 == 0 { (u32::from(r.u16()?), u32::from(r.u16()?)) } else { (r.u32()?, r.u32()?) };
+        let (out_w, out_h) = if flags & 1 == 0 {
+            (u32::from(r.u16()?), u32::from(r.u16()?))
+        } else {
+            (r.u32()?, r.u32()?)
+        };
         check_size(out_w, out_h)?;
         if tile_images.len() != (rows * columns) as usize {
-            bail!("the HEIF grid is {columns}x{rows} and names {} tiles", tile_images.len());
+            bail!(
+                "the HEIF grid is {columns}x{rows} and names {} tiles",
+                tile_images.len()
+            );
         }
         let (tw, th) = tile_images[0].dimensions();
         let mut canvas = RgbaImage::new(out_w, out_h);
@@ -463,7 +536,11 @@ impl<'a> Heif<'a> {
             .enumerate()
             .map(|(i, &id)| {
                 let data = self.item_data(id)?;
-                let mut sample = if i == 0 { config.prefix.clone() } else { Vec::new() };
+                let mut sample = if i == 0 {
+                    config.prefix.clone()
+                } else {
+                    Vec::new()
+                };
                 match config.coding {
                     Coding::Hevc => append_annexb(&mut sample, &data, config.length_size)?,
                     Coding::Av1 => sample.extend_from_slice(&data),
@@ -484,32 +561,54 @@ impl<'a> Heif<'a> {
             bitrate: 0,
             color_metadata: Default::default(),
         };
-        let frames = decode_samples(config.coding, info.clone(), samples.iter().map(Vec::as_slice))?;
+        let frames = decode_samples(
+            config.coding,
+            info.clone(),
+            samples.iter().map(Vec::as_slice),
+        )?;
         if frames.len() == ids.len() {
             return Ok(frames);
         }
-        tracing::debug!(tiles = ids.len(), pictures = frames.len(), "decoding each HEIF tile on its own");
+        tracing::debug!(
+            tiles = ids.len(),
+            pictures = frames.len(),
+            "decoding each HEIF tile on its own"
+        );
         samples
             .iter()
             .enumerate()
             .map(|(i, sample)| {
                 // Each on its own needs the configuration ahead of it.
-                let with_prefix = if i == 0 { sample.clone() } else { [config.prefix.as_slice(), sample].concat() };
-                decode_samples(config.coding, info.clone(), std::iter::once(with_prefix.as_slice()))?
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| anyhow!("the decoder gave no picture for HEIF tile {i}"))
+                let with_prefix = if i == 0 {
+                    sample.clone()
+                } else {
+                    [config.prefix.as_slice(), sample].concat()
+                };
+                decode_samples(
+                    config.coding,
+                    info.clone(),
+                    std::iter::once(with_prefix.as_slice()),
+                )?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("the decoder gave no picture for HEIF tile {i}"))
             })
             .collect()
     }
 }
 
-fn decode_samples<'s>(coding: Coding, info: StreamInfo, samples: impl Iterator<Item = &'s [u8]>) -> Result<Vec<VideoFrame>> {
+fn decode_samples<'s>(
+    coding: Coding,
+    info: StreamInfo,
+    samples: impl Iterator<Item = &'s [u8]>,
+) -> Result<Vec<VideoFrame>> {
     let mut decoder = codec::decode::create_decoder(coding.decoder_name(), info)
         .with_context(|| format!("no decoder available for {} images", coding.decoder_name()))?;
     let mut frames = Vec::new();
     for sample in samples {
-        decoder.push_sample(sample).context("decoding a HEIF picture")?;
+        decoder
+            .push_sample(sample)
+            .context("decoding a HEIF picture")?;
         while let Some(frame) = decoder.decode_next()? {
             frames.push(frame);
         }
@@ -531,7 +630,9 @@ fn append_annexb(out: &mut Vec<u8>, data: &[u8], length_size: usize) -> Result<(
             .iter()
             .fold(0usize, |acc, b| (acc << 8) | usize::from(*b));
         at += length_size;
-        let nal = data.get(at..at + len).ok_or_else(|| anyhow!("a NAL runs past its item"))?;
+        let nal = data
+            .get(at..at + len)
+            .ok_or_else(|| anyhow!("a NAL runs past its item"))?;
         out.extend_from_slice(&[0, 0, 0, 1]);
         out.extend_from_slice(nal);
         at += len;
@@ -642,7 +743,11 @@ fn to_rgba(frame: &VideoFrame, w: u32, h: u32, plane: Plane) -> Result<RgbaImage
     let c_len = cw * ch * bps;
     let data = frame.data.as_ref();
     if data.len() < y_len + 2 * c_len {
-        bail!("the decoded picture is truncated ({} bytes for {fw}x{fh} {:?})", data.len(), frame.format);
+        bail!(
+            "the decoded picture is truncated ({} bytes for {fw}x{fh} {:?})",
+            data.len(),
+            frame.format
+        );
     }
     let sample = |plane: &[u8], idx: usize| -> f32 {
         if bps == 2 {
@@ -651,7 +756,11 @@ fn to_rgba(frame: &VideoFrame, w: u32, h: u32, plane: Plane) -> Result<RgbaImage
             plane[idx] as f32
         }
     };
-    let (yp, up, vp) = (&data[..y_len], &data[y_len..y_len + c_len], &data[y_len + c_len..y_len + 2 * c_len]);
+    let (yp, up, vp) = (
+        &data[..y_len],
+        &data[y_len..y_len + c_len],
+        &data[y_len + c_len..y_len + 2 * c_len],
+    );
     let mut out = RgbaImage::new(w, h);
     match plane {
         Plane::Luma => {
@@ -668,7 +777,12 @@ fn to_rgba(frame: &VideoFrame, w: u32, h: u32, plane: Plane) -> Result<RgbaImage
                 let (x, y) = (x as usize, y as usize);
                 let ci = (y >> ys) * cw + (x >> xs);
                 rgb.clear();
-                convert.push(&mut rgb, sample(yp, y * fw + x), sample(up, ci), sample(vp, ci));
+                convert.push(
+                    &mut rgb,
+                    sample(yp, y * fw + x),
+                    sample(up, ci),
+                    sample(vp, ci),
+                );
                 *px = [rgb[0], rgb[1], rgb[2], u8::MAX];
             }
         }
@@ -702,7 +816,11 @@ fn nv_to_rgba(frame: &VideoFrame, w: u32, h: u32, plane: Plane) -> Result<RgbaIm
             continue;
         };
         let at = ((y / 2) * cw + x / 2) * 2;
-        let (u, v) = if cb_first { (cp[at], cp[at + 1]) } else { (cp[at + 1], cp[at]) };
+        let (u, v) = if cb_first {
+            (cp[at], cp[at + 1])
+        } else {
+            (cp[at + 1], cp[at])
+        };
         rgb.clear();
         convert.push(&mut rgb, f32::from(luma), f32::from(u), f32::from(v));
         *px = [rgb[0], rgb[1], rgb[2], u8::MAX];
@@ -727,7 +845,12 @@ impl Converter {
             // 5 and 6 are BT.601; so is anything unspecified on a still.
             _ => ColorSpace::Bt601,
         };
-        Converter::Matrix(YuvMatrix::for_source(space, SourceColor { full_range: m.full_range }))
+        Converter::Matrix(YuvMatrix::for_source(
+            space,
+            SourceColor {
+                full_range: m.full_range,
+            },
+        ))
     }
 
     fn push(&self, rgb: &mut Vec<u8>, y: f32, u: f32, v: f32) {
@@ -770,13 +893,19 @@ fn boxes(data: &[u8]) -> impl Iterator<Item = Result<BmffBox<'_>>> {
         let end = usize::try_from(size).ok().and_then(|s| at.checked_add(s));
         match end {
             Some(end) if end <= data.len() && size >= header as u64 => {
-                let b = BmffBox { kind, body: &data[at + header..end] };
+                let b = BmffBox {
+                    kind,
+                    body: &data[at + header..end],
+                };
                 at = end;
                 Some(Ok(b))
             }
             _ => {
                 failed = true;
-                Some(Err(anyhow!("the '{}' box runs past its parent", String::from_utf8_lossy(&kind))))
+                Some(Err(anyhow!(
+                    "the '{}' box runs past its parent",
+                    String::from_utf8_lossy(&kind)
+                )))
             }
         }
     })
@@ -821,11 +950,19 @@ fn parse_iloc(body: &[u8]) -> Result<Vec<(u32, Location)>> {
     let sizes = r.u8()?;
     let base_size = sizes >> 4;
     let index_size = if version >= 1 { sizes & 0xf } else { 0 };
-    let count = if version < 2 { u32::from(r.u16()?) } else { r.u32()? };
+    let count = if version < 2 {
+        u32::from(r.u16()?)
+    } else {
+        r.u32()?
+    };
     let mut out = Vec::new();
     for _ in 0..count {
         let id = r.id(version < 2)?;
-        let method = if version >= 1 { (r.u16()? & 0xf) as u8 } else { 0 };
+        let method = if version >= 1 {
+            (r.u16()? & 0xf) as u8
+        } else {
+            0
+        };
         let _data_ref = r.u16()?;
         let base = r.uint(base_size)?;
         let extents = r.u16()?;
@@ -836,7 +973,14 @@ fn parse_iloc(body: &[u8]) -> Result<Vec<(u32, Location)>> {
             let length = r.uint(length_size)?;
             list.push((offset, length));
         }
-        out.push((id, Location { method, base, extents: list }));
+        out.push((
+            id,
+            Location {
+                method,
+                base,
+                extents: list,
+            },
+        ));
     }
     Ok(out)
 }
@@ -849,8 +993,14 @@ fn parse_iref(body: &[u8]) -> Result<Vec<Reference>> {
         let mut r = Reader::new(b.body);
         let from = r.id(version == 0)?;
         let count = r.u16()?;
-        let to = (0..count).map(|_| r.id(version == 0)).collect::<Result<Vec<_>>>()?;
-        refs.push(Reference { kind: b.kind, from, to });
+        let to = (0..count)
+            .map(|_| r.id(version == 0))
+            .collect::<Result<Vec<_>>>()?;
+        refs.push(Reference {
+            kind: b.kind,
+            from,
+            to,
+        });
     }
     Ok(refs)
 }
@@ -869,7 +1019,10 @@ fn parse_iprp(body: &[u8]) -> Result<(Vec<Property<'_>>, Associations)> {
                 }
             }
             b"ipma" => {
-                let (version, flags) = (b.body.first().copied().unwrap_or(0), b.body.get(3).copied().unwrap_or(0));
+                let (version, flags) = (
+                    b.body.first().copied().unwrap_or(0),
+                    b.body.get(3).copied().unwrap_or(0),
+                );
                 let mut r = Reader::new(full_box(b.body)?.1);
                 let count = r.u32()?;
                 for _ in 0..count {
@@ -877,7 +1030,11 @@ fn parse_iprp(body: &[u8]) -> Result<(Vec<Property<'_>>, Associations)> {
                     let n = r.u8()?;
                     let mut list = Vec::with_capacity(usize::from(n));
                     for _ in 0..n {
-                        let index = if flags & 1 != 0 { r.u16()? & 0x7fff } else { u16::from(r.u8()? & 0x7f) };
+                        let index = if flags & 1 != 0 {
+                            r.u16()? & 0x7fff
+                        } else {
+                            u16::from(r.u8()? & 0x7f)
+                        };
                         list.push(index);
                     }
                     associations.push((item, list));
@@ -939,7 +1096,10 @@ impl<'a> Reader<'a> {
     }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let out = self.data.get(self.at..self.at + n).ok_or_else(|| anyhow!("a truncated HEIF box"))?;
+        let out = self
+            .data
+            .get(self.at..self.at + n)
+            .ok_or_else(|| anyhow!("a truncated HEIF box"))?;
         self.at += n;
         Ok(out)
     }
@@ -958,12 +1118,19 @@ impl<'a> Reader<'a> {
 
     /// An `n`-byte unsigned integer; `n` is 0, 4 or 8 in `iloc` (0 reads 0).
     fn uint(&mut self, n: u8) -> Result<u64> {
-        Ok(self.take(usize::from(n))?.iter().fold(0u64, |acc, b| (acc << 8) | u64::from(*b)))
+        Ok(self
+            .take(usize::from(n))?
+            .iter()
+            .fold(0u64, |acc, b| (acc << 8) | u64::from(*b)))
     }
 
     /// An item ID: 16 bits in the older box versions, 32 in the newer.
     fn id(&mut self, short: bool) -> Result<u32> {
-        if short { Ok(u32::from(self.u16()?)) } else { self.u32() }
+        if short {
+            Ok(u32::from(self.u16()?))
+        } else {
+            self.u32()
+        }
     }
 }
 
@@ -1115,7 +1282,10 @@ mod tests {
         // bottom-left, and the second tile's corner above it.
         let turned = gridded(2, 120, &[bx(b"irot", &[1])]);
         let h = read_header(&turned).unwrap();
-        assert_eq!((h.width, h.height, h.stored_width, h.stored_height), (48, 120, 120, 48));
+        assert_eq!(
+            (h.width, h.height, h.stored_width, h.stored_height),
+            (48, 120, 120, 48)
+        );
         let picture = decode(&turned, SourceFormat::Heic).unwrap();
         assert_eq!(picture.rgba.dimensions(), (48, 120));
         assert!(is_red(&picture.rgba, 3, 116));

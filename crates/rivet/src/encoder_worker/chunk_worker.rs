@@ -1,12 +1,14 @@
 //! Single-file chunked encode: workers collect packets (instead of writing CMAF
 //! segments) so the orchestrator can stitch them, in segment order, into one MP4.
 
+use super::{
+    EncoderSessionPool, EncoderWorkerConfig, InvariantCheck, validate_or_set_rung_invariant,
+};
+use crate::frame_queue::{SegmentChunk, SegmentChunkQueue};
 use anyhow::{Context, Result};
+use codec::encode::{self, EncoderConfig};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use codec::encode::{self, EncoderConfig};
-use crate::frame_queue::{SegmentChunk, SegmentChunkQueue};
-use super::{EncoderSessionPool, EncoderWorkerConfig, InvariantCheck, validate_or_set_rung_invariant};
 
 /// One chunk's encoded packets, in encode (= display, no B-frames) order.
 #[derive(Debug)]
@@ -48,8 +50,7 @@ pub fn run_chunk_encoder_worker_blocking(
             &shared_frames_encoded,
             &shared_bytes_encoded,
             &progress_tx,
-        )?
-        {
+        )? {
             ChunkOutcome::Encoded(c) => out.lock().unwrap().push(c),
             ChunkOutcome::RequeuedOnMismatch { chunk, diff } => {
                 tracing::warn!(
@@ -134,12 +135,7 @@ pub fn encode_chunk_unit(
 /// Returned as one range so the progress counter and the packet slice are
 /// driven from the same arithmetic — they disagreed before, and only the
 /// progress line showed it.
-fn kept_range(
-    lead_in: usize,
-    skip: usize,
-    keep: usize,
-    frames: usize,
-) -> std::ops::Range<usize> {
+fn kept_range(lead_in: usize, skip: usize, keep: usize, frames: usize) -> std::ops::Range<usize> {
     let start = (lead_in + skip).min(frames);
     start..(start + keep).min(frames)
 }
@@ -226,8 +222,13 @@ fn encode_chunk_to_packets(
                 .force_keyframe_next()
                 .context("forcing the chunk's opening IDR")?;
         }
-        encoder.send_frame(frame).context("send_frame in chunk worker")?;
-        while let Some(packet) = encoder.receive_packet().context("receive_packet in chunk worker")? {
+        encoder
+            .send_frame(frame)
+            .context("send_frame in chunk worker")?;
+        while let Some(packet) = encoder
+            .receive_packet()
+            .context("receive_packet in chunk worker")?
+        {
             if !decided {
                 match validate_or_set_rung_invariant(
                     cfg.rung_idx,
@@ -317,13 +318,16 @@ fn encode_chunk_to_packets(
     // and everything drained after flush.
     let chunk_bytes: u64 = packets.iter().map(|p| p.data.len() as u64).sum();
     shared_bytes_encoded.fetch_add(chunk_bytes, std::sync::atomic::Ordering::Relaxed);
-    Ok(ChunkOutcome::Encoded(ChunkPackets { segment_idx, packets }))
+    Ok(ChunkOutcome::Encoded(ChunkPackets {
+        segment_idx,
+        packets,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::PoolStats;
+    use super::*;
     use codec::encode::{Encoder, EncoderBackend, EncoderConfig};
     use codec::frame::{ColorMetadata, ColorSpace, PixelFormat, VideoCodec, VideoFrame};
     use std::sync::{Arc, RwLock};
@@ -342,7 +346,14 @@ mod tests {
             data.push(seed.wrapping_add((i % 7) as u8 * 9));
         }
         data.extend(std::iter::repeat_n(128u8, 2 * chroma));
-        VideoFrame::new(bytes::Bytes::from(data), width, height, PixelFormat::Yuv420p, ColorSpace::Bt709, pts)
+        VideoFrame::new(
+            bytes::Bytes::from(data),
+            width,
+            height,
+            PixelFormat::Yuv420p,
+            ColorSpace::Bt709,
+            pts,
+        )
     }
 
     fn worker_config(width: u32, height: u32, keyframe_interval: u32) -> EncoderWorkerConfig {
@@ -375,11 +386,30 @@ mod tests {
     }
 
     /// A chunk of `lead_in + keep` frames starting at `first_pts`.
-    fn chunk(cfg: &EncoderWorkerConfig, segment_idx: usize, first_pts: u64, lead_in: usize, keep: usize) -> SegmentChunk {
+    fn chunk(
+        cfg: &EncoderWorkerConfig,
+        segment_idx: usize,
+        first_pts: u64,
+        lead_in: usize,
+        keep: usize,
+    ) -> SegmentChunk {
         let frames = (0..lead_in + keep)
-            .map(|i| frame(cfg.width, cfg.height, first_pts + i as u64, (first_pts as u8).wrapping_add(i as u8 * 3)))
+            .map(|i| {
+                frame(
+                    cfg.width,
+                    cfg.height,
+                    first_pts + i as u64,
+                    (first_pts as u8).wrapping_add(i as u8 * 3),
+                )
+            })
             .collect();
-        SegmentChunk { segment_idx, frames, lead_in, keep, is_final: false }
+        SegmentChunk {
+            segment_idx,
+            frames,
+            lead_in,
+            keep,
+            is_final: false,
+        }
     }
 
     /// A pool over the native H.264 encoder, optionally wrapped so that
@@ -388,7 +418,11 @@ mod tests {
     fn h264_pool(honour_reset: bool) -> EncoderSessionPool {
         EncoderSessionPool::with_builder(Box::new(move |config: &EncoderConfig, _backend| {
             let inner = encode::select_encoder(config.clone(), Some(EncoderBackend::H26x))?;
-            Ok(if honour_reset { inner } else { Box::new(NoOpReset(inner)) })
+            Ok(if honour_reset {
+                inner
+            } else {
+                Box::new(NoOpReset(inner))
+            })
         }))
     }
 
@@ -422,13 +456,27 @@ mod tests {
         let mut out = Vec::new();
         // Chunk 0 has no margin; chunk 1 carries a 2-frame lead-in.
         for (idx, first_pts, lead_in, keep) in [(0usize, 0u64, 0usize, 4usize), (1, 4, 2, 4)] {
-            let c = chunk(&cfg, idx, first_pts.saturating_sub(lead_in as u64), lead_in, keep);
-            match encode_chunk_to_packets(&cfg, &enc_config, c, &mut pool, &frames, &bytes, &tx).unwrap() {
+            let c = chunk(
+                &cfg,
+                idx,
+                first_pts.saturating_sub(lead_in as u64),
+                lead_in,
+                keep,
+            );
+            match encode_chunk_to_packets(&cfg, &enc_config, c, &mut pool, &frames, &bytes, &tx)
+                .unwrap()
+            {
                 ChunkOutcome::Encoded(p) => out.push(p),
-                ChunkOutcome::RequeuedOnMismatch { diff, .. } => panic!("unexpected mismatch: {diff}"),
+                ChunkOutcome::RequeuedOnMismatch { diff, .. } => {
+                    panic!("unexpected mismatch: {diff}")
+                }
             }
         }
-        assert_eq!(frames.load(std::sync::atomic::Ordering::SeqCst), 8, "only kept frames are counted");
+        assert_eq!(
+            frames.load(std::sync::atomic::Ordering::SeqCst),
+            8,
+            "only kept frames are counted"
+        );
         (out, pool.stats())
     }
 
@@ -437,11 +485,25 @@ mod tests {
     #[test]
     fn a_reused_session_still_opens_every_chunk_with_an_idr() {
         let (chunks, stats) = encode_two_chunks(true);
-        assert_eq!(stats, PoolStats { built: 1, reused: 1, ..Default::default() });
+        assert_eq!(
+            stats,
+            PoolStats {
+                built: 1,
+                reused: 1,
+                ..Default::default()
+            }
+        );
         for c in &chunks {
             assert_eq!(c.packets.len(), 4, "chunk {} keeps 4 frames", c.segment_idx);
-            assert!(c.packets[0].is_keyframe, "chunk {} must open with an IDR", c.segment_idx);
-            assert!(c.packets[1..].iter().all(|p| !p.is_keyframe), "one IDR per chunk at this GOP");
+            assert!(
+                c.packets[0].is_keyframe,
+                "chunk {} must open with an IDR",
+                c.segment_idx
+            );
+            assert!(
+                c.packets[1..].iter().all(|p| !p.is_keyframe),
+                "one IDR per chunk at this GOP"
+            );
         }
         // And the margin frames are the ones dropped: chunk 1's first kept
         // pts is 4, not 2.
@@ -465,17 +527,25 @@ mod tests {
             let mut out = Vec::new();
             for (idx, first_pts) in [(0usize, 0u64), (1, 4)] {
                 let c = chunk(&cfg, idx, first_pts, 0, 4);
-                out.push(encode_chunk_to_packets(&cfg, &enc_config, c, &mut pool, &frames, &bytes, &tx).map(|o| match o {
-                    ChunkOutcome::Encoded(p) => p,
-                    ChunkOutcome::RequeuedOnMismatch { diff, .. } => panic!("unexpected mismatch: {diff}"),
-                }));
+                out.push(
+                    encode_chunk_to_packets(&cfg, &enc_config, c, &mut pool, &frames, &bytes, &tx)
+                        .map(|o| match o {
+                            ChunkOutcome::Encoded(p) => p,
+                            ChunkOutcome::RequeuedOnMismatch { diff, .. } => {
+                                panic!("unexpected mismatch: {diff}")
+                            }
+                        }),
+                );
             }
             assert_eq!(pool.stats().reused, 1, "both variants reuse the session");
             out
         };
         let honest = run(true);
         let honest_1 = honest[1].as_ref().expect("a real reset codes chunk 1");
-        assert!(honest_1.packets[0].is_keyframe, "a real reset opens chunk 1 with an IDR");
+        assert!(
+            honest_1.packets[0].is_keyframe,
+            "a real reset opens chunk 1 with an IDR"
+        );
         // With reset stubbed to a no-op, chunk 1 predicts from chunk 0. The
         // encoder sends parameter sets only with IDRs, so the worker refuses
         // the chunk for want of an SPS; were one there, the IDR check would
@@ -503,14 +573,22 @@ mod tests {
             let enc_config = super::super::build_enc_config(cfg);
             let c = chunk(cfg, idx, idx as u64 * 4, 0, 4);
             let ChunkOutcome::Encoded(p) =
-                encode_chunk_to_packets(cfg, &enc_config, c, &mut pool, &frames, &bytes, &tx).unwrap()
+                encode_chunk_to_packets(cfg, &enc_config, c, &mut pool, &frames, &bytes, &tx)
+                    .unwrap()
             else {
                 panic!("mismatch")
             };
             assert!(p.packets[0].is_keyframe);
             assert_eq!(p.packets.len(), 4);
         }
-        assert_eq!(pool.stats(), PoolStats { built: 3, evicted: 2, ..Default::default() });
+        assert_eq!(
+            pool.stats(),
+            PoolStats {
+                built: 3,
+                evicted: 2,
+                ..Default::default()
+            }
+        );
     }
 
     // ── The kept range ──────────────────────────────────────────────────
@@ -546,7 +624,10 @@ mod tests {
     fn without_reordering_it_is_the_contiguous_slice() {
         let mut packets: Vec<_> = (0u64..7).map(pkt).collect();
         drop_margin_by_display(&mut packets, &[3, 4, 5, 6]).unwrap();
-        assert_eq!(packets.iter().map(|p| p.pts).collect::<Vec<_>>(), vec![3, 4, 5, 6]);
+        assert_eq!(
+            packets.iter().map(|p| p.pts).collect::<Vec<_>>(),
+            vec![3, 4, 5, 6]
+        );
     }
 
     /// A kept timestamp with no packet — a reorder group cut by the boundary —
@@ -589,7 +670,10 @@ mod tests {
         // `lead_in` forced to 0 because the backend can't force a keyframe, so
         // the margin is never submitted. Same surviving frames either way.
         assert_eq!(kept_range(0, 48, 480, 528), 48..528);
-        assert_eq!(kept_range(48, 0, 480, 528).len(), kept_range(0, 48, 480, 528).len());
+        assert_eq!(
+            kept_range(48, 0, 480, 528).len(),
+            kept_range(0, 48, 480, 528).len()
+        );
     }
 
     #[test]
@@ -619,7 +703,10 @@ mod tests {
             let kept = kept_range(lead_in, skip, keep, frames);
             let submitted = frames - skip;
             let (start, end) = (kept.start - skip, (kept.end - skip).min(submitted));
-            assert!(start <= end && end <= submitted, "{lead_in}/{skip}/{keep}/{frames}");
+            assert!(
+                start <= end && end <= submitted,
+                "{lead_in}/{skip}/{keep}/{frames}"
+            );
             assert_eq!(end - start, kept.len(), "slice and counter must agree");
         }
     }

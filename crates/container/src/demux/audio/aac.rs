@@ -427,8 +427,7 @@ pub(super) fn decode_asc_sample_rate(asc: &[u8]) -> Option<u32> {
         Some(sr as u32)
     } else {
         const FREQS: [u32; 13] = [
-            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000,
-            7350,
+            96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
         ];
         FREQS.get(freq_idx).copied()
     }
@@ -447,7 +446,11 @@ pub(super) fn decode_asc_channels(asc: &[u8]) -> Option<u16> {
     }
     let chan_cfg = br.bits(4)? as u16;
     // chan_cfg 0 means "inspect PCE"; we don't bother — default to 2.
-    if chan_cfg == 0 { Some(2) } else { Some(chan_cfg) }
+    if chan_cfg == 0 {
+        Some(2)
+    } else {
+        Some(chan_cfg)
+    }
 }
 
 struct AscBitReader<'a> {

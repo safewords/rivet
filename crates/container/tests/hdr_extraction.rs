@@ -11,8 +11,8 @@
 //!   * Real HDR10 media (`bbb_hdr10.mp4` or any HEVC HDR10 sample) —
 //!     opt-in: skips with a notice when no fixture is present.
 
-use frame::{ContentLightLevel, MasteringDisplay};
 use container::demux::{demux_mkv, demux_mp4};
+use frame::{ContentLightLevel, MasteringDisplay};
 
 // === Box helpers ===
 

@@ -94,7 +94,8 @@ type MfxConfig = *mut c_void;
 type FnMfxLoad = unsafe extern "C" fn() -> MfxLoader;
 type FnMfxUnload = unsafe extern "C" fn(MfxLoader);
 type FnMfxCreateConfig = unsafe extern "C" fn(MfxLoader) -> MfxConfig;
-type FnMfxSetConfigFilterProperty = unsafe extern "C" fn(MfxConfig, *const u8, MfxVariant) -> MfxStatus;
+type FnMfxSetConfigFilterProperty =
+    unsafe extern "C" fn(MfxConfig, *const u8, MfxVariant) -> MfxStatus;
 type FnMfxCreateSession = unsafe extern "C" fn(MfxLoader, u32, *mut MfxSession) -> MfxStatus;
 
 /// `mfxVariant`: Version (u16), pad, Type (u32), Data (an 8-byte union).
@@ -145,7 +146,12 @@ unsafe fn open_session(lib: &libloading::Library, adapter: u32) -> Result<Sessio
             let loader = load();
             if !loader.is_null() {
                 let cfg = create_config(loader);
-                let hw = MfxVariant { version: 0, _pad: 0, ty: MFX_VARIANT_TYPE_U32, data: u64::from(MFX_IMPL_TYPE_HARDWARE) };
+                let hw = MfxVariant {
+                    version: 0,
+                    _pad: 0,
+                    ty: MFX_VARIANT_TYPE_U32,
+                    data: u64::from(MFX_IMPL_TYPE_HARDWARE),
+                };
                 let mut session: MfxSession = ptr::null_mut();
                 if !cfg.is_null()
                     && set_filter(cfg, c"mfxImplDescription.Impl".as_ptr().cast(), hw) >= 0
@@ -154,7 +160,10 @@ unsafe fn open_session(lib: &libloading::Library, adapter: u32) -> Result<Sessio
                 {
                     return Ok(Session { session, loader });
                 }
-                tracing::debug!(adapter, "oneVPL dispatcher found no hardware session for decode; trying MFXInit");
+                tracing::debug!(
+                    adapter,
+                    "oneVPL dispatcher found no hardware session for decode; trying MFXInit"
+                );
                 unload(loader);
             }
         }
@@ -163,9 +172,14 @@ unsafe fn open_session(lib: &libloading::Library, adapter: u32) -> Result<Sessio
         let mut session: MfxSession = ptr::null_mut();
         let rc = mfx_init(MFX_IMPL_HARDWARE_ANY, &mut version, &mut session);
         if rc != MFX_ERR_NONE || session.is_null() {
-            bail!("no Intel hardware decode session: the oneVPL dispatcher found none and MFXInit(HW) answered {rc}");
+            bail!(
+                "no Intel hardware decode session: the oneVPL dispatcher found none and MFXInit(HW) answered {rc}"
+            );
         }
-        Ok(Session { session, loader: ptr::null_mut() })
+        Ok(Session {
+            session,
+            loader: ptr::null_mut(),
+        })
     }
 }
 
@@ -477,7 +491,9 @@ impl QsvDecoder {
             let decode_async = *self
                 .lib
                 .get::<FnDecodeFrameAsync>(b"MFXVideoDECODE_DecodeFrameAsync")?;
-            let sync_op = *self.lib.get::<FnSyncOperation>(b"MFXVideoCORE_SyncOperation")?;
+            let sync_op = *self
+                .lib
+                .get::<FnSyncOperation>(b"MFXVideoCORE_SyncOperation")?;
 
             let mut bs: MfxBitstream = std::mem::zeroed();
             if !drain {
@@ -485,7 +501,11 @@ impl QsvDecoder {
                 bs.data_length = self.pending.len() as u32;
                 bs.max_length = self.pending.len() as u32;
             }
-            let bs_ptr = if drain { ptr::null_mut() } else { &mut bs as *mut MfxBitstream };
+            let bs_ptr = if drain {
+                ptr::null_mut()
+            } else {
+                &mut bs as *mut MfxBitstream
+            };
 
             loop {
                 let mut out: *mut MfxFrameSurface1 = ptr::null_mut();
@@ -541,8 +561,16 @@ impl QsvDecoder {
             // codes as 1088 (16-aligned); emitting 1088-tall frames into a
             // 1080-configured encoder fails EncodeFrameAsync. Crop is the
             // displayable size; fall back to coded only if crop is unset.
-            let w = if s.info.crop_w > 0 { s.info.crop_w } else { s.info.width } as usize;
-            let h = if s.info.crop_h > 0 { s.info.crop_h } else { s.info.height } as usize;
+            let w = if s.info.crop_w > 0 {
+                s.info.crop_w
+            } else {
+                s.info.width
+            } as usize;
+            let h = if s.info.crop_h > 0 {
+                s.info.crop_h
+            } else {
+                s.info.height
+            } as usize;
             let pitch = s.data.pitch as usize | ((s.data.pitch_high as usize) << 16);
             let ch = h.div_ceil(2);
             let y_ptr = s.data.y;
@@ -558,7 +586,10 @@ impl QsvDecoder {
                         p010_planes_to_yuv420p10le(y, pitch, uv, pitch, w, h),
                     )
                 } else {
-                    (PixelFormat::Yuv420p, nv12_planes_to_yuv420p(y, pitch, uv, pitch, w, h))
+                    (
+                        PixelFormat::Yuv420p,
+                        nv12_planes_to_yuv420p(y, pitch, uv, pitch, w, h),
+                    )
                 };
                 let frame = VideoFrame::new(
                     Bytes::from(packed),
@@ -615,7 +646,13 @@ impl Drop for QsvDecoder {
             if let Ok(close) = self.lib.get::<FnDecodeClose>(b"MFXVideoDECODE_Close") {
                 let _ = close(self.session);
             }
-            close_session(&self.lib, &Session { session: self.session, loader: self.loader });
+            close_session(
+                &self.lib,
+                &Session {
+                    session: self.session,
+                    loader: self.loader,
+                },
+            );
         }
     }
 }
@@ -626,7 +663,9 @@ mod tests {
 
     #[test]
     fn supports_the_known_decode_codecs() {
-        for c in ["h264", "avc1", "avc", "hevc", "h265", "hvc1", "av1", "av01", "vp9", "vp09"] {
+        for c in [
+            "h264", "avc1", "avc", "hevc", "h265", "hvc1", "av1", "av01", "vp9", "vp09",
+        ] {
             assert!(supports(c), "{c} should be a supported QSV decode codec");
         }
         for c in ["vp8", "mpeg2", "mpeg4", "prores", "bogus"] {
@@ -641,9 +680,16 @@ mod tests {
         // the codec list. Either way it must not panic, and every returned label
         // must be a codec we actually decode. Cached, so a second call is cheap.
         let caps = probe_decode_caps();
-        assert_eq!(caps, probe_decode_caps(), "probe result must be stable/cached");
+        assert_eq!(
+            caps,
+            probe_decode_caps(),
+            "probe result must be stable/cached"
+        );
         for &c in caps {
-            assert!(supports(c), "probe returned an unsupported codec label: {c}");
+            assert!(
+                supports(c),
+                "probe returned an unsupported codec label: {c}"
+            );
         }
     }
 

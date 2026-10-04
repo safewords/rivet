@@ -87,7 +87,6 @@ pub struct H26xDecoder {
     produced: bool,
 }
 
-
 /// Whether the native tier serves `codec_lower`.
 pub fn supports(codec_lower: &str) -> bool {
     matches!(
@@ -109,8 +108,12 @@ impl H26xDecoder {
     pub fn new_shared(info: StreamInfo, share: usize) -> Result<Self> {
         let codec = info.codec.to_ascii_lowercase();
         let threads = super::shared_decode_threads(
-            std::env::var("H26X_THREADS").ok().and_then(|v| v.trim().parse().ok()),
-            std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 32),
+            std::env::var("H26X_THREADS")
+                .ok()
+                .and_then(|v| v.trim().parse().ok()),
+            std::thread::available_parallelism()
+                .map_or(1, |n| n.get())
+                .clamp(1, 32),
             share,
         );
         let inner = match codec.as_str() {
@@ -120,7 +123,13 @@ impl H26xDecoder {
             }
             other => bail!("h26x decodes H.264 and HEVC, not '{other}'"),
         };
-        Ok(Self { inner, info, ready: VecDeque::new(), next_pts: 0, produced: false })
+        Ok(Self {
+            inner,
+            info,
+            ready: VecDeque::new(),
+            next_pts: 0,
+            produced: false,
+        })
     }
 
     /// Turn a decoded picture into a [`VideoFrame`], or say why the format has
@@ -162,7 +171,11 @@ impl H26xDecoder {
         let bytes_per_sample = pic.bytes_per_sample();
         // Monochrome travels as 4:2:0 with grey chroma (below), so its chroma
         // planes are sized for that.
-        let (sw, sh) = if pic.chroma == C::Monochrome { (2, 2) } else { pic.chroma.subsampling() };
+        let (sw, sh) = if pic.chroma == C::Monochrome {
+            (2, 2)
+        } else {
+            pic.chroma.subsampling()
+        };
         let (cw, ch) = (w.div_ceil(sw as usize), h.div_ceil(sh as usize));
         let (chroma, width, height, bit_depth) = (pic.chroma, pic.width, pic.height, pic.bit_depth);
         // The decoder's picture is already the packed planar frame: take its
@@ -247,8 +260,9 @@ impl Decoder for H26xDecoder {
                 // first picture it is a refusal, and the next tier gets a go.
                 Err(e) => {
                     if !self.produced {
-                        return Err(anyhow::Error::new(e))
-                            .context("the native H.264/HEVC decoder could not start on this stream");
+                        return Err(anyhow::Error::new(e)).context(
+                            "the native H.264/HEVC decoder could not start on this stream",
+                        );
                     }
                     tracing::debug!(error = %e, "h26x rejected a NAL; continuing");
                 }
@@ -279,10 +293,26 @@ mod tests {
     fn concurrent_decoders_divide_the_threads() {
         use super::super::shared_decode_threads as threads;
         assert_eq!(threads(None, 32, 1), 32);
-        assert_eq!(threads(None, 32, 3), 10, "the machine divided among the decoders");
-        assert_eq!(threads(Some(8), 32, 2), 8, "an explicit count is per decoder");
-        assert_eq!(crate::threads::with_budget(6, || threads(None, 32, 4)), 6, "held to the pump's budget");
-        assert_eq!(crate::threads::with_budget(16, || threads(None, 32, 4)), 8, "the budget is a ceiling");
+        assert_eq!(
+            threads(None, 32, 3),
+            10,
+            "the machine divided among the decoders"
+        );
+        assert_eq!(
+            threads(Some(8), 32, 2),
+            8,
+            "an explicit count is per decoder"
+        );
+        assert_eq!(
+            crate::threads::with_budget(6, || threads(None, 32, 4)),
+            6,
+            "held to the pump's budget"
+        );
+        assert_eq!(
+            crate::threads::with_budget(16, || threads(None, 32, 4)),
+            8,
+            "the budget is a ceiling"
+        );
         assert_eq!(threads(Some(0), 6, 2), 3, "0 is no setting");
         assert_eq!(threads(None, 2, 4), 1, "never below one");
     }
@@ -325,15 +355,18 @@ mod tests {
         // The SPS of an x264 High-profile encode (level 2.1), taken from a
         // real stream, and a plain PPS for it.
         let sps: &[u8] = &[
-            0, 0, 0, 1, 0x67, 0x64, 0x00, 0x15, 0xac, 0xd9, 0x41, 0x43, 0x3f, 0x2c, 0xd4, 0x18, 0x04,
-            0x19, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x03, 0x00, 0x32, 0x1f, 0x14, 0x29, 0x96,
+            0, 0, 0, 1, 0x67, 0x64, 0x00, 0x15, 0xac, 0xd9, 0x41, 0x43, 0x3f, 0x2c, 0xd4, 0x18,
+            0x04, 0x19, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x03, 0x00, 0x32, 0x1f, 0x14,
+            0x29, 0x96,
         ];
         let pps: &[u8] = &[0, 0, 0, 1, 0x68, 0xce, 0x3c, 0x80];
         // Slice data partition A (nal_unit_type 2) of an I slice.
         let partition_a: &[u8] = &[0, 0, 0, 1, 0x62, 0x88, 0x84, 0x00];
         d.push_sample(sps).expect("a parameter set is accepted");
         d.push_sample(pps).expect("a plain PPS is accepted");
-        let err = d.push_sample(partition_a).expect_err("data partitioning is unsupported");
+        let err = d
+            .push_sample(partition_a)
+            .expect_err("data partitioning is unsupported");
         assert!(format!("{err:#}").contains("unsupported"), "{err:#}");
         assert!(d.decode_next().expect("drain").is_none());
     }

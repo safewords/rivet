@@ -26,8 +26,8 @@ use codec::encode::{EncoderBackend, EncoderConfig, select_encoder};
 use codec::frame::{ColorSpace, PixelFormat, VideoCodec, VideoFrame};
 use container::mux::Av1Mp4Muxer;
 use container::streaming::demux_streaming;
-use rivet::{Container, OutputSpec, Rung, RungArtifact, VideoCodecPolicy};
 use rivet::spec::ProresProfile;
+use rivet::{Container, OutputSpec, Rung, RungArtifact, VideoCodecPolicy};
 
 /// A decoded clip: its frames' luma planes, its size and frame rate.
 struct Decoded {
@@ -48,17 +48,21 @@ fn luma(f: &VideoFrame) -> Vec<f64> {
         f.data[..n].iter().map(|&v| f64::from(v)).collect()
     } else {
         let scale = f64::from(1u32 << (bits - 8));
-        (0..n).map(|i| f64::from(u16::from_le_bytes([f.data[2 * i], f.data[2 * i + 1]])) / scale).collect()
+        (0..n)
+            .map(|i| f64::from(u16::from_le_bytes([f.data[2 * i], f.data[2 * i + 1]])) / scale)
+            .collect()
     }
 }
 
 /// Demux `file` with rivet's streaming demuxer and decode it with the decoder
 /// rivet picks.
 fn decode(file: &[u8]) -> Decoded {
-    let mut demux = demux_streaming(file).unwrap_or_else(|e| panic!("rivet demuxes the file: {e:#}"));
+    let mut demux =
+        demux_streaming(file).unwrap_or_else(|e| panic!("rivet demuxes the file: {e:#}"));
     let header = demux.header().clone();
     let audio_codec = demux.audio().map(|a| a.codec.clone());
-    let mut dec = codec::decode::create_decoder(&header.codec, header.info.clone()).expect("a decoder");
+    let mut dec =
+        codec::decode::create_decoder(&header.codec, header.info.clone()).expect("a decoder");
     let mut pts = Vec::new();
     let mut luma_planes = Vec::new();
     while let Some(s) = demux.next_video_sample().unwrap() {
@@ -90,7 +94,8 @@ fn psnr(a: &[f64], b: &[f64]) -> f64 {
 /// The one file a single-rung job made.
 fn run(source: &[u8], spec: &OutputSpec) -> Vec<u8> {
     spec.validate().expect("a valid spec");
-    let out = rivet::run_job_blocking(source, spec, None, Arc::new(rivet::fn_sink(|_| {}))).expect("the job");
+    let out = rivet::run_job_blocking(source, spec, None, Arc::new(rivet::fn_sink(|_| {})))
+        .expect("the job");
     assert_eq!(out.rungs.len(), 1);
     match &out.rungs[0].artifact {
         RungArtifact::File(b) => b.clone(),
@@ -100,7 +105,13 @@ fn run(source: &[u8], spec: &OutputSpec) -> Vec<u8> {
 
 /// Transcode `source` to `codec` in `container` at the source's size, and
 /// check the output against the source. Returns the worst frame's PSNR.
-fn transcode_and_check(name: &str, source: &[u8], policy: VideoCodecPolicy, container: Container, floor: f64) -> f64 {
+fn transcode_and_check(
+    name: &str,
+    source: &[u8],
+    policy: VideoCodecPolicy,
+    container: Container,
+    floor: f64,
+) -> f64 {
     transcode_and_check_with(name, source, policy, container, floor, |s| s)
 }
 
@@ -126,7 +137,11 @@ fn transcode_and_check_with(
     }
     let file = run(source, &spec);
     match container {
-        Container::WebM => assert_eq!(&file[..4], &[0x1A, 0x45, 0xDF, 0xA3], "{name}: an EBML file"),
+        Container::WebM => assert_eq!(
+            &file[..4],
+            &[0x1A, 0x45, 0xDF, 0xA3],
+            "{name}: an EBML file"
+        ),
         Container::Mov => assert_eq!(&file[4..12], b"ftypqt  ", "{name}: a QuickTime movie"),
         _ => assert_eq!(&file[4..12], b"ftypiso6", "{name}: an ISO MP4"),
     }
@@ -137,14 +152,25 @@ fn transcode_and_check_with(
     };
     assert_eq!(out.codec, label, "{name}: codec");
     assert_eq!(out.dims, src.dims, "{name}: size");
-    assert_eq!(out.luma.len(), src.luma.len(), "{name}: one frame per source frame");
-    assert_eq!(out.pts.len(), src.luma.len(), "{name}: one sample per frame");
+    assert_eq!(
+        out.luma.len(),
+        src.luma.len(),
+        "{name}: one frame per source frame"
+    );
+    assert_eq!(
+        out.pts.len(),
+        src.luma.len(),
+        "{name}: one sample per frame"
+    );
     let mut presented = out.pts.clone();
     presented.sort_by(f64::total_cmp);
     let step = 1.0 / src.frame_rate;
     for (i, t) in presented.iter().enumerate() {
         let want = presented[0] + i as f64 * step;
-        assert!((t - want).abs() < 0.002, "{name}: frame {i} presented at {t:.4}s, want {want:.4}s");
+        assert!(
+            (t - want).abs() < 0.002,
+            "{name}: frame {i} presented at {t:.4}s, want {want:.4}s"
+        );
     }
     let mut worst = f64::INFINITY;
     for (i, (a, b)) in out.luma.iter().zip(&src.luma).enumerate() {
@@ -177,7 +203,8 @@ fn synthetic_h264() -> Vec<u8> {
         threads: 1,
         ..Default::default()
     };
-    let mut enc = select_encoder(cfg, Some(EncoderBackend::H26x)).expect("rivet's H.264 encoder, by name");
+    let mut enc =
+        select_encoder(cfg, Some(EncoderBackend::H26x)).expect("rivet's H.264 encoder, by name");
     let mut mux = Av1Mp4Muxer::new_with_codec(w, h, 24.0, VideoCodec::H264).unwrap();
     for t in 0..n {
         let (wu, hu) = (w as usize, h as usize);
@@ -185,11 +212,19 @@ fn synthetic_h264() -> Vec<u8> {
         for y in 0..hu {
             for x in 0..wu {
                 let ramp = ((x + 2 * y + 3 * t as usize) % 200) as u8 + 25;
-                let sq = (x as i64 - (10 + 4 * t as i64)).unsigned_abs() < 12 && (30..60).contains(&y);
+                let sq =
+                    (x as i64 - (10 + 4 * t as i64)).unsigned_abs() < 12 && (30..60).contains(&y);
                 data[y * wu + x] = if sq { 230 } else { ramp };
             }
         }
-        let f = VideoFrame::new(data.into(), w, h, PixelFormat::Yuv420p, ColorSpace::Bt709, t);
+        let f = VideoFrame::new(
+            data.into(),
+            w,
+            h,
+            PixelFormat::Yuv420p,
+            ColorSpace::Bt709,
+            t,
+        );
         enc.send_frame(&f).unwrap();
         while let Some(p) = enc.receive_packet().unwrap() {
             mux.add_packet(p).unwrap();
@@ -203,42 +238,92 @@ fn synthetic_h264() -> Vec<u8> {
 }
 
 fn fixture(name: &str) -> Vec<u8> {
-    std::fs::read(format!("{}/../container/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).expect("a committed fixture")
+    std::fs::read(format!(
+        "{}/../container/tests/fixtures/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("a committed fixture")
 }
 
 #[test]
 fn vp9_to_webm_and_mp4() {
     let src = synthetic_h264();
-    transcode_and_check("vp9 webm", &src, VideoCodecPolicy::Vp9, Container::WebM, 30.0);
+    transcode_and_check(
+        "vp9 webm",
+        &src,
+        VideoCodecPolicy::Vp9,
+        Container::WebM,
+        30.0,
+    );
     transcode_and_check("vp9 mp4", &src, VideoCodecPolicy::Vp9, Container::Mp4, 30.0);
 }
 
 #[test]
 fn vp8_to_webm_and_mp4() {
     let src = synthetic_h264();
-    transcode_and_check("vp8 webm", &src, VideoCodecPolicy::Vp8, Container::WebM, 30.0);
+    transcode_and_check(
+        "vp8 webm",
+        &src,
+        VideoCodecPolicy::Vp8,
+        Container::WebM,
+        30.0,
+    );
     transcode_and_check("vp8 mp4", &src, VideoCodecPolicy::Vp8, Container::Mp4, 30.0);
 }
 
 #[test]
 fn mpeg2_to_mp4_and_mov() {
     let src = synthetic_h264();
-    transcode_and_check("mpeg2 mp4", &src, VideoCodecPolicy::Mpeg2, Container::Mp4, 30.0);
-    transcode_and_check("mpeg2 mov", &src, VideoCodecPolicy::Mpeg2, Container::Mov, 30.0);
+    transcode_and_check(
+        "mpeg2 mp4",
+        &src,
+        VideoCodecPolicy::Mpeg2,
+        Container::Mp4,
+        30.0,
+    );
+    transcode_and_check(
+        "mpeg2 mov",
+        &src,
+        VideoCodecPolicy::Mpeg2,
+        Container::Mov,
+        30.0,
+    );
 }
 
 #[test]
 fn mpeg4_to_mp4_and_mov() {
     let src = synthetic_h264();
-    transcode_and_check("mpeg4 mp4", &src, VideoCodecPolicy::Mpeg4, Container::Mp4, 30.0);
-    transcode_and_check("mpeg4 mov", &src, VideoCodecPolicy::Mpeg4, Container::Mov, 30.0);
+    transcode_and_check(
+        "mpeg4 mp4",
+        &src,
+        VideoCodecPolicy::Mpeg4,
+        Container::Mp4,
+        30.0,
+    );
+    transcode_and_check(
+        "mpeg4 mov",
+        &src,
+        VideoCodecPolicy::Mpeg4,
+        Container::Mov,
+        30.0,
+    );
 }
 
 #[test]
 fn prores_to_mov() {
     let src = synthetic_h264();
-    for (p, floor) in [(ProresProfile::Standard, 35.0), (ProresProfile::Hq, 35.0), (ProresProfile::P4444, 35.0)] {
-        transcode_and_check(&format!("prores {} mov", p.name()), &src, VideoCodecPolicy::ProRes(p), Container::Mov, floor);
+    for (p, floor) in [
+        (ProresProfile::Standard, 35.0),
+        (ProresProfile::Hq, 35.0),
+        (ProresProfile::P4444, 35.0),
+    ] {
+        transcode_and_check(
+            &format!("prores {} mov", p.name()),
+            &src,
+            VideoCodecPolicy::ProRes(p),
+            Container::Mov,
+            floor,
+        );
     }
 }
 
@@ -246,11 +331,19 @@ fn prores_to_mov() {
 #[test]
 fn the_codec_picks_its_file() {
     let src = synthetic_h264();
-    let prores = OutputSpec::single_file(vec![Rung::new(128, 96)]).with_video_codec(VideoCodecPolicy::ProRes(ProresProfile::Lt));
-    assert_eq!((prores.container, prores.file_extension()), (Container::Mov, "mov"));
+    let prores = OutputSpec::single_file(vec![Rung::new(128, 96)])
+        .with_video_codec(VideoCodecPolicy::ProRes(ProresProfile::Lt));
+    assert_eq!(
+        (prores.container, prores.file_extension()),
+        (Container::Mov, "mov")
+    );
     assert_eq!(&run(&src, &prores)[4..12], b"ftypqt  ");
-    let vp9 = OutputSpec::single_file(vec![Rung::new(128, 96)]).with_video_codec(VideoCodecPolicy::Vp9);
-    assert_eq!((vp9.container, vp9.file_extension()), (Container::WebM, "webm"));
+    let vp9 =
+        OutputSpec::single_file(vec![Rung::new(128, 96)]).with_video_codec(VideoCodecPolicy::Vp9);
+    assert_eq!(
+        (vp9.container, vp9.file_extension()),
+        (Container::WebM, "webm")
+    );
 }
 
 /// Real H.264 + AAC (a committed transport stream): VP9 in WebM carries the
@@ -260,14 +353,26 @@ fn audio_goes_where_the_file_takes_it() {
     let src = fixture("timing/video_first.ts");
     // Colour kept as it is (`passthrough`): the default SDR path re-derives a
     // BT.601 matrix to BT.709, which changes the luma this compares.
-    transcode_and_check_with("ts -> vp9 webm", &src, VideoCodecPolicy::Vp9, Container::WebM, 28.0, |s| s.passthrough());
+    transcode_and_check_with(
+        "ts -> vp9 webm",
+        &src,
+        VideoCodecPolicy::Vp9,
+        Container::WebM,
+        28.0,
+        |s| s.passthrough(),
+    );
     let dims = decode(&src).dims;
     let rung = || vec![Rung::new(dims.0, dims.1)];
-    let webm = run(&src, &OutputSpec::single_file(rung()).with_video_codec(VideoCodecPolicy::Vp9));
+    let webm = run(
+        &src,
+        &OutputSpec::single_file(rung()).with_video_codec(VideoCodecPolicy::Vp9),
+    );
     assert_eq!(decode(&webm).audio_codec.as_deref(), Some("opus"));
     let mov = run(
         &src,
-        &OutputSpec::single_file(rung()).with_video_codec(VideoCodecPolicy::Mpeg4).with_container(Container::Mov),
+        &OutputSpec::single_file(rung())
+            .with_video_codec(VideoCodecPolicy::Mpeg4)
+            .with_container(Container::Mov),
     );
     assert_eq!(decode(&mov).audio_codec.as_deref(), Some("aac"));
 }
@@ -279,10 +384,31 @@ fn mpeg2_and_vp9_sources() {
     // Colour kept (`passthrough`): these are BT.601 sources, which the
     // default SDR path re-derives to BT.709.
     let keep = |s: OutputSpec| s.passthrough();
-    transcode_and_check_with("mpeg2 ts -> vp9 webm", &fixture("colour/mpeg2_601.ts"), VideoCodecPolicy::Vp9, Container::WebM, 28.0, keep);
+    transcode_and_check_with(
+        "mpeg2 ts -> vp9 webm",
+        &fixture("colour/mpeg2_601.ts"),
+        VideoCodecPolicy::Vp9,
+        Container::WebM,
+        28.0,
+        keep,
+    );
     let vp9 = fixture("colour/vp9_601.webm");
-    transcode_and_check_with("vp9 webm -> mpeg4 mp4", &vp9, VideoCodecPolicy::Mpeg4, Container::Mp4, 28.0, keep);
-    transcode_and_check_with("vp9 webm -> prores mov", &vp9, VideoCodecPolicy::ProRes(ProresProfile::Hq), Container::Mov, 35.0, keep);
+    transcode_and_check_with(
+        "vp9 webm -> mpeg4 mp4",
+        &vp9,
+        VideoCodecPolicy::Mpeg4,
+        Container::Mp4,
+        28.0,
+        keep,
+    );
+    transcode_and_check_with(
+        "vp9 webm -> prores mov",
+        &vp9,
+        VideoCodecPolicy::ProRes(ProresProfile::Hq),
+        Container::Mov,
+        35.0,
+        keep,
+    );
 }
 
 /// VP9 as HLS: the master playlist's `CODECS` names `vp09`, and the init
@@ -291,12 +417,21 @@ fn mpeg2_and_vp9_sources() {
 fn vp9_hls() {
     let src = synthetic_h264();
     let dir = tempfile::tempdir().unwrap();
-    let spec = OutputSpec::hls(vec![Rung::new(128, 96)], 0.5).with_video_codec(VideoCodecPolicy::Vp9);
+    let spec =
+        OutputSpec::hls(vec![Rung::new(128, 96)], 0.5).with_video_codec(VideoCodecPolicy::Vp9);
     spec.validate().unwrap();
-    let out = rivet::run_job_blocking(&src, &spec, Some(dir.path()), Arc::new(rivet::fn_sink(|_| {}))).expect("the HLS job");
+    let out = rivet::run_job_blocking(
+        &src,
+        &spec,
+        Some(dir.path()),
+        Arc::new(rivet::fn_sink(|_| {})),
+    )
+    .expect("the HLS job");
     let master = std::fs::read_to_string(out.master_playlist.expect("a master playlist")).unwrap();
     assert!(master.contains("CODECS=\"vp09.00."), "{master}");
-    let RungArtifact::HlsRendition { dir: rung_dir, .. } = &out.rungs[0].artifact else { panic!("an HLS rendition") };
+    let RungArtifact::HlsRendition { dir: rung_dir, .. } = &out.rungs[0].artifact else {
+        panic!("an HLS rendition")
+    };
     let mut joined = std::fs::read(rung_dir.join("init.mp4")).unwrap();
     let mut segs: Vec<_> = std::fs::read_dir(rung_dir)
         .unwrap()
@@ -326,9 +461,14 @@ fn bbb_to_vp9_webm() {
     };
     // Its first half second, colour kept: VP9 is encoded in software here,
     // and a debug build is slow.
-    transcode_and_check_with("bbb -> vp9 webm", &src, VideoCodecPolicy::Vp9, Container::WebM, 28.0, |s| {
-        s.passthrough().with_trim(None, Some(0.5))
-    });
+    transcode_and_check_with(
+        "bbb -> vp9 webm",
+        &src,
+        VideoCodecPolicy::Vp9,
+        Container::WebM,
+        28.0,
+        |s| s.passthrough().with_trim(None, Some(0.5)),
+    );
 }
 
 /// An MPEG program stream (`.mpg`) in: the synthetic clip as MPEG-2 video
@@ -338,7 +478,11 @@ fn bbb_to_vp9_webm() {
 fn a_program_stream_source() {
     let src = synthetic_h264();
     let dims = decode(&src).dims;
-    let mpeg2 = run(&src, &OutputSpec::single_file(vec![Rung::new(dims.0, dims.1)]).with_video_codec(VideoCodecPolicy::Mpeg2));
+    let mpeg2 = run(
+        &src,
+        &OutputSpec::single_file(vec![Rung::new(dims.0, dims.1)])
+            .with_video_codec(VideoCodecPolicy::Mpeg2),
+    );
     let mut demux = demux_streaming(&mpeg2).unwrap();
     let pack = [0, 0, 1, 0xBA, 0x44, 0, 4, 0, 4, 1, 0x01, 0x89, 0xC3, 0xF8];
     let mut ps = Vec::new();
@@ -349,15 +493,25 @@ fn a_program_stream_source() {
         ps.extend(&s.data);
     }
     ps.extend([0, 0, 1, 0xB9]);
-    assert_eq!(container::sniff_container(&ps), container::ContainerKind::MpegPs);
-    transcode_and_check("mpg -> mpeg4 mp4", &ps, VideoCodecPolicy::Mpeg4, Container::Mp4, 30.0);
+    assert_eq!(
+        container::sniff_container(&ps),
+        container::ContainerKind::MpegPs
+    );
+    transcode_and_check(
+        "mpg -> mpeg4 mp4",
+        &ps,
+        VideoCodecPolicy::Mpeg4,
+        Container::Mp4,
+        30.0,
+    );
 }
 
 /// The bit depth rivet's decoder gives for `file`'s video.
 fn decoded_depth(file: &[u8]) -> u8 {
     let mut demux = demux_streaming(file).expect("rivet demuxes the file");
     let header = demux.header().clone();
-    let mut dec = codec::decode::create_decoder(&header.codec, header.info.clone()).expect("a decoder");
+    let mut dec =
+        codec::decode::create_decoder(&header.codec, header.info.clone()).expect("a decoder");
     while let Some(s) = demux.next_video_sample().unwrap() {
         dec.push_sample(&s.data).unwrap();
         if let Some(f) = dec.decode_next().unwrap() {
@@ -398,9 +552,14 @@ fn vp9_ten_bit_profile_2() {
 fn vp9_bitrate_rung() {
     let src = synthetic_h264();
     let bitrate = 400_000u32;
-    let overrides = codec::encode::tuning::EncodeOverrides { bitrate: Some(bitrate), ..Default::default() };
+    let overrides = codec::encode::tuning::EncodeOverrides {
+        bitrate: Some(bitrate),
+        ..Default::default()
+    };
     let rung = Rung::new(128, 96).with_quality(rivet::Quality::default().with_overrides(overrides));
-    let spec = OutputSpec::single_file(vec![rung]).with_video_codec(VideoCodecPolicy::Vp9).with_container(Container::WebM);
+    let spec = OutputSpec::single_file(vec![rung])
+        .with_video_codec(VideoCodecPolicy::Vp9)
+        .with_container(Container::WebM);
     let file = run(&src, &spec);
     let out = decode(&file);
     assert_eq!(out.luma.len(), 24);
@@ -408,7 +567,10 @@ fn vp9_bitrate_rung() {
     // first key frame are on top. Well inside a factor of two either way.
     let seconds = 24.0 / 24.0;
     let achieved = file.len() as f64 * 8.0 / seconds;
-    assert!((0.5..2.0).contains(&(achieved / f64::from(bitrate))), "{achieved:.0} b/s for {bitrate}");
+    assert!(
+        (0.5..2.0).contains(&(achieved / f64::from(bitrate))),
+        "{achieved:.0} b/s for {bitrate}"
+    );
     eprintln!("vp9 bitrate rung: asked {bitrate} b/s, file {achieved:.0} b/s");
 }
 
@@ -422,16 +584,31 @@ fn av1_in_software_8_and_10_bit() {
         eprintln!("SKIP: build without `av1-sw-fallback` (no software AV1 encode tier)");
         return;
     }
-    if codec::gpu::detect_gpus().iter().any(|g| codec::encode::encode_capable_at(g, VideoCodec::Av1, false)) {
+    if codec::gpu::detect_gpus()
+        .iter()
+        .any(|g| codec::encode::encode_capable_at(g, VideoCodec::Av1, false))
+    {
         eprintln!("SKIP: this host encodes AV1 on a GPU; the software tier is not what would run");
         return;
     }
     let src = synthetic_h264();
-    let worst8 = transcode_and_check("av1 sw 8-bit mp4", &src, VideoCodecPolicy::Av1, Container::Mp4, 30.0);
-    let worst10 = transcode_and_check_with("av1 sw 10-bit mp4", &src, VideoCodecPolicy::Av1, Container::Mp4, 30.0, |s| {
-        s.with_bit_depth(rivet::BitDepth::TenBit)
-    });
-    let spec = OutputSpec::single_file(vec![Rung::new(128, 96)]).with_bit_depth(rivet::BitDepth::TenBit);
+    let worst8 = transcode_and_check(
+        "av1 sw 8-bit mp4",
+        &src,
+        VideoCodecPolicy::Av1,
+        Container::Mp4,
+        30.0,
+    );
+    let worst10 = transcode_and_check_with(
+        "av1 sw 10-bit mp4",
+        &src,
+        VideoCodecPolicy::Av1,
+        Container::Mp4,
+        30.0,
+        |s| s.with_bit_depth(rivet::BitDepth::TenBit),
+    );
+    let spec =
+        OutputSpec::single_file(vec![Rung::new(128, 96)]).with_bit_depth(rivet::BitDepth::TenBit);
     assert_eq!(decoded_depth(&run(&src, &spec)), 10);
     eprintln!("av1 software: worst luma PSNR 8-bit {worst8:.2} dB, 10-bit {worst10:.2} dB");
 
@@ -440,14 +617,22 @@ fn av1_in_software_8_and_10_bit() {
     // quantiser: a 300 kb/s rung, as this test once asked, cannot be
     // reached by any rate controller — it came in at 0.84x at quantiser 1.)
     let bitrate = 120_000u32;
-    let overrides = codec::encode::tuning::EncodeOverrides { bitrate: Some(bitrate), ..Default::default() };
+    let overrides = codec::encode::tuning::EncodeOverrides {
+        bitrate: Some(bitrate),
+        ..Default::default()
+    };
     let rung = Rung::new(128, 96).with_quality(rivet::Quality::default().with_overrides(overrides));
     let file = run(&src, &OutputSpec::single_file(vec![rung]));
     let out = decode(&file);
     assert_eq!(out.luma.len(), 24);
     let achieved = file.len() as f64 * 8.0; // one second of video
     let ratio = achieved / f64::from(bitrate);
-    eprintln!("av1 software bitrate rung: asked {bitrate} b/s, file {achieved:.0} b/s ({ratio:.2}x)");
+    eprintln!(
+        "av1 software bitrate rung: asked {bitrate} b/s, file {achieved:.0} b/s ({ratio:.2}x)"
+    );
     // Within 10 % of the rate, the MP4 container (about 4 % here) included.
-    assert!((0.9..1.1).contains(&ratio), "{achieved:.0} b/s for {bitrate}");
+    assert!(
+        (0.9..1.1).contains(&ratio),
+        "{achieved:.0} b/s for {bitrate}"
+    );
 }

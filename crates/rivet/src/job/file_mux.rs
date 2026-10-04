@@ -37,7 +37,8 @@ impl FileMuxer {
                     Av1Mp4Muxer::new_with_codec_inline(width, height, frame_rate, codec)
                         .context("Av1Mp4Muxer::new_with_codec_inline")?
                 } else {
-                    Av1Mp4Muxer::new_with_codec(width, height, frame_rate, codec).context("Av1Mp4Muxer::new_with_codec")?
+                    Av1Mp4Muxer::new_with_codec(width, height, frame_rate, codec)
+                        .context("Av1Mp4Muxer::new_with_codec")?
                 };
                 m.set_quicktime(container == Container::Mov);
                 FileMuxer::Mp4(Box::new(m))
@@ -70,7 +71,11 @@ impl FileMuxer {
     /// Add the prepared audio track, or log and go video-only when the file
     /// refuses it (the job's audio routing has already chosen what each file
     /// takes, so this is a backstop).
-    pub(super) fn add_audio(&mut self, audio: &super::audio::PreparedAudio, label: &str) -> Result<()> {
+    pub(super) fn add_audio(
+        &mut self,
+        audio: &super::audio::PreparedAudio,
+        label: &str,
+    ) -> Result<()> {
         match self {
             FileMuxer::Mp4(m) => {
                 if let Err(e) = m.with_audio(audio.info.clone()) {
@@ -79,7 +84,8 @@ impl FileMuxer {
                 }
                 m.set_audio_edit(audio.edit);
                 for (sample, dur) in &audio.samples {
-                    m.add_audio_sample(sample, 0, *dur).context("add_audio_sample")?;
+                    m.add_audio_sample(sample, 0, *dur)
+                        .context("add_audio_sample")?;
                 }
             }
             FileMuxer::WebM(m) => {
@@ -89,7 +95,8 @@ impl FileMuxer {
                 }
                 m.set_audio_edit(audio.edit);
                 for (sample, dur) in &audio.samples {
-                    m.add_audio_sample(sample, *dur).context("add_audio_sample")?;
+                    m.add_audio_sample(sample, *dur)
+                        .context("add_audio_sample")?;
                 }
             }
         }

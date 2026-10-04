@@ -23,7 +23,12 @@ pub(super) fn sniff(data: &[u8]) -> bool {
     let rate = data[7] & 0x0f;
     // marker_bit after the 18-bit bit_rate_value.
     let marker = (data[10] >> 5) & 1;
-    if width == 0 || height == 0 || !(1..=14).contains(&aspect) || !(1..=8).contains(&rate) || marker != 1 {
+    if width == 0
+        || height == 0
+        || !(1..=14).contains(&aspect)
+        || !(1..=8).contains(&rate)
+        || marker != 1
+    {
         return false;
     }
     start_codes(&data[4..data.len().min(4096)])

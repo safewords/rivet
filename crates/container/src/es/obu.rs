@@ -48,7 +48,9 @@ fn low_overhead_obu(data: &[u8]) -> Option<(u8, usize)> {
         return Some((kind, data.len()));
     }
     let (size, n) = leb128(&data[hlen..])?;
-    let total = hlen.checked_add(n)?.checked_add(usize::try_from(size).ok()?)?;
+    let total = hlen
+        .checked_add(n)?
+        .checked_add(usize::try_from(size).ok()?)?;
     (total <= data.len()).then_some((kind, total))
 }
 
@@ -74,7 +76,8 @@ pub(super) fn sniff(data: &[u8]) -> Option<Format> {
 /// A temporal delimiter with no payload first, then OBUs whose headers and
 /// sizes all hold, a sequence header that parses among them.
 fn sniff_low_overhead(data: &[u8]) -> bool {
-    let Some((OBU_TEMPORAL_DELIMITER, 2)) = low_overhead_obu(data).filter(|_| data[0] & 0x02 != 0) else {
+    let Some((OBU_TEMPORAL_DELIMITER, 2)) = low_overhead_obu(data).filter(|_| data[0] & 0x02 != 0)
+    else {
         return false;
     };
     let mut pos = 2;
@@ -86,7 +89,9 @@ fn sniff_low_overhead(data: &[u8]) -> bool {
         if data[pos] & 0x02 == 0 {
             return false;
         }
-        let Some((kind, len)) = low_overhead_obu(&data[pos..]) else { return false };
+        let Some((kind, len)) = low_overhead_obu(&data[pos..]) else {
+            return false;
+        };
         if kind == OBU_SEQUENCE_HEADER {
             return has_sequence_header(&data[pos..pos + len]);
         }
@@ -154,7 +159,10 @@ pub(super) fn index(data: &[u8]) -> Result<Indexed> {
             let mut tu_start: Option<usize> = None;
             while pos < data.len() {
                 let Some((kind, len)) = low_overhead_obu(&data[pos..]) else {
-                    tracing::warn!(offset = pos, "AV1 OBU stream: an OBU does not parse; the stream ends there");
+                    tracing::warn!(
+                        offset = pos,
+                        "AV1 OBU stream: an OBU does not parse; the stream ends there"
+                    );
                     break;
                 };
                 if kind == OBU_TEMPORAL_DELIMITER {
@@ -173,7 +181,10 @@ pub(super) fn index(data: &[u8]) -> Result<Indexed> {
             let mut pos = 0;
             while pos < data.len() {
                 let Some((tu, next)) = annex_b_temporal_unit(data, pos) else {
-                    tracing::warn!(offset = pos, "AV1 Annex B: a temporal unit's sizes do not nest; the stream ends there");
+                    tracing::warn!(
+                        offset = pos,
+                        "AV1 Annex B: a temporal unit's sizes do not nest; the stream ends there"
+                    );
                     break;
                 };
                 if !tu.is_empty() {
@@ -198,7 +209,15 @@ pub(super) fn index(data: &[u8]) -> Result<Indexed> {
         EsSample::Span(r) => timing_frame_rate(&data[r.clone()]),
         EsSample::Owned(v) => timing_frame_rate(v),
     });
-    Ok(Indexed { codec: "av1", frames: samples.len() as u64, samples, pts: None, frame_rate, dims: None, label: "obu" })
+    Ok(Indexed {
+        codec: "av1",
+        frames: samples.len() as u64,
+        samples,
+        pts: None,
+        frame_rate,
+        dims: None,
+        label: "obu",
+    })
 }
 
 /// The frame rate a sequence header's `timing_info()` states (§5.5.1,
@@ -223,8 +242,13 @@ fn timing_frame_rate(tu: &[u8]) -> Option<f64> {
             }
             let units = r.bits(32)?;
             let scale = r.bits(32)?;
-            let ticks = if r.bit()? == 1 { u64::from(r.uvlc()?) + 1 } else { 1 };
-            return (units > 0 && scale > 0).then(|| f64::from(scale) / (f64::from(units) * ticks as f64));
+            let ticks = if r.bit()? == 1 {
+                u64::from(r.uvlc()?) + 1
+            } else {
+                1
+            };
+            return (units > 0 && scale > 0)
+                .then(|| f64::from(scale) / (f64::from(units) * ticks as f64));
         }
         pos += len;
     }
@@ -237,5 +261,8 @@ pub(super) fn dims(codec: &str, sample: &[u8]) -> Option<(u32, u32)> {
         return None;
     }
     let seq = frame::pixel_format::parse_av1_sequence_header(sample)?;
-    Some((seq.max_frame_width_minus1 + 1, seq.max_frame_height_minus1 + 1))
+    Some((
+        seq.max_frame_width_minus1 + 1,
+        seq.max_frame_height_minus1 + 1,
+    ))
 }

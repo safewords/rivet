@@ -26,13 +26,13 @@ pub mod h26x_sw;
 // here encodes — ProRes, VP8, VP9, MPEG-2, MPEG-4 Part 2. Always compiled and
 // always reachable for their codec: there is no faster tier for them to be a
 // fallback from (see `native.rs`).
-mod native;
 pub mod mpeg2_sw;
 pub mod mpeg4_sw;
+mod native;
 pub mod prores_sw;
+pub mod tuning;
 pub mod vp8_sw;
 pub mod vp9_sw;
-pub mod tuning;
 
 use crate::frame::{ColorMetadata, PixelFormat, VideoCodec, VideoFrame};
 use crate::gpu;
@@ -274,8 +274,14 @@ pub(crate) fn refuse_rate(backend: &str, config: &EncoderConfig) -> Result<()> {
 /// ([`tuning::constant_rate_refusal`]), or an average rate, which only the
 /// software tier codes ([`refuse_rate`]). Each such backend calls this before
 /// it touches a driver.
-#[cfg_attr(not(any(feature = "qsv", feature = "nvidia", feature = "amd")), allow(dead_code))]
-pub(crate) fn constant_rate_request(backend: &str, config: &EncoderConfig) -> Result<Option<tuning::ConstantRate>> {
+#[cfg_attr(
+    not(any(feature = "qsv", feature = "nvidia", feature = "amd")),
+    allow(dead_code)
+)]
+pub(crate) fn constant_rate_request(
+    backend: &str,
+    config: &EncoderConfig,
+) -> Result<Option<tuning::ConstantRate>> {
     let o = &config.overrides;
     if o.rate_mode != Some(tuning::RateMode::Constant) {
         refuse_rate(backend, config)?;
@@ -321,7 +327,12 @@ pub fn hardware_encodes(backend: EncoderBackend, codec: VideoCodec) -> bool {
 pub fn codes_odd_sizes(codec: VideoCodec) -> bool {
     let carries = matches!(
         codec,
-        VideoCodec::Av1 | VideoCodec::Vp8 | VideoCodec::Vp9 | VideoCodec::Mpeg2 | VideoCodec::Mpeg4 | VideoCodec::ProRes(_)
+        VideoCodec::Av1
+            | VideoCodec::Vp8
+            | VideoCodec::Vp9
+            | VideoCodec::Mpeg2
+            | VideoCodec::Mpeg4
+            | VideoCodec::ProRes(_)
     );
     carries && !compiled_hardware_encodes(codec)
 }
@@ -345,7 +356,10 @@ fn vendor_backend(vendor: gpu::GpuVendor) -> EncoderBackend {
 /// Refuse, by name, a codec hardware backend `backend` does not encode
 /// ([`hardware_encodes`]). Each hardware backend calls this first, so
 /// nothing below it sees such a codec.
-#[cfg_attr(not(any(feature = "qsv", feature = "nvidia", feature = "amd")), allow(dead_code))]
+#[cfg_attr(
+    not(any(feature = "qsv", feature = "nvidia", feature = "amd")),
+    allow(dead_code)
+)]
 pub(crate) fn refuse_unencoded_codec(backend: EncoderBackend, codec: VideoCodec) -> Result<()> {
     if !hardware_encodes(backend, codec) {
         let name = match backend {
@@ -358,7 +372,11 @@ pub(crate) fn refuse_unencoded_codec(backend: EncoderBackend, codec: VideoCodec)
             codec.label(),
             codec.label(),
             codec.label(),
-            if codec == VideoCodec::Vp9 { " or by QSV on an Intel card that has VP9 encode" } else { "" }
+            if codec == VideoCodec::Vp9 {
+                " or by QSV on an Intel card that has VP9 encode"
+            } else {
+                ""
+            }
         );
     }
     Ok(())
@@ -569,7 +587,10 @@ pub fn backend_output_caps_for(backend: EncoderBackend, codec: VideoCodec) -> Ou
         } else if hardware_encodes(backend, codec) {
             // VP9 on QSV: profile 0 and profile 2 (10-bit), its colour in the
             // container as for rivet's own VP9 encoder.
-            OutputCaps { max_bit_depth: 10, hdr: false }
+            OutputCaps {
+                max_bit_depth: 10,
+                hdr: false,
+            }
         } else {
             EIGHT_BIT_SDR
         };
@@ -588,7 +609,11 @@ pub fn backend_output_caps_for(backend: EncoderBackend, codec: VideoCodec) -> Ou
 fn is_native_backend(backend: EncoderBackend) -> bool {
     matches!(
         backend,
-        EncoderBackend::ProRes | EncoderBackend::Vp8 | EncoderBackend::Vp9 | EncoderBackend::Mpeg2 | EncoderBackend::Mpeg4
+        EncoderBackend::ProRes
+            | EncoderBackend::Vp8
+            | EncoderBackend::Vp9
+            | EncoderBackend::Mpeg2
+            | EncoderBackend::Mpeg4
     )
 }
 
@@ -596,7 +621,11 @@ fn is_native_backend(backend: EncoderBackend) -> bool {
 /// of [`backend_output_caps_for`] over the compiled paths. H.264 at 10 bits
 /// is here only when `h26x-fallback` is.
 pub fn build_output_caps_for(codec: VideoCodec) -> OutputCaps {
-    union_caps(compiled_backends().into_iter().map(|b| backend_output_caps_for(b, codec)))
+    union_caps(
+        compiled_backends()
+            .into_iter()
+            .map(|b| backend_output_caps_for(b, codec)),
+    )
 }
 
 /// The best of each capability over `caps`, from the 8-bit SDR floor.
@@ -689,9 +718,11 @@ pub fn software_backend_for(codec: VideoCodec) -> Option<EncoderBackend> {
             Some(EncoderBackend::H26x)
         }
         // The only encoder these codecs have, in every build.
-        c @ (VideoCodec::Vp8 | VideoCodec::Vp9 | VideoCodec::Mpeg2 | VideoCodec::Mpeg4 | VideoCodec::ProRes(_)) => {
-            native_backend_for(c)
-        }
+        c @ (VideoCodec::Vp8
+        | VideoCodec::Vp9
+        | VideoCodec::Mpeg2
+        | VideoCodec::Mpeg4
+        | VideoCodec::ProRes(_)) => native_backend_for(c),
         _ => None,
     }
 }
@@ -710,9 +741,11 @@ pub fn software_feature_for(codec: VideoCodec) -> &'static str {
         VideoCodec::H264 | VideoCodec::H265 => "h26x-fallback",
         // In every build: no feature to name. A message that asks for one is
         // never reached for these (`software_backend_for` is `Some`).
-        VideoCodec::Vp8 | VideoCodec::Vp9 | VideoCodec::Mpeg2 | VideoCodec::Mpeg4 | VideoCodec::ProRes(_) => {
-            "default"
-        }
+        VideoCodec::Vp8
+        | VideoCodec::Vp9
+        | VideoCodec::Mpeg2
+        | VideoCodec::Mpeg4
+        | VideoCodec::ProRes(_) => "default",
     }
 }
 
@@ -750,7 +783,10 @@ fn resolve_overrides(config: EncoderConfig) -> EncoderConfig {
     // check, and the one that forgets emits IDRs where the segmenter does not
     // expect them, which is a broken stream rather than a worse one.
     let config = match config.overrides.keyframe_interval {
-        Some(interval) => EncoderConfig { keyframe_interval: interval, ..config },
+        Some(interval) => EncoderConfig {
+            keyframe_interval: interval,
+            ..config
+        },
         None => config,
     };
 
@@ -781,7 +817,10 @@ fn resolve_overrides(config: EncoderConfig) -> EncoderConfig {
             // delta is denominated in — so it adds directly.
             let ceiling = i32::from(crf_scale_max(config.codec));
             let shifted = (i32::from(config.quality) + i32::from(delta)).clamp(0, ceiling);
-            EncoderConfig { quality: shifted as u8, ..config }
+            EncoderConfig {
+                quality: shifted as u8,
+                ..config
+            }
         }
     }
 }
@@ -878,7 +917,10 @@ pub fn select_encoder(
                 continue;
             }
             if !gpu::supports_av1_encode(dev) {
-                refusals.push(format!("{} (idx {}): no {:?} encode silicon", dev.name, dev.index, config.codec));
+                refusals.push(format!(
+                    "{} (idx {}): no {:?} encode silicon",
+                    dev.name, dev.index, config.codec
+                ));
                 continue;
             }
 
@@ -1221,7 +1263,10 @@ fn create_backend(
         EncoderBackend::H26x => Ok(Box::new(h26x_sw::H26xEncoder::new(config)?)),
         EncoderBackend::Av1 => {
             if config.codec != VideoCodec::Av1 {
-                anyhow::bail!("the software AV1 encoder was requested but the output codec is {:?}", config.codec);
+                anyhow::bail!(
+                    "the software AV1 encoder was requested but the output codec is {:?}",
+                    config.codec
+                );
             }
             Ok(Box::new(av1_sw::Av1Encoder::new(config)?))
         }
@@ -1323,7 +1368,10 @@ mod gpu_selection_tests {
             assert_eq!(h265, None);
         }
         for c in [VideoCodec::Av1, VideoCodec::H264, VideoCodec::H265] {
-            assert_eq!(software_encode_available(c), software_backend_for(c).is_some());
+            assert_eq!(
+                software_encode_available(c),
+                software_backend_for(c).is_some()
+            );
         }
         assert_eq!(software_feature_for(VideoCodec::Av1), "av1-sw-fallback");
         assert_eq!(software_feature_for(VideoCodec::H264), "h26x-fallback");
@@ -1337,30 +1385,72 @@ mod gpu_selection_tests {
     /// backend does not serve.
     #[test]
     fn ten_bit_h264_is_reported_for_the_software_tier_only() {
-        let ten_hdr = OutputCaps { max_bit_depth: 10, hdr: true };
-        for hw in [EncoderBackend::Nvenc, EncoderBackend::Amf, EncoderBackend::Qsv] {
-            assert_eq!(backend_output_caps_for(hw, VideoCodec::H264), EIGHT_BIT_SDR, "{hw:?} H.264");
-            assert_eq!(backend_output_caps_for(hw, VideoCodec::H265), ten_hdr, "{hw:?} H.265");
-            assert_eq!(backend_output_caps_for(hw, VideoCodec::Av1), ten_hdr, "{hw:?} AV1");
+        let ten_hdr = OutputCaps {
+            max_bit_depth: 10,
+            hdr: true,
+        };
+        for hw in [
+            EncoderBackend::Nvenc,
+            EncoderBackend::Amf,
+            EncoderBackend::Qsv,
+        ] {
+            assert_eq!(
+                backend_output_caps_for(hw, VideoCodec::H264),
+                EIGHT_BIT_SDR,
+                "{hw:?} H.264"
+            );
+            assert_eq!(
+                backend_output_caps_for(hw, VideoCodec::H265),
+                ten_hdr,
+                "{hw:?} H.265"
+            );
+            assert_eq!(
+                backend_output_caps_for(hw, VideoCodec::Av1),
+                ten_hdr,
+                "{hw:?} AV1"
+            );
         }
-        assert_eq!(backend_output_caps_for(EncoderBackend::H26x, VideoCodec::H264), ten_hdr);
-        assert_eq!(backend_output_caps_for(EncoderBackend::H26x, VideoCodec::H265), ten_hdr);
-        assert_eq!(backend_output_caps_for(EncoderBackend::H26x, VideoCodec::Av1), EIGHT_BIT_SDR);
+        assert_eq!(
+            backend_output_caps_for(EncoderBackend::H26x, VideoCodec::H264),
+            ten_hdr
+        );
+        assert_eq!(
+            backend_output_caps_for(EncoderBackend::H26x, VideoCodec::H265),
+            ten_hdr
+        );
+        assert_eq!(
+            backend_output_caps_for(EncoderBackend::H26x, VideoCodec::Av1),
+            EIGHT_BIT_SDR
+        );
         // The software AV1 encoder: 10-bit, and HDR (it writes the colour
         // description and the HDR10 metadata OBUs).
-        assert_eq!(backend_output_caps_for(EncoderBackend::Av1, VideoCodec::Av1), ten_hdr);
+        assert_eq!(
+            backend_output_caps_for(EncoderBackend::Av1, VideoCodec::Av1),
+            ten_hdr
+        );
         for c in [VideoCodec::H264, VideoCodec::H265] {
-            assert_eq!(backend_output_caps_for(EncoderBackend::Av1, c), EIGHT_BIT_SDR, "software av1 {c:?}");
+            assert_eq!(
+                backend_output_caps_for(EncoderBackend::Av1, c),
+                EIGHT_BIT_SDR,
+                "software av1 {c:?}"
+            );
         }
         // The build answer for H.264 is 10-bit exactly when the software tier
         // is compiled in; the hardware features alone never make it so.
         let h264 = build_output_caps_for(VideoCodec::H264);
-        assert_eq!(h264.max_bit_depth == 10, cfg!(feature = "h26x-fallback"), "{h264:?}");
+        assert_eq!(
+            h264.max_bit_depth == 10,
+            cfg!(feature = "h26x-fallback"),
+            "{h264:?}"
+        );
         // And no per-codec build answer claims more than the codec-agnostic one.
         let all = build_output_caps();
         for c in [VideoCodec::Av1, VideoCodec::H264, VideoCodec::H265] {
             let per = build_output_caps_for(c);
-            assert!(per.max_bit_depth <= all.max_bit_depth && (!per.hdr || all.hdr), "{c:?}: {per:?} vs {all:?}");
+            assert!(
+                per.max_bit_depth <= all.max_bit_depth && (!per.hdr || all.hdr),
+                "{c:?}: {per:?} vs {all:?}"
+            );
         }
     }
 

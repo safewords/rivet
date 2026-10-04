@@ -102,7 +102,10 @@ fn parse_args() -> Result<Args> {
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
-        let mut value = || it.next().with_context(|| format!("{arg} needs a value\n\n{USAGE}"));
+        let mut value = || {
+            it.next()
+                .with_context(|| format!("{arg} needs a value\n\n{USAGE}"))
+        };
         match arg.as_str() {
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -122,7 +125,12 @@ fn parse_args() -> Result<Args> {
             "--openvino-cache" => args.openvino_cache = Some(value()?.into()),
             "--quiet" => args.quiet = true,
             "--ort" => args.ort = Some(value()?.into()),
-            "--refuse" => args.refuse.extend(value()?.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty())),
+            "--refuse" => args.refuse.extend(
+                value()?
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
+            ),
             "--refuse-score" => args.refuse_score = Some(value()?.parse()?),
             "--background" => args.background = true,
             "--codec" => {
@@ -139,7 +147,8 @@ fn parse_args() -> Result<Args> {
             _ => positional.push(PathBuf::from(arg)),
         }
     }
-    let [model, input] = <[PathBuf; 2]>::try_from(positional).map_err(|_| anyhow::anyhow!("{USAGE}"))?;
+    let [model, input] =
+        <[PathBuf; 2]>::try_from(positional).map_err(|_| anyhow::anyhow!("{USAGE}"))?;
     args.model = model;
     args.input = input;
     Ok(args)
@@ -147,7 +156,11 @@ fn parse_args() -> Result<Args> {
 
 fn parse_device(s: &str) -> Result<Device> {
     let (name, rest) = s.split_once(':').map_or((s, None), |(n, r)| (n, Some(r)));
-    let index = || -> Result<i32> { rest.unwrap_or("0").parse().with_context(|| format!("bad device index in `{s}`")) };
+    let index = || -> Result<i32> {
+        rest.unwrap_or("0")
+            .parse()
+            .with_context(|| format!("bad device index in `{s}`"))
+    };
     Ok(match name {
         "cpu" => Device::Cpu,
         "cuda" => Device::Cuda(index()?),
@@ -187,7 +200,11 @@ fn main() -> Result<()> {
     let mut yolo = YoloHook::load(&args.model, options)?;
     yolo.min_score = args.conf;
     yolo.iou = args.iou;
-    yolo.sampling = if args.every > 0.0 { FrameSampling::every_seconds(args.every) } else { FrameSampling::all() };
+    yolo.sampling = if args.every > 0.0 {
+        FrameSampling::every_seconds(args.every)
+    } else {
+        FrameSampling::all()
+    };
     if let Some(n) = args.max_frames {
         yolo.sampling = yolo.sampling.max_frames(n);
     }
@@ -209,12 +226,18 @@ fn main() -> Result<()> {
         yolo.names().len(),
         args.device,
         yolo.sessions(),
-        yolo.warm_up_time().map(|t| format!(", warmed up in {} ms", t.as_millis())).unwrap_or_default()
+        yolo.warm_up_time()
+            .map(|t| format!(", warmed up in {} ms", t.as_millis()))
+            .unwrap_or_default()
     );
     let yolo = Arc::new(yolo);
 
     // A refused class must stop the job, so a detector error does too.
-    let mut policy = if args.background { HookPolicy::background() } else { HookPolicy::default() };
+    let mut policy = if args.background {
+        HookPolicy::background()
+    } else {
+        HookPolicy::default()
+    };
     if !args.refuse.is_empty() {
         policy = policy.fail_closed();
     }
@@ -222,11 +245,16 @@ fn main() -> Result<()> {
         .decoded_frames_with("yolo", Arc::clone(&yolo), policy)
         .stills_with("yolo-stills", yolo, policy);
 
-    let input = bytes::Bytes::from(std::fs::read(&args.input).with_context(|| format!("reading {}", args.input.display()))?);
+    let input = bytes::Bytes::from(
+        std::fs::read(&args.input).with_context(|| format!("reading {}", args.input.display()))?,
+    );
 
     #[cfg(feature = "image-jobs")]
     if rivet::image::sniff(&input).is_some() {
-        let spec = rivet::image::ImageSpec { formats: vec![rivet::image::ImageFormat::Png], ..Default::default() };
+        let spec = rivet::image::ImageSpec {
+            formats: vec![rivet::image::ImageFormat::Png],
+            ..Default::default()
+        };
         let session = hooks.session("yolo-image", JobKind::Image);
         let result = rivet::image::run_image_job_with_hooks(&input, &spec, &session);
         finish(&session.report(), &args)?;
@@ -243,7 +271,8 @@ fn main() -> Result<()> {
     let spec = rivet::OutputSpec::single_file(vec![rivet::Rung::new(info.width, info.height)])
         .with_video_codec(args.codec)
         .with_hooks(session.clone());
-    let result = rivet::run_job_blocking_owned(input, &spec, None, Arc::new(rivet::progress::NullSink));
+    let result =
+        rivet::run_job_blocking_owned(input, &spec, None, Arc::new(rivet::progress::NullSink));
     finish(&session.report(), &args)?;
     let out = result.map_err(explain)?;
     if let Some(path) = &args.output {
@@ -282,11 +311,21 @@ fn finish(report: &HookReport, args: &Args) -> Result<()> {
             continue;
         }
         pictures += 1;
-        for (i, key) in ["prepare_ms", "inference_ms", "decode_ms"].into_iter().enumerate() {
-            ms[i] += record.annotation(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        for (i, key) in ["prepare_ms", "inference_ms", "decode_ms"]
+            .into_iter()
+            .enumerate()
+        {
+            ms[i] += record
+                .annotation(key)
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
         }
         ms[3] += record.elapsed.as_secs_f64() * 1000.0;
-        let counts = record.annotation("counts").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+        let counts = record
+            .annotation("counts")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
         let mut line = Vec::new();
         for (label, n) in &counts {
             let n = n.as_u64().unwrap_or(0);
@@ -294,13 +333,30 @@ fn finish(report: &HookReport, args: &Args) -> Result<()> {
             line.push(format!("{n} {label}"));
         }
         if !args.quiet {
-            println!("{at}  {}", if line.is_empty() { "-".to_string() } else { line.join(", ") });
+            println!(
+                "{at}  {}",
+                if line.is_empty() {
+                    "-".to_string()
+                } else {
+                    line.join(", ")
+                }
+            );
         }
     }
     if pictures > 0 {
-        let summary: Vec<String> = totals.iter().map(|(label, n)| format!("{label} {n}")).collect();
+        let summary: Vec<String> = totals
+            .iter()
+            .map(|(label, n)| format!("{label} {n}"))
+            .collect();
         let each = ms.map(|t| t / pictures as f64);
-        println!("{pictures} pictures; {}", if summary.is_empty() { "nothing found".into() } else { summary.join(", ") });
+        println!(
+            "{pictures} pictures; {}",
+            if summary.is_empty() {
+                "nothing found".into()
+            } else {
+                summary.join(", ")
+            }
+        );
         println!(
             "per picture: {:.2} ms (prepare {:.2}, inference {:.2}, decode {:.2})",
             each[3], each[0], each[1], each[2]

@@ -14,8 +14,8 @@
 //! tempfile in unit-test time.
 
 use bytes::Bytes;
-use frame::EncodedPacket;
 use container::mux::Av1Mp4Muxer;
+use frame::EncodedPacket;
 
 fn minimal_av1_first_packet() -> Bytes {
     let header: u8 = (1 << 3) | (1 << 1);

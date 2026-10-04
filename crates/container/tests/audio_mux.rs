@@ -11,10 +11,10 @@
 //!      and sample count survive.
 
 use bytes::Bytes;
-use frame::EncodedPacket;
 use container::AudioInfo;
 use container::demux;
 use container::mux::Av1Mp4Muxer;
+use frame::EncodedPacket;
 
 /// Minimal AV1 OBU_SEQUENCE_HEADER with obu_has_size_field=1. Required to
 /// pass `extract_sequence_header` during finalize.
@@ -118,7 +118,10 @@ fn audio_mux_bails_on_a_codec_mp4_does_not_carry() {
     };
     let err = muxer.with_audio(info).err().expect("should reject vorbis");
     let msg = format!("{err:#}");
-    assert!(msg.to_ascii_lowercase().contains("vorbis"), "error should name the codec: {msg}");
+    assert!(
+        msg.to_ascii_lowercase().contains("vorbis"),
+        "error should name the codec: {msg}"
+    );
 }
 
 #[test]
@@ -215,9 +218,12 @@ fn audio_mux_takes_aac_lc_at_every_rate() {
     ];
     for (rate, sfi) in rates {
         // AOT 2 | samplingFrequencyIndex | channelConfiguration 2 | 000.
-        let plain = ((2u16 << 11) | (u16::from(sfi) << 7) | (2 << 3)).to_be_bytes().to_vec();
+        let plain = ((2u16 << 11) | (u16::from(sfi) << 7) | (2 << 3))
+            .to_be_bytes()
+            .to_vec();
         // The same, then sync extension 0x2B7, AOT 5, sbrPresentFlag 0.
-        let bits = (u64::from(u16::from_be_bytes([plain[0], plain[1]])) << 17) | (0x2B7 << 6) | (5 << 1);
+        let bits =
+            (u64::from(u16::from_be_bytes([plain[0], plain[1]])) << 17) | (0x2B7 << 6) | (5 << 1);
         let explicit = (bits << 7).to_be_bytes()[3..].to_vec();
         for asc in [plain, explicit] {
             let mut muxer = Av1Mp4Muxer::new(320, 240, 30.0).expect("muxer");
@@ -230,7 +236,9 @@ fn audio_mux_takes_aac_lc_at_every_rate() {
                 asc_bytes: asc.clone(),
                 codec_private: Vec::new(),
             };
-            muxer.with_audio(info).unwrap_or_else(|e| panic!("{rate} Hz, ASC {asc:02x?}: {e:#}"));
+            muxer
+                .with_audio(info)
+                .unwrap_or_else(|e| panic!("{rate} Hz, ASC {asc:02x?}: {e:#}"));
             push_aac_samples(&mut muxer, 12, 200);
             let out = muxer.finalize().expect("finalize");
             // AudioSampleEntry: 8 (header) + 6 reserved + 2 dref + 8 reserved
@@ -244,14 +252,27 @@ fn audio_mux_takes_aac_lc_at_every_rate() {
             assert_eq!(field, want << 16, "{rate} Hz: samplerate field");
             let esds = find_fourcc(&out, b"esds").expect("an esds");
             assert!(
-                out[esds..(esds + 80).min(out.len())].windows(asc.len()).any(|w| w == asc.as_slice()),
+                out[esds..(esds + 80).min(out.len())]
+                    .windows(asc.len())
+                    .any(|w| w == asc.as_slice()),
                 "{rate} Hz: the ASC verbatim"
             );
-            let audio = demux::demux(&out).expect("demux").audio.expect("the audio track");
-            assert_eq!((audio.sample_rate, audio.timescale, audio.channels), (rate, rate, 2), "{rate} Hz");
+            let audio = demux::demux(&out)
+                .expect("demux")
+                .audio
+                .expect("the audio track");
+            assert_eq!(
+                (audio.sample_rate, audio.timescale, audio.channels),
+                (rate, rate, 2),
+                "{rate} Hz"
+            );
             assert_eq!(audio.asc, asc, "{rate} Hz");
             let parsed = container::aac_asc::parse_aac_asc(&audio.asc).expect("the ASC parses");
-            assert_eq!((parsed.aot, parsed.sample_rate, parsed.sbr_present), (2, rate, false), "{rate} Hz");
+            assert_eq!(
+                (parsed.aot, parsed.sample_rate, parsed.sbr_present),
+                (2, rate, false),
+                "{rate} Hz"
+            );
         }
     }
     // Not an AAC-LC core: refused by name.
@@ -264,7 +285,10 @@ fn audio_mux_takes_aac_lc_at_every_rate() {
         asc_bytes: vec![0x09, 0x90], // AOT 1 (AAC Main), 48 kHz, stereo
         codec_private: Vec::new(),
     };
-    let err = muxer.with_audio(main_profile).err().expect("AAC Main refused");
+    let err = muxer
+        .with_audio(main_profile)
+        .err()
+        .expect("AAC Main refused");
     assert!(format!("{err:#}").contains("AOT=1"), "{err:#}");
 }
 
@@ -283,7 +307,11 @@ fn audio_mux_edit_lists_round_trip_through_the_demuxer() {
         match edited {
             Some(true) => {
                 muxer.set_video_delay(500, 1000);
-                muxer.set_audio_edit(TrackEdit { delay: 22_050, media_time: 1024, duration: None });
+                muxer.set_audio_edit(TrackEdit {
+                    delay: 22_050,
+                    media_time: 1024,
+                    duration: None,
+                });
             }
             Some(false) => {
                 muxer.set_video_delay(0, 1000);
@@ -301,7 +329,11 @@ fn audio_mux_edit_lists_round_trip_through_the_demuxer() {
     assert_eq!(mux(Some(false)), plain, "the identity edit changes no byte");
 
     let edited = mux(Some(true));
-    assert_eq!(find_all_fourcc(&edited, b"elst").len(), 2, "one elst per track");
+    assert_eq!(
+        find_all_fourcc(&edited, b"elst").len(),
+        2,
+        "one elst per track"
+    );
     let demuxer = demux_streaming(&edited).expect("re-demux");
     let video = demuxer.video_presentation().expect("the video starts late");
     // 0.5 s in the 90 kHz movie clock; every frame presented.
@@ -311,7 +343,11 @@ fn audio_mux_edit_lists_round_trip_through_the_demuxer() {
     // 0.5 s at 44.1 kHz, the first 1024 samples hidden, through the end (10240).
     assert_eq!(
         demuxer.audio_edit(),
-        Some(AudioEdit { delay: 22_050, media_start: 1024, media_end: Some(10_240) })
+        Some(AudioEdit {
+            delay: 22_050,
+            media_start: 1024,
+            media_end: Some(10_240)
+        })
     );
 
     // The whole-file demuxer carries the same edits; its samples stay every
@@ -319,7 +355,10 @@ fn audio_mux_edit_lists_round_trip_through_the_demuxer() {
     let whole = demux::demux(&edited).expect("whole-file demux");
     assert_eq!(whole.samples.len(), 10);
     assert_eq!(
-        whole.video_presentation.as_ref().map(|p| (p.delay_ticks, p.delay_timescale, p.presented)),
+        whole
+            .video_presentation
+            .as_ref()
+            .map(|p| (p.delay_ticks, p.delay_timescale, p.presented)),
         Some((45_000, 90_000, 10))
     );
     assert_eq!(whole.audio_edit, demuxer.audio_edit());

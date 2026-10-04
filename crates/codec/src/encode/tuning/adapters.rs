@@ -5,14 +5,14 @@
 //! Backend-private helpers (anchors, q-index mappers) live beside the
 //! function that uses them.
 
-use super::{
-    libaom_cq_for_target, nvenc_cq_for_target, piecewise_quality, tile_grid_hw, tile_grid_nvenc,
-    NV_ENC_PRESET_P5_GUID_BYTES, NV_ENC_PRESET_P6_GUID_BYTES,
-    NV_ENC_PRESET_P7_GUID_BYTES, NVENC_TUNING_HIGH_QUALITY,
-};
 use super::params::{
-    AmfAv1Params, AmfH26xParams, AmfQualityPreset, AmfRateControl, H26xSwParams, MFX_CODINGOPTION_ON,
-    NvencAv1Params, NvencRateControl, QsvAv1Params, QsvRateControl, Av1SwParams,
+    AmfAv1Params, AmfH26xParams, AmfQualityPreset, AmfRateControl, Av1SwParams, H26xSwParams,
+    MFX_CODINGOPTION_ON, NvencAv1Params, NvencRateControl, QsvAv1Params, QsvRateControl,
+};
+use super::{
+    NV_ENC_PRESET_P5_GUID_BYTES, NV_ENC_PRESET_P6_GUID_BYTES, NV_ENC_PRESET_P7_GUID_BYTES,
+    NVENC_TUNING_HIGH_QUALITY, libaom_cq_for_target, nvenc_cq_for_target, piecewise_quality,
+    tile_grid_hw, tile_grid_nvenc,
 };
 use super::{QualityTarget, SpeedTier};
 
@@ -36,7 +36,12 @@ pub fn av1_sw_params(target: QualityTarget, tier: SpeedTier) -> Av1SwParams {
         SpeedTier::Standard => (16, 6),
         SpeedTier::Archive => (32, 4),
     };
-    Av1SwParams { quantizer, search_range, speed, tile_columns: None }
+    Av1SwParams {
+        quantizer,
+        search_range,
+        speed,
+        tile_columns: None,
+    }
 }
 
 // ─── NVENC ───────────────────────────────────────────────────────
@@ -235,7 +240,10 @@ pub fn amf_h26x_params(
     target: QualityTarget,
     tier: SpeedTier,
 ) -> AmfH26xParams {
-    debug_assert!(codec != crate::frame::VideoCodec::Av1, "AV1 has its own AMF adapter");
+    debug_assert!(
+        codec != crate::frame::VideoCodec::Av1,
+        "AV1 has its own AMF adapter"
+    );
     let _ = codec; // the two codecs share every knob this struct carries
     let qp = h26x_qp_for_target(target).clamp(0, 51) as u8;
     AmfH26xParams {
@@ -317,8 +325,17 @@ pub fn qsv_params(
 /// quantiser on either encoder. Intel's VP9 QP range is 1..=255 ("Supported
 /// QP values range is [1..255]", same notes), the VP9 `base_q_idx` scale.
 /// The quality delta is applied there too.
-pub(super) fn qsv_vp9_params(target: QualityTarget, tier: SpeedTier, overrides: &EncodeOverrides) -> QsvAv1Params {
-    let q = u16::from(native_sw_quantizer(crate::frame::VideoCodec::Vp9, target, overrides)).clamp(1, 255);
+pub(super) fn qsv_vp9_params(
+    target: QualityTarget,
+    tier: SpeedTier,
+    overrides: &EncodeOverrides,
+) -> QsvAv1Params {
+    let q = u16::from(native_sw_quantizer(
+        crate::frame::VideoCodec::Vp9,
+        target,
+        overrides,
+    ))
+    .clamp(1, 255);
     QsvAv1Params {
         rc_mode: QsvRateControl::Cqp,
         icq_quality: 0,
@@ -427,7 +444,11 @@ pub fn native_sw_quantizer(
 ) -> u8 {
     use crate::frame::VideoCodec;
     let target = overrides.quality_target.unwrap_or(target);
-    let qp = shift_libaom(h26x_qp_for_target(target).clamp(0, 51) as u8, overrides.quality_delta, 51);
+    let qp = shift_libaom(
+        h26x_qp_for_target(target).clamp(0, 51) as u8,
+        overrides.quality_delta,
+        51,
+    );
     let step = 0.625 * 2f64.powf(f64::from(qp) / 6.0);
     match codec {
         VideoCodec::Vp8 => (u32::from(qp) * 2).min(127) as u8,
@@ -594,7 +615,10 @@ fn shift_libaom(base: u8, delta: i16, max: u8) -> u8 {
 /// The tile grid the caller asked for, or the resolution-derived default.
 fn tiles_or(overrides: &EncodeOverrides, derived: (usize, usize)) -> (usize, usize) {
     match overrides.tiles {
-        Some(grid) => (usize::from(grid.columns).max(1), usize::from(grid.rows).max(1)),
+        Some(grid) => (
+            usize::from(grid.columns).max(1),
+            usize::from(grid.rows).max(1),
+        ),
         None => derived,
     }
 }
@@ -641,8 +665,13 @@ pub fn nvenc_av1_params_with(
         params.lookahead_depth = frames;
     }
 
-    let (cols, rows) =
-        tiles_or(overrides, (params.num_tile_columns as usize, params.num_tile_rows as usize));
+    let (cols, rows) = tiles_or(
+        overrides,
+        (
+            params.num_tile_columns as usize,
+            params.num_tile_rows as usize,
+        ),
+    );
     params.num_tile_columns = cols as u32;
     params.num_tile_rows = rows as u32;
     params
@@ -687,7 +716,13 @@ pub fn qsv_params_with(
         // The quality delta lands in the quantiser (no ICQ for VP9); the
         // lookahead warning still applies.
         let mut params = qsv_vp9_params(target, tier, overrides);
-        apply_qsv_overrides(&mut params, &EncodeOverrides { quality_delta: 0, ..overrides.clone() });
+        apply_qsv_overrides(
+            &mut params,
+            &EncodeOverrides {
+                quality_delta: 0,
+                ..overrides.clone()
+            },
+        );
         return params;
     }
     let mut params = qsv_params(codec, target, tier, rung.width, rung.height);
@@ -786,7 +821,10 @@ fn apply_qsv_overrides(params: &mut QsvAv1Params, overrides: &EncodeOverrides) {
 
     let (cols, rows) = tiles_or(
         overrides,
-        (usize::from(params.num_tile_columns), usize::from(params.num_tile_rows)),
+        (
+            usize::from(params.num_tile_columns),
+            usize::from(params.num_tile_rows),
+        ),
     );
     params.num_tile_columns = cols as u8;
     params.num_tile_rows = rows as u8;

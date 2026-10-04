@@ -36,7 +36,11 @@ fn vint(data: &[u8], at: usize, keep_marker: bool) -> Option<(u64, usize)> {
     if len > 8 {
         return None;
     }
-    let mut v = if keep_marker { u64::from(first) } else { u64::from(first) & ((1u64 << (8 - len)) - 1) };
+    let mut v = if keep_marker {
+        u64::from(first)
+    } else {
+        u64::from(first) & ((1u64 << (8 - len)) - 1)
+    };
     let mut all_ones = v == (1u64 << (8 - len)) - 1;
     for i in 1..len {
         let b = *data.get(at + i)?;
@@ -57,12 +61,20 @@ fn elements(data: &[u8]) -> impl Iterator<Item = Element<'_>> {
         let body_at = at + id_len + size_len;
         if size == u64::MAX {
             at = data.len();
-            return Some(Element { id: id as u32, body: None, body_at });
+            return Some(Element {
+                id: id as u32,
+                body: None,
+                body_at,
+            });
         }
         let end = body_at.checked_add(usize::try_from(size).ok()?)?;
         let body = data.get(body_at..end)?;
         at = end;
-        Some(Element { id: id as u32, body: Some(body), body_at })
+        Some(Element {
+            id: id as u32,
+            body: Some(body),
+            body_at,
+        })
     })
 }
 
@@ -86,7 +98,8 @@ fn read_segment(segment: &[u8], m: &mut Metadata) {
             INFO => read_info(body, m),
             TAGS => {
                 for tag in elements(body).filter(|t| t.id == TAG) {
-                    for st in elements(tag.body.unwrap_or_default()).filter(|s| s.id == SIMPLE_TAG) {
+                    for st in elements(tag.body.unwrap_or_default()).filter(|s| s.id == SIMPLE_TAG)
+                    {
                         read_simple_tag(st.body.unwrap_or_default(), m);
                     }
                 }
@@ -103,7 +116,9 @@ fn read_info(info: &[u8], m: &mut Metadata) {
         let body = e.body.unwrap_or_default();
         match e.id {
             TITLE => m.set_descriptive("title", &super::text(body)),
-            MUXING_APP | WRITING_APP => m.set_device(super::DeviceField::Software, &super::text(body)),
+            MUXING_APP | WRITING_APP => {
+                m.set_device(super::DeviceField::Software, &super::text(body))
+            }
             DATE_UTC if body.len() == 8 => {
                 let ns = i64::from_be_bytes(body.try_into().unwrap_or_default());
                 m.set_capture_time(&super::unix_time(MKV_EPOCH + ns.div_euclid(1_000_000_000)));
@@ -131,8 +146,9 @@ fn read_simple_tag(st: &[u8], m: &mut Metadata) {
     match upper.as_str() {
         "" => {}
         // How the streams are coded and muxed, not who made them.
-        "DURATION" | "BPS" | "NUMBER_OF_FRAMES" | "NUMBER_OF_BYTES" | "LANGUAGE" | "MAJOR_BRAND" | "MINOR_VERSION"
-        | "COMPATIBLE_BRANDS" | "HANDLER_NAME" | "VENDOR_ID" | "ENCODER_OPTIONS" => {}
+        "DURATION" | "BPS" | "NUMBER_OF_FRAMES" | "NUMBER_OF_BYTES" | "LANGUAGE"
+        | "MAJOR_BRAND" | "MINOR_VERSION" | "COMPATIBLE_BRANDS" | "HANDLER_NAME" | "VENDOR_ID"
+        | "ENCODER_OPTIONS" => {}
         s if s.starts_with("_STATISTICS") => {}
         _ if name.starts_with("com.apple.") || name.starts_with("com.android.") => {
             super::isobmff::mdta_key(m, &name, &value, "mkv/Tags");

@@ -55,10 +55,21 @@ const ALPHA_URN: &str = "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha";
 /// chosen so the scale reads like the other lossy formats' (60, the AVIF
 /// default, lands at 120: some 40 dB on photographic content).
 pub fn quantizer_for_quality(quality: u8) -> u32 {
-    const ANCHORS: [(f32, f32); 7] =
-        [(1.0, 255.0), (20.0, 205.0), (40.0, 162.0), (60.0, 120.0), (80.0, 72.0), (90.0, 44.0), (100.0, 1.0)];
+    const ANCHORS: [(f32, f32); 7] = [
+        (1.0, 255.0),
+        (20.0, 205.0),
+        (40.0, 162.0),
+        (60.0, 120.0),
+        (80.0, 72.0),
+        (90.0, 44.0),
+        (100.0, 1.0),
+    ];
     let q = f32::from(quality.clamp(1, 100));
-    let i = ANCHORS.iter().position(|a| a.0 >= q).unwrap_or(ANCHORS.len() - 1).max(1);
+    let i = ANCHORS
+        .iter()
+        .position(|a| a.0 >= q)
+        .unwrap_or(ANCHORS.len() - 1)
+        .max(1);
     let (a, b) = (ANCHORS[i - 1], ANCHORS[i]);
     let t = (q - a.0) / (b.0 - a.0);
     (a.1 + t * (b.1 - a.1)).round().clamp(1.0, 255.0) as u32
@@ -69,13 +80,22 @@ pub fn encode_rgb(rgb: &[u8], width: u32, height: u32, quality: u8) -> Result<Ve
     if rgb.len() != width as usize * height as usize * 3 {
         bail!("AVIF: {} bytes of RGB for {width}x{height}", rgb.len());
     }
-    let rgba: Vec<u8> = rgb.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], u8::MAX]).collect();
+    let rgba: Vec<u8> = rgb
+        .chunks_exact(3)
+        .flat_map(|p| [p[0], p[1], p[2], u8::MAX])
+        .collect();
     encode_rgba(&rgba, width, height, false, quality)
 }
 
 /// Encode `width` x `height` RGBA pixels as an AVIF, with an alpha item when
 /// `alpha` (otherwise the alpha bytes are ignored).
-pub fn encode_rgba(rgba: &[u8], width: u32, height: u32, alpha: bool, quality: u8) -> Result<Vec<u8>> {
+pub fn encode_rgba(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    alpha: bool,
+    quality: u8,
+) -> Result<Vec<u8>> {
     if width == 0 || height == 0 {
         bail!("AVIF: a picture has no pixels ({width}x{height})");
     }
@@ -87,7 +107,13 @@ pub fn encode_rgba(rgba: &[u8], width: u32, height: u32, alpha: bool, quality: u
     let colour = encode_plane_set(rgba, width, &layout, q, Plane::Colour)?;
     let alpha = if alpha {
         // Alpha edges show more than colour does: a finer quantiser.
-        Some(encode_plane_set(rgba, width, &layout, (q * 3 / 4).max(1), Plane::Alpha)?)
+        Some(encode_plane_set(
+            rgba,
+            width,
+            &layout,
+            (q * 3 / 4).max(1),
+            Plane::Alpha,
+        )?)
     } else {
         None
     };
@@ -106,14 +132,24 @@ struct Layout {
 impl Layout {
     fn for_size(w: u32, h: u32) -> Self {
         if w <= MAX_ITEM_WIDTH && u64::from(w) * u64::from(h) <= TILE_PIXELS {
-            return Self { columns: 1, rows: 1, tile_w: w, tile_h: h };
+            return Self {
+                columns: 1,
+                rows: 1,
+                tile_w: w,
+                tile_h: h,
+            };
         }
         // Tiles of at most 2048 a side, equal, even (4:2:0), the last row
         // and column overhanging the picture as little as possible.
         let columns = w.div_ceil(2048);
         let rows = h.div_ceil(2048);
         let even = |v: u32| v + (v & 1);
-        Self { columns, rows, tile_w: even(w.div_ceil(columns)), tile_h: even(h.div_ceil(rows)) }
+        Self {
+            columns,
+            rows,
+            tile_w: even(w.div_ceil(columns)),
+            tile_h: even(h.div_ceil(rows)),
+        }
     }
 
     fn is_grid(&self) -> bool {
@@ -134,10 +170,17 @@ struct Coded {
 }
 
 /// Encode every tile of `layout` as its own key frame, in parallel.
-fn encode_plane_set(rgba: &[u8], width: u32, layout: &Layout, q: u32, plane: Plane) -> Result<Vec<Coded>> {
+fn encode_plane_set(
+    rgba: &[u8],
+    width: u32,
+    layout: &Layout,
+    q: u32,
+    plane: Plane,
+) -> Result<Vec<Coded>> {
     let height = (rgba.len() / 4 / width as usize) as u32;
-    let tiles: Vec<(u32, u32)> =
-        (0..layout.rows).flat_map(|r| (0..layout.columns).map(move |c| (c * layout.tile_w, r * layout.tile_h))).collect();
+    let tiles: Vec<(u32, u32)> = (0..layout.rows)
+        .flat_map(|r| (0..layout.columns).map(move |c| (c * layout.tile_w, r * layout.tile_h)))
+        .collect();
     let workers = crate::thread_budget::per_job().min(tiles.len()).max(1);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut out: Vec<Option<Result<Coded>>> = (0..tiles.len()).map(|_| None).collect();
@@ -148,14 +191,25 @@ fn encode_plane_set(rgba: &[u8], width: u32, layout: &Layout, q: u32, plane: Pla
                 loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(&(x0, y0)) = tiles.get(i) else { break };
-                    let frame = tile_frame(rgba, width, height, x0, y0, layout.tile_w, layout.tile_h, plane);
+                    let frame = tile_frame(
+                        rgba,
+                        width,
+                        height,
+                        x0,
+                        y0,
+                        layout.tile_w,
+                        layout.tile_h,
+                        plane,
+                    );
                     let coded = encode_tile(&frame, q);
                     slots.lock().expect("no worker panics holding it")[i] = Some(coded);
                 }
             });
         }
     });
-    out.into_iter().map(|c| c.unwrap_or_else(|| Err(anyhow!("AVIF: a tile was not encoded")))).collect()
+    out.into_iter()
+        .map(|c| c.unwrap_or_else(|| Err(anyhow!("AVIF: a tile was not encoded"))))
+        .collect()
 }
 
 /// The `tw` x `th` tile at (`x0`, `y0`) as an 8-bit frame: 4:2:0 full-range
@@ -163,7 +217,16 @@ fn encode_plane_set(rgba: &[u8], width: u32, layout: &Layout, q: u32, plane: Pla
 /// frame.
 /// Samples past the picture's edge repeat its last row and column.
 #[allow(clippy::too_many_arguments)]
-fn tile_frame(rgba: &[u8], w: u32, h: u32, x0: u32, y0: u32, tw: u32, th: u32, plane: Plane) -> av1::Frame {
+fn tile_frame(
+    rgba: &[u8],
+    w: u32,
+    h: u32,
+    x0: u32,
+    y0: u32,
+    tw: u32,
+    th: u32,
+    plane: Plane,
+) -> av1::Frame {
     let chroma = match plane {
         Plane::Colour => av1::ChromaFormat::Yuv420,
         Plane::Alpha => av1::ChromaFormat::Mono,
@@ -172,7 +235,12 @@ fn tile_frame(rgba: &[u8], w: u32, h: u32, x0: u32, y0: u32, tw: u32, th: u32, p
     let at = |x: u32, y: u32| -> [f32; 4] {
         let (x, y) = ((x0 + x).min(w - 1), (y0 + y).min(h - 1));
         let i = (y as usize * w as usize + x as usize) * 4;
-        [f32::from(rgba[i]), f32::from(rgba[i + 1]), f32::from(rgba[i + 2]), f32::from(rgba[i + 3])]
+        [
+            f32::from(rgba[i]),
+            f32::from(rgba[i + 1]),
+            f32::from(rgba[i + 2]),
+            f32::from(rgba[i + 3]),
+        ]
     };
     let clamp = |v: f32| v.round().clamp(0.0, 255.0) as u8;
     let yp = f.planes[0];
@@ -228,7 +296,10 @@ fn encode_tile(frame: &av1::Frame, q: u32) -> Result<Coded> {
     cfg.monochrome = frame.chroma == av1::ChromaFormat::Mono;
     cfg.color = if cfg.monochrome {
         // An alpha plane: no colour description (it has none), full range.
-        av1::ColorInfo { full_range: true, ..av1::ColorInfo::default() }
+        av1::ColorInfo {
+            full_range: true,
+            ..av1::ColorInfo::default()
+        }
     } else {
         av1::ColorInfo {
             color_primaries: NCLX_PRIMARIES.into(),
@@ -241,7 +312,9 @@ fn encode_tile(frame: &av1::Frame, q: u32) -> Result<Coded> {
         }
     };
     let mut enc = av1::Encoder::new(cfg);
-    let tu = enc.encode(frame).map_err(|e| anyhow!("AV1 encode of an AVIF item failed: {e}"))?;
+    let tu = enc
+        .encode(frame)
+        .map_err(|e| anyhow!("AV1 encode of an AVIF item failed: {e}"))?;
     let mut obus = Vec::with_capacity(tu.len());
     let mut sequence_header = None;
     for (kind, whole, payload) in split_obus(&tu)? {
@@ -254,8 +327,17 @@ fn encode_tile(frame: &av1::Frame, q: u32) -> Result<Coded> {
             _ => obus.extend_from_slice(whole),
         }
     }
-    let (sh_obu, sh) = sequence_header.context("the AV1 encoder wrote no sequence header on a key frame")?;
-    Ok(Coded { obus, av1c: av1c(&sh_obu, &sh, frame.bit_depth, frame.chroma == av1::ChromaFormat::Mono) })
+    let (sh_obu, sh) =
+        sequence_header.context("the AV1 encoder wrote no sequence header on a key frame")?;
+    Ok(Coded {
+        obus,
+        av1c: av1c(
+            &sh_obu,
+            &sh,
+            frame.bit_depth,
+            frame.chroma == av1::ChromaFormat::Mono,
+        ),
+    })
 }
 
 const OBU_SEQUENCE_HEADER: u8 = 1;
@@ -277,7 +359,10 @@ fn split_obus(data: &[u8]) -> Result<Vec<(u8, &[u8], &[u8])>> {
         at += 1 + usize::from(extension);
         let (size, n) = leb128(data.get(at..).unwrap_or_default())?;
         at += n;
-        let end = at.checked_add(size).filter(|&e| e <= data.len()).context("an AV1 OBU runs past its temporal unit")?;
+        let end = at
+            .checked_add(size)
+            .filter(|&e| e <= data.len())
+            .context("an AV1 OBU runs past its temporal unit")?;
         out.push((kind, &data[start..end], &data[at..end]));
         at = end;
     }
@@ -308,7 +393,12 @@ fn av1c(sequence_header_obu: &[u8], sh: &[u8], bit_depth: u32, monochrome: bool)
         // tier, high_bitdepth, twelve_bit, monochrome, subsampling 1 1 (a
         // monochrome stream's are 1 1 too), chroma_sample_position 0
         // (unknown) — 4:2:0 or luma only, as the encoder codes.
-        (tier << 7) | (high_bitdepth << 6) | (twelve_bit << 5) | (u8::from(monochrome) << 4) | (1 << 3) | (1 << 2),
+        (tier << 7)
+            | (high_bitdepth << 6)
+            | (twelve_bit << 5)
+            | (u8::from(monochrome) << 4)
+            | (1 << 3)
+            | (1 << 2),
         // No initial_presentation_delay.
         0,
     ];
@@ -321,7 +411,9 @@ fn av1c(sequence_header_obu: &[u8], sh: &[u8], bit_depth: u32, monochrome: bool)
 /// operating points this does not walk.
 fn profile_level_tier(sh: &[u8]) -> Option<(u8, u8, u8)> {
     let bit = |i: usize| -> Option<u8> { sh.get(i / 8).map(|b| (b >> (7 - i % 8)) & 1) };
-    let bits = |from: usize, n: usize| -> Option<u32> { (from..from + n).try_fold(0u32, |v, i| Some(v << 1 | u32::from(bit(i)?))) };
+    let bits = |from: usize, n: usize| -> Option<u32> {
+        (from..from + n).try_fold(0u32, |v, i| Some(v << 1 | u32::from(bit(i)?)))
+    };
     let profile = bits(0, 3)? as u8;
     let reduced = bit(4)? == 1;
     if reduced {
@@ -424,7 +516,12 @@ fn auxc() -> Vec<u8> {
 /// `ImageGrid` (HEIF 6.6.2.3.2): rows and columns over the output size.
 fn grid_data(layout: &Layout, w: u32, h: u32) -> Vec<u8> {
     let wide = w > 0xFFFF || h > 0xFFFF;
-    let mut b = vec![0, u8::from(wide), (layout.rows - 1) as u8, (layout.columns - 1) as u8];
+    let mut b = vec![
+        0,
+        u8::from(wide),
+        (layout.rows - 1) as u8,
+        (layout.columns - 1) as u8,
+    ];
     if wide {
         b.extend_from_slice(&w.to_be_bytes());
         b.extend_from_slice(&h.to_be_bytes());
@@ -436,50 +533,81 @@ fn grid_data(layout: &Layout, w: u32, h: u32) -> Vec<u8> {
 }
 
 /// Lay the items out as a file: `ftyp`, `meta`, `mdat`.
-fn write_file(w: u32, h: u32, layout: &Layout, colour: &[Coded], alpha: Option<&Vec<Coded>>) -> Vec<u8> {
+fn write_file(
+    w: u32,
+    h: u32,
+    layout: &Layout,
+    colour: &[Coded],
+    alpha: Option<&Vec<Coded>>,
+) -> Vec<u8> {
     let mut props = Properties::default();
     let mut items: Vec<Item> = Vec::new();
     let mut dimg: Vec<(u16, Vec<u16>)> = Vec::new();
     let mut next_id = 1u16;
 
     // One picture (colour or alpha): its items, and the id that stands for it.
-    let mut add_set = |coded: &[Coded], is_alpha: bool, items: &mut Vec<Item>, props: &mut Properties| -> u16 {
-        let channels = if is_alpha { 1 } else { 3 };
-        let mut extra: Vec<(u8, bool)> = Vec::new();
-        if is_alpha {
-            extra.push((props.index(auxc()), true));
-        } else {
-            extra.push((props.index(colr()), false));
-        }
-        if !layout.is_grid() {
-            let id = next_id;
+    let mut add_set =
+        |coded: &[Coded], is_alpha: bool, items: &mut Vec<Item>, props: &mut Properties| -> u16 {
+            let channels = if is_alpha { 1 } else { 3 };
+            let mut extra: Vec<(u8, bool)> = Vec::new();
+            if is_alpha {
+                extra.push((props.index(auxc()), true));
+            } else {
+                extra.push((props.index(colr()), false));
+            }
+            if !layout.is_grid() {
+                let id = next_id;
+                next_id += 1;
+                let mut p = vec![
+                    (props.index(ispe(w, h)), false),
+                    (props.index(pixi(channels)), false),
+                ];
+                p.push((props.index(bx(b"av1C", &coded[0].av1c)), true));
+                p.extend(extra);
+                items.push(Item {
+                    id,
+                    kind: *b"av01",
+                    hidden: false,
+                    data: coded[0].obus.clone(),
+                    props: p,
+                });
+                return id;
+            }
+            let grid_id = next_id;
             next_id += 1;
-            let mut p = vec![(props.index(ispe(w, h)), false), (props.index(pixi(channels)), false)];
-            p.push((props.index(bx(b"av1C", &coded[0].av1c)), true));
-            p.extend(extra);
-            items.push(Item { id, kind: *b"av01", hidden: false, data: coded[0].obus.clone(), props: p });
-            return id;
-        }
-        let grid_id = next_id;
-        next_id += 1;
-        let mut gp = vec![(props.index(ispe(w, h)), false), (props.index(pixi(channels)), false)];
-        gp.extend(extra);
-        items.push(Item { id: grid_id, kind: *b"grid", hidden: false, data: grid_data(layout, w, h), props: gp });
-        let mut tiles = Vec::with_capacity(coded.len());
-        for c in coded {
-            let id = next_id;
-            next_id += 1;
-            let p = vec![
-                (props.index(ispe(layout.tile_w, layout.tile_h)), false),
+            let mut gp = vec![
+                (props.index(ispe(w, h)), false),
                 (props.index(pixi(channels)), false),
-                (props.index(bx(b"av1C", &c.av1c)), true),
             ];
-            items.push(Item { id, kind: *b"av01", hidden: true, data: c.obus.clone(), props: p });
-            tiles.push(id);
-        }
-        dimg.push((grid_id, tiles));
-        grid_id
-    };
+            gp.extend(extra);
+            items.push(Item {
+                id: grid_id,
+                kind: *b"grid",
+                hidden: false,
+                data: grid_data(layout, w, h),
+                props: gp,
+            });
+            let mut tiles = Vec::with_capacity(coded.len());
+            for c in coded {
+                let id = next_id;
+                next_id += 1;
+                let p = vec![
+                    (props.index(ispe(layout.tile_w, layout.tile_h)), false),
+                    (props.index(pixi(channels)), false),
+                    (props.index(bx(b"av1C", &c.av1c)), true),
+                ];
+                items.push(Item {
+                    id,
+                    kind: *b"av01",
+                    hidden: true,
+                    data: c.obus.clone(),
+                    props: p,
+                });
+                tiles.push(id);
+            }
+            dimg.push((grid_id, tiles));
+            grid_id
+        };
     let primary = add_set(colour, false, &mut items, &mut props);
     let alpha_id = alpha.map(|a| add_set(a, true, &mut items, &mut props));
 
@@ -601,7 +729,11 @@ mod tests {
         let l = Layout::for_size(4000, 3000);
         assert_eq!((l.columns, l.rows, l.tile_w, l.tile_h), (2, 2, 2000, 1500));
         let l = Layout::for_size(2101, 2101);
-        assert_eq!((l.tile_w, l.tile_h), (1052, 1052), "even, with the least overhang");
+        assert_eq!(
+            (l.tile_w, l.tile_h),
+            (1052, 1052),
+            "even, with the least overhang"
+        );
     }
 
     #[test]
@@ -612,7 +744,12 @@ mod tests {
         assert_eq!(c.av1c[0], 0x81);
         assert_eq!(c.av1c[1] >> 5, 0, "profile 0");
         assert_eq!(c.av1c[2] & 0x0c, 0x0c, "4:2:0");
-        assert!(c.obus.first().is_some_and(|b| (b >> 3) & 15 == OBU_SEQUENCE_HEADER), "no temporal delimiter");
+        assert!(
+            c.obus
+                .first()
+                .is_some_and(|b| (b >> 3) & 15 == OBU_SEQUENCE_HEADER),
+            "no temporal delimiter"
+        );
     }
 
     /// The sequence header says what `colr` says: full range and the
@@ -620,7 +757,9 @@ mod tests {
     /// range (AV1 Image File Format 4), its `av1C` saying monochrome.
     #[test]
     fn the_sequence_header_agrees_with_the_container() {
-        let rgba: Vec<u8> = (0..32 * 16).flat_map(|i| [(i % 251) as u8, 40, 200, (i * 7 % 256) as u8]).collect();
+        let rgba: Vec<u8> = (0..32 * 16)
+            .flat_map(|i| [(i % 251) as u8, 40, 200, (i * 7 % 256) as u8])
+            .collect();
         let colour = tile_frame(&rgba, 32, 16, 0, 0, 32, 16, Plane::Colour);
         let alpha = tile_frame(&rgba, 32, 16, 0, 0, 32, 16, Plane::Alpha);
         assert_eq!(alpha.chroma, av1::ChromaFormat::Mono);
@@ -633,11 +772,17 @@ mod tests {
             if mono {
                 assert_eq!(out.chroma, av1::ChromaFormat::Mono);
                 // The alpha comes back as stored, 0..255 unscaled.
-                let worst = (0..32 * 16).map(|i| (i32::from(out.data[i]) - i32::from(rgba[i * 4 + 3])).abs()).max();
+                let worst = (0..32 * 16)
+                    .map(|i| (i32::from(out.data[i]) - i32::from(rgba[i * 4 + 3])).abs())
+                    .max();
                 assert!(worst.unwrap() < 24, "{worst:?}");
             } else {
                 assert_eq!(out.chroma, av1::ChromaFormat::Yuv420);
-                let cp = (out.color.color_primaries, out.color.transfer_characteristics, out.color.matrix_coefficients);
+                let cp = (
+                    out.color.color_primaries,
+                    out.color.transfer_characteristics,
+                    out.color.matrix_coefficients,
+                );
                 assert_eq!(cp, (1, 13, 6));
             }
         }

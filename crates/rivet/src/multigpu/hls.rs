@@ -33,7 +33,8 @@ pub async fn run_multigpu_hls(
     if n == 0 {
         return Ok(Vec::new());
     }
-    let total_segments = total_segments_for_rung(params.total_input_frames, params.keyframe_interval);
+    let total_segments =
+        total_segments_for_rung(params.total_input_frames, params.keyframe_interval);
     if total_segments == 0 {
         bail!(
             "multigpu: total_segments == 0 (total_input_frames={}, keyframe_interval={})",
@@ -63,7 +64,10 @@ pub async fn run_multigpu_hls(
 
     // HLS segments are real files that must each stand alone; there's no
     // stitch to hide a margin in, so no overlap here.
-    let shape = LadderShape { frames_per_chunk: params.keyframe_interval, overlap: 0 };
+    let shape = LadderShape {
+        frames_per_chunk: params.keyframe_interval,
+        overlap: 0,
+    };
     let ladder: Arc<Ladder<WorkerOutput>> = Arc::new(Ladder::new(rungs, shape.frames_per_chunk));
 
     // Periodic progress reporter.
@@ -82,7 +86,8 @@ pub async fn run_multigpu_hls(
     );
 
     // Finalizers: one per rung, merges contributions → RungManifest ---------
-    let (finalizer_tx, finalizer_rx) = mpsc::channel::<(usize, Result<Option<RungManifest>>)>(n.max(1));
+    let (finalizer_tx, finalizer_rx) =
+        mpsc::channel::<(usize, Result<Option<RungManifest>>)>(n.max(1));
     let mut finalizer_handles = Vec::with_capacity(n);
     for idx in 0..n {
         let ladder_h = Arc::clone(&ladder);
@@ -133,8 +138,12 @@ pub async fn run_multigpu_hls(
             let result = match merge_rung_contributions(contribs) {
                 Ok(merged) => {
                     let got = merged.manifest.segments.len();
-                    let numbers: Vec<u32> =
-                        merged.manifest.segments.iter().map(|s| s.sequence_number).collect();
+                    let numbers: Vec<u32> = merged
+                        .manifest
+                        .segments
+                        .iter()
+                        .map(|s| s.sequence_number)
+                        .collect();
                     if let Some(err) = segment_coverage_error(&rung.label, pushed, &numbers) {
                         Err(anyhow!(err))
                     } else {
@@ -168,7 +177,10 @@ pub async fn run_multigpu_hls(
                         Ok(Some(rung_manifest))
                     }
                 }
-                Err(e) => Err(anyhow!("merging contributions for rung {}: {e}", rung.label)),
+                Err(e) => Err(anyhow!(
+                    "merging contributions for rung {}: {e}",
+                    rung.label
+                )),
             };
             ladder_h.finalized[idx].store(true, Ordering::Release);
             let _ = tx.send((idx, result)).await;
@@ -203,28 +215,34 @@ pub async fn run_multigpu_hls(
          frames: &std::sync::atomic::AtomicU64,
          _bytes: &std::sync::atomic::AtomicU64,
          tx: &mpsc::Sender<u64>| {
-            Ok(match encode_segment_unit(cfg, chunk, init_written, frames, tx)? {
-                SegmentOutcome::Wrote(info) => {
-                    UnitOutcome::Done(WorkerOutput { gpu_index: cfg.gpu_index, segments: vec![info] })
-                }
-                SegmentOutcome::Rejected { chunk, diff } => UnitOutcome::Rejected { chunk, diff },
-            })
+            Ok(
+                match encode_segment_unit(cfg, chunk, init_written, frames, tx)? {
+                    SegmentOutcome::Wrote(info) => UnitOutcome::Done(WorkerOutput {
+                        gpu_index: cfg.gpu_index,
+                        segments: vec![info],
+                    }),
+                    SegmentOutcome::Rejected { chunk, diff } => {
+                        UnitOutcome::Rejected { chunk, diff }
+                    }
+                },
+            )
         },
     );
-    let (workers, _) = match ladder::spawn_workers(&params, &ctx, rungs, shape, &ladder, encode).await {
-        Ok(w) => w,
-        Err(e) => {
-            // The pumps and scalers are already running in blocking threads.
-            // Returning without stopping them left a scaler parked on a full
-            // queue nobody would drain, the pump behind it, and a runtime that
-            // could not shut down — the run sat at `0/N frames` forever. The
-            // abort closes the queues, which unwinds both.
-            ladder.abort.abort();
-            progress_stop.store(true, Ordering::Release);
-            let _ = progress_handle.await;
-            return Err(e);
-        }
-    };
+    let (workers, _) =
+        match ladder::spawn_workers(&params, &ctx, rungs, shape, &ladder, encode).await {
+            Ok(w) => w,
+            Err(e) => {
+                // The pumps and scalers are already running in blocking threads.
+                // Returning without stopping them left a scaler parked on a full
+                // queue nobody would drain, the pump behind it, and a runtime that
+                // could not shut down — the run sat at `0/N frames` forever. The
+                // abort closes the queues, which unwinds both.
+                ladder.abort.abort();
+                progress_stop.store(true, Ordering::Release);
+                let _ = progress_handle.await;
+                return Err(e);
+            }
+        };
     ladder.release_setup_guard();
 
     let result = ladder::drain(Running {
@@ -290,13 +308,25 @@ mod tests {
                     EncodePolicy::Family(GpuFamily::Intel),
                     VideoCodec::H264,
                 );
-                run_multigpu_hls(params, Arc::new(NullSink)).await.map(|_| ()).map_err(|e| format!("{e:#}"))
+                run_multigpu_hls(params, Arc::new(NullSink))
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| format!("{e:#}"))
             },
         );
         let msg = verdict.expect_err("nothing to encode on");
-        assert!(msg.contains("no encoder matches `--encode family:intel` for H.264 on this host"), "{msg}");
-        assert!(msg.contains("Present: synth-0 (gpu 0, NVIDIA, encodes H.264)"), "the params' host, not this machine: {msg}");
-        assert!(!msg.contains("decode"), "refused only after a decode had started: {msg}");
+        assert!(
+            msg.contains("no encoder matches `--encode family:intel` for H.264 on this host"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("Present: synth-0 (gpu 0, NVIDIA, encodes H.264)"),
+            "the params' host, not this machine: {msg}"
+        );
+        assert!(
+            !msg.contains("decode"),
+            "refused only after a decode had started: {msg}"
+        );
     }
 
     #[test]

@@ -8,9 +8,9 @@
 
 use std::path::Path;
 
-use anyhow::Result;
 #[cfg(unix)]
 use anyhow::Context;
+use anyhow::Result;
 #[cfg(unix)]
 use rivet::TranscodeSettings;
 
@@ -21,12 +21,18 @@ use rivet::TranscodeSettings;
 fn split_ipc_settings(input: &[u8]) -> (Result<TranscodeSettings>, &[u8]) {
     const MAGIC: &[u8] = b"#rivet";
     if input.starts_with(MAGIC) {
-        let nl = input.iter().position(|&b| b == b'\n').unwrap_or(input.len());
+        let nl = input
+            .iter()
+            .position(|&b| b == b'\n')
+            .unwrap_or(input.len());
         let media_start = (nl + 1).min(input.len());
         let line = std::str::from_utf8(&input[MAGIC.len()..nl])
             .map(str::trim)
             .unwrap_or("");
-        (TranscodeSettings::parse_kv_line(line), &input[media_start..])
+        (
+            TranscodeSettings::parse_kv_line(line),
+            &input[media_start..],
+        )
     } else {
         (Ok(TranscodeSettings::default()), input)
     }
@@ -73,7 +79,10 @@ pub(crate) fn run(socket: &Path) -> Result<()> {
                 }
                 stream.flush().ok();
                 let _ = stream.shutdown(std::net::Shutdown::Write);
-                eprintln!("rivet ipc: {frames} frames → {} bytes out ({audio})", bytes.len());
+                eprintln!(
+                    "rivet ipc: {frames} frames → {} bytes out ({audio})",
+                    bytes.len()
+                );
             }
             Err(e) => eprintln!("rivet ipc: transcode error: {e:#}"),
         }

@@ -45,7 +45,9 @@ use std::collections::VecDeque;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 
-use super::native::{ReferenceFirst, average_rate, check_frame, frame_rate_ratio, quantizer, threads, tier};
+use super::native::{
+    ReferenceFirst, average_rate, check_frame, frame_rate_ratio, quantizer, threads, tier,
+};
 use super::tuning::SpeedTier;
 use super::{EncodedPacket, Encoder, EncoderConfig};
 use crate::frame::{ColorMetadata, PixelFormat, TransferFn, VideoCodec, VideoFrame};
@@ -84,7 +86,10 @@ impl Mpeg4Encoder {
     /// Build an encoder for `config` (codec MPEG-4, `yuv420p`).
     pub fn new(config: EncoderConfig) -> Result<Self> {
         if config.codec != VideoCodec::Mpeg4 {
-            bail!("the MPEG-4 Part 2 encoder encodes MPEG-4 Part 2, not {}", config.codec.label());
+            bail!(
+                "the MPEG-4 Part 2 encoder encodes MPEG-4 Part 2, not {}",
+                config.codec.label()
+            );
         }
         if config.pixel_format != PixelFormat::Yuv420p {
             bail!(
@@ -116,8 +121,14 @@ impl Mpeg4Encoder {
         cfg.four_mv = speed == SpeedTier::Archive;
         cfg.video_signal = Some(video_signal(&config.color_metadata));
         cfg.threads = threads(&config);
-        let inner = mpeg4::Encoder::new(cfg.clone()).context("the MPEG-4 Part 2 encoder rejected the configuration")?;
-        Ok(Self { inner, cfg, order: ReferenceFirst::default(), ready: VecDeque::new() })
+        let inner = mpeg4::Encoder::new(cfg.clone())
+            .context("the MPEG-4 Part 2 encoder rejected the configuration")?;
+        Ok(Self {
+            inner,
+            cfg,
+            order: ReferenceFirst::default(),
+            ready: VecDeque::new(),
+        })
     }
 
     /// Split what the encoder returned into one packet per VOP, stamped.
@@ -126,7 +137,11 @@ impl Mpeg4Encoder {
         let stamps = self.order.take(units.len())?;
         for (unit, pts) in units.into_iter().zip(stamps) {
             let is_keyframe = vop_type(&unit) == Some(0);
-            self.ready.push_back(EncodedPacket { data: Bytes::from(unit), pts, is_keyframe });
+            self.ready.push_back(EncodedPacket {
+                data: Bytes::from(unit),
+                pts,
+                is_keyframe,
+            });
         }
         Ok(())
     }
@@ -175,16 +190,28 @@ fn vop_type(unit: &[u8]) -> Option<u8> {
 
 impl Encoder for Mpeg4Encoder {
     fn send_frame(&mut self, frame: &VideoFrame) -> Result<()> {
-        let want = check_frame("MPEG-4 Part 2", frame, self.cfg.width, self.cfg.height, &[PixelFormat::Yuv420p])?;
+        let want = check_frame(
+            "MPEG-4 Part 2",
+            frame,
+            self.cfg.width,
+            self.cfg.height,
+            &[PixelFormat::Yuv420p],
+        )?;
         let mut picture = mpeg4::Frame::new(self.cfg.width, self.cfg.height);
         picture.data.copy_from_slice(&frame.data[..want]);
         self.order.push(frame.pts);
-        let bytes = self.inner.encode(&picture).context("the MPEG-4 Part 2 encoder refused a frame")?;
+        let bytes = self
+            .inner
+            .encode(&picture)
+            .context("the MPEG-4 Part 2 encoder refused a frame")?;
         self.collect(bytes)
     }
 
     fn flush(&mut self) -> Result<()> {
-        let bytes = self.inner.finish().context("the MPEG-4 Part 2 encoder failed to finish")?;
+        let bytes = self
+            .inner
+            .finish()
+            .context("the MPEG-4 Part 2 encoder failed to finish")?;
         self.collect(bytes)
     }
 
@@ -200,7 +227,8 @@ impl Encoder for Mpeg4Encoder {
     /// Rebuild the encoder: the next frame is an I-VOP behind fresh
     /// configuration headers.
     fn reset(&mut self) -> Result<()> {
-        self.inner = mpeg4::Encoder::new(self.cfg.clone()).context("rebuilding the MPEG-4 Part 2 encoder")?;
+        self.inner = mpeg4::Encoder::new(self.cfg.clone())
+            .context("rebuilding the MPEG-4 Part 2 encoder")?;
         self.order.clear();
         self.ready.clear();
         Ok(())
@@ -216,7 +244,8 @@ mod tests {
         let mut enc = Mpeg4Encoder::new(config).unwrap();
         let mut packets = Vec::new();
         for n in 0..frames {
-            enc.send_frame(&super::super::native::test_picture(w, h, n)).unwrap();
+            enc.send_frame(&super::super::native::test_picture(w, h, n))
+                .unwrap();
             while let Some(p) = enc.receive_packet().unwrap() {
                 packets.push(p);
             }
@@ -231,10 +260,20 @@ mod tests {
     /// The rung's thread budget reaches the encoder; zero is the machine's.
     #[test]
     fn the_rung_thread_budget_reaches_the_encoder() {
-        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Mpeg4, ..Default::default() };
+        let base = EncoderConfig {
+            width: 64,
+            height: 48,
+            frame_rate: 25.0,
+            codec: VideoCodec::Mpeg4,
+            ..Default::default()
+        };
         let all = std::thread::available_parallelism().map_or(1, |n| n.get());
         for (asked, want) in [(3, 3), (0, all)] {
-            let enc = Mpeg4Encoder::new(EncoderConfig { threads: asked, ..base.clone() }).unwrap();
+            let enc = Mpeg4Encoder::new(EncoderConfig {
+                threads: asked,
+                ..base.clone()
+            })
+            .unwrap();
             assert_eq!(enc.cfg.threads, want, "threads {asked}");
         }
     }
@@ -244,11 +283,20 @@ mod tests {
     /// reconstruction.
     #[test]
     fn simple_profile_vops_decode_to_the_reconstruction() {
-        let config = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Mpeg4, ..Default::default() };
+        let config = EncoderConfig {
+            width: 64,
+            height: 48,
+            frame_rate: 25.0,
+            codec: VideoCodec::Mpeg4,
+            ..Default::default()
+        };
         let mut cfg = Mpeg4Encoder::new(config.clone()).unwrap().cfg;
         cfg.keep_reconstructions = true;
         let (mut enc, packets) = encode_all(config, 4);
-        assert_eq!(packets.iter().map(|p| p.pts).collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+        assert_eq!(
+            packets.iter().map(|p| p.pts).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
         assert!(packets[0].is_keyframe && !packets[1].is_keyframe);
         // The reconstruction check runs on an encoder that keeps them.
         enc.inner = mpeg4::Encoder::new(cfg).unwrap();
@@ -257,7 +305,9 @@ mod tests {
         let mut decoded = Vec::new();
         for n in 0..4 {
             let mut picture = mpeg4::Frame::new(64, 48);
-            picture.data.copy_from_slice(&super::super::native::test_picture(64, 48, n).data);
+            picture
+                .data
+                .copy_from_slice(&super::super::native::test_picture(64, 48, n).data);
             let bytes = enc.inner.encode(&picture).unwrap();
             recon.extend(enc.inner.take_reconstructions());
             decoded.extend(dec.decode(&bytes).unwrap());
@@ -273,7 +323,13 @@ mod tests {
     /// own frame's timestamp.
     #[test]
     fn b_vops_are_stamped_with_their_own_frames() {
-        let mut config = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Mpeg4, ..Default::default() };
+        let mut config = EncoderConfig {
+            width: 64,
+            height: 48,
+            frame_rate: 25.0,
+            codec: VideoCodec::Mpeg4,
+            ..Default::default()
+        };
         config.overrides.bframes = Some(2);
         let (_, packets) = encode_all(config, 7);
         let pts: Vec<u64> = packets.iter().map(|p| p.pts).collect();
@@ -291,7 +347,13 @@ mod tests {
     /// key frame lands on the next frame.
     #[test]
     fn colour_is_signalled_and_a_forced_key_lands() {
-        let color = ColorMetadata { colour_primaries: 9, matrix_coefficients: 9, transfer: TransferFn::AribStdB67, full_range: true, ..Default::default() };
+        let color = ColorMetadata {
+            colour_primaries: 9,
+            matrix_coefficients: 9,
+            transfer: TransferFn::AribStdB67,
+            full_range: true,
+            ..Default::default()
+        };
         let config = EncoderConfig {
             width: 64,
             height: 48,
@@ -307,7 +369,8 @@ mod tests {
             if n == 2 {
                 enc.force_keyframe_next().unwrap();
             }
-            enc.send_frame(&super::super::native::test_picture(64, 48, n)).unwrap();
+            enc.send_frame(&super::super::native::test_picture(64, 48, n))
+                .unwrap();
             while let Some(p) = enc.receive_packet().unwrap() {
                 packets.push(p);
             }
@@ -320,9 +383,19 @@ mod tests {
         assert_eq!(keys, [true, false, true, false]);
         let mut dec = mpeg4::Decoder::new();
         dec.decode(&packets[0].data).unwrap();
-        let signal = dec.vol().and_then(|v| v.video_signal).expect("a video_signal_type()");
+        let signal = dec
+            .vol()
+            .and_then(|v| v.video_signal)
+            .expect("a video_signal_type()");
         assert!(signal.full_range);
         let c = signal.colour.expect("a colour description");
-        assert_eq!((c.colour_primaries, c.transfer_characteristics, c.matrix_coefficients), (9, 18, 9));
+        assert_eq!(
+            (
+                c.colour_primaries,
+                c.transfer_characteristics,
+                c.matrix_coefficients
+            ),
+            (9, 18, 9)
+        );
     }
 }

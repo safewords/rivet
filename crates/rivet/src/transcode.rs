@@ -90,12 +90,15 @@ impl AudioHandling {
 ///
 /// Returns the [`TranscodeOutcome`]; `outcome.output_bytes` also holds the
 /// bytes that were written to disk.
-pub fn transcode_file(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Result<TranscodeOutcome> {
+pub fn transcode_file(
+    input: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+) -> Result<TranscodeOutcome> {
     let input = input.as_ref();
     let output = output.as_ref();
     crate::output_guard::refuse_input_as_output(output, &[input])?;
-    let bytes = std::fs::read(input)
-        .with_context(|| format!("reading input file {}", input.display()))?;
+    let bytes =
+        std::fs::read(input).with_context(|| format!("reading input file {}", input.display()))?;
     let outcome = transcode_bytes(&bytes)?;
     crate::output_guard::write_atomic(output, &outcome.output_bytes)
         .with_context(|| format!("writing output file {}", output.display()))?;
@@ -178,7 +181,8 @@ pub fn transcode_bytes(input: &[u8]) -> Result<TranscodeOutcome> {
     fn shown(presentation: Option<&container::edit::VideoPresentation>, decoded: &mut u64) -> bool {
         let here = *decoded;
         *decoded += 1;
-        presentation.is_none_or(|p| matches!(p.place(here), container::edit::FramePlace::Presented(_)))
+        presentation
+            .is_none_or(|p| matches!(p.place(here), container::edit::FramePlace::Presented(_)))
     }
 
     // Frames the source holds for several periods (an AVI's dropped frames)
@@ -199,7 +203,15 @@ pub fn transcode_bytes(input: &[u8]) -> Result<TranscodeOutcome> {
                 while let Some(frame) = decoder.decode_next().context("decode_next")? {
                     if shown(presentation.as_ref(), &mut frames_decoded) {
                         let frame = normalizer.normalize(frame).context("normalising a frame")?;
-                        pump_held(&mut encoder, &mut muxer, frame, repeats.as_deref(), frames_decoded - 1, &mut frames_processed, &mut packets_emitted)?;
+                        pump_held(
+                            &mut encoder,
+                            &mut muxer,
+                            frame,
+                            repeats.as_deref(),
+                            frames_decoded - 1,
+                            &mut frames_processed,
+                            &mut packets_emitted,
+                        )?;
                     }
                 }
             }
@@ -208,7 +220,15 @@ pub fn transcode_bytes(input: &[u8]) -> Result<TranscodeOutcome> {
                 while let Some(frame) = decoder.decode_next().context("decode_next drain")? {
                     if shown(presentation.as_ref(), &mut frames_decoded) {
                         let frame = normalizer.normalize(frame).context("normalising a frame")?;
-                        pump_held(&mut encoder, &mut muxer, frame, repeats.as_deref(), frames_decoded - 1, &mut frames_processed, &mut packets_emitted)?;
+                        pump_held(
+                            &mut encoder,
+                            &mut muxer,
+                            frame,
+                            repeats.as_deref(),
+                            frames_decoded - 1,
+                            &mut frames_processed,
+                            &mut packets_emitted,
+                        )?;
                     }
                 }
                 encoder.flush().context("encoder.flush")?;
@@ -221,11 +241,7 @@ pub fn transcode_bytes(input: &[u8]) -> Result<TranscodeOutcome> {
         }
     }
 
-    tracing::debug!(
-        frames_processed,
-        packets_emitted,
-        "decode loop complete"
-    );
+    tracing::debug!(frames_processed, packets_emitted, "decode loop complete");
     let output_bytes = muxer.finalize().context("muxer.finalize")?.to_vec();
 
     Ok(TranscodeOutcome {
@@ -351,21 +367,29 @@ fn wire_audio(
         c if matches!(c, "aac" | "opus" | "ac3" | "eac3" | "dts") || mp3_in_mp4 => {
             let info = build_passthrough_info(&codec_lower, track);
             if let Err(e) = muxer.with_audio(info) {
-                return Err(crate::job::audio_unusable(&codec_lower, &format!("is refused by the MP4 muxer: {e:#}"), false));
+                return Err(crate::job::audio_unusable(
+                    &codec_lower,
+                    &format!("is refused by the MP4 muxer: {e:#}"),
+                    false,
+                ));
             }
             // As the job engine does: whole packets outside the edit dropped
             // (beyond the decoder's preroll), the rest hidden by the output's
             // own edit list.
             let packets = match edit {
                 Some(e) => {
-                    let preroll = container::edit::AudioPreroll::for_codec(&codec_lower, track.timescale);
+                    let preroll =
+                        container::edit::AudioPreroll::for_codec(&codec_lower, track.timescale);
                     let cut = container::edit::cut_audio_packets(&track.durations, &e, preroll);
                     muxer.set_audio_edit(cut.edit);
                     cut.packets
                 }
                 None => 0..track.samples.len(),
             };
-            for (sample, dur) in track.samples[packets.clone()].iter().zip(track.durations[packets].iter().copied()) {
+            for (sample, dur) in track.samples[packets.clone()]
+                .iter()
+                .zip(track.durations[packets].iter().copied())
+            {
                 muxer
                     .add_audio_sample(sample, 0, dur)
                     .context("muxer.add_audio_sample")?;
@@ -400,7 +424,8 @@ fn wire_audio(
             // Samples decoded, and those kept: the edit's window of them.
             let (mut decoded, mut pts) = (0u64, 0i64);
             let window = edit.map(|e| {
-                let at = |t: u64| container::edit::rescale_round(t, track.sample_rate, track.timescale);
+                let at =
+                    |t: u64| container::edit::rescale_round(t, track.sample_rate, track.timescale);
                 (at(e.media_start), e.media_end.map(at))
             });
             let mut take = |mut frame: codec::audio::AudioFrame| {
@@ -416,7 +441,10 @@ fn wire_audio(
                 frame
             };
             for packet in &track.samples {
-                for frame in dec.decode(packet, pts).with_context(|| format!("{codec_lower} decode"))? {
+                for frame in dec
+                    .decode(packet, pts)
+                    .with_context(|| format!("{codec_lower} decode"))?
+                {
                     let frame = take(frame);
                     if frame.samples.is_empty() {
                         continue;
@@ -429,12 +457,16 @@ fn wire_audio(
                     }
                 }
             }
-            for frame in dec.flush().with_context(|| format!("{codec_lower} flush"))? {
+            for frame in dec
+                .flush()
+                .with_context(|| format!("{codec_lower} flush"))?
+            {
                 let frame = take(frame);
                 if frame.samples.is_empty() {
                     continue;
                 }
-                pts = pts.saturating_add((frame.samples.len() as i64) / frame.channels.max(1) as i64);
+                pts =
+                    pts.saturating_add((frame.samples.len() as i64) / frame.channels.max(1) as i64);
                 for pkt in enc.encode(&frame).context("opus encode (flush)")? {
                     out.push((pkt.data, pkt.duration as u32));
                 }
@@ -451,7 +483,11 @@ fn wire_audio(
                 codec_private: enc.extra_data(),
             };
             if let Err(e) = muxer.with_audio(info) {
-                return Err(crate::job::audio_unusable(&codec_lower, &format!("is refused by the MP4 muxer: {e:#}"), false));
+                return Err(crate::job::audio_unusable(
+                    &codec_lower,
+                    &format!("is refused by the MP4 muxer: {e:#}"),
+                    false,
+                ));
             }
             // The encoder's lookahead (`dOps` PreSkip) is hidden by the track's
             // edit list, as ffmpeg writes an Opus MP4; without it every player
@@ -459,9 +495,15 @@ fn wire_audio(
             // after exactly the samples that went in.
             // A late start (an AVI's `dwStart`) is the edit's delay, on the Opus clock.
             muxer.set_audio_edit(container::edit::TrackEdit {
-                delay: edit.map_or(0, |e| container::edit::rescale_round(e.delay, 48_000, track.timescale)),
+                delay: edit.map_or(0, |e| {
+                    container::edit::rescale_round(e.delay, 48_000, track.timescale)
+                }),
                 media_time: u64::from(enc.pre_skip()),
-                duration: Some(container::edit::rescale_round(pts.max(0) as u64, 48_000, track.sample_rate)),
+                duration: Some(container::edit::rescale_round(
+                    pts.max(0) as u64,
+                    48_000,
+                    track.sample_rate,
+                )),
             });
             for (sample, dur) in out {
                 muxer
@@ -472,7 +514,11 @@ fn wire_audio(
         }
         // Nothing this path can write: refused by name, never dropped
         // silently (the job engine, with `audio=drop`, writes the video alone).
-        other => Err(crate::job::audio_unusable(other, "has no passthrough form or decoder in this build", false)),
+        other => Err(crate::job::audio_unusable(
+            other,
+            "has no passthrough form or decoder in this build",
+            false,
+        )),
     }
 }
 
@@ -642,7 +688,10 @@ mod tests {
     }
 
     fn unhex(s: &str) -> Vec<u8> {
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     /// An H.264 MP4 whose parameter sets say High 10 (the SPS and PPS of an
@@ -653,11 +702,29 @@ mod tests {
         use codec::frame::{EncodedPacket, VideoCodec};
         let sps = unhex("676e001ea6cd940a02ff970110000003001000000303c0f162d960");
         let pps = unhex("68ebe1b2c8b0");
-        let au = |nals: &[&[u8]]| -> Bytes { nals.iter().flat_map(|n| [&[0u8, 0, 0, 1][..], n].concat()).collect::<Vec<u8>>().into() };
-        let mut muxer = container::mux::Av1Mp4Muxer::new_with_codec(640, 360, 30.0, VideoCodec::H264).unwrap();
-        muxer.add_packet(EncodedPacket { data: au(&[&sps, &pps, &[0x65, 0x88, 0x84, 0x00]]), pts: 0, is_keyframe: true }).unwrap();
+        let au = |nals: &[&[u8]]| -> Bytes {
+            nals.iter()
+                .flat_map(|n| [&[0u8, 0, 0, 1][..], n].concat())
+                .collect::<Vec<u8>>()
+                .into()
+        };
+        let mut muxer =
+            container::mux::Av1Mp4Muxer::new_with_codec(640, 360, 30.0, VideoCodec::H264).unwrap();
+        muxer
+            .add_packet(EncodedPacket {
+                data: au(&[&sps, &pps, &[0x65, 0x88, 0x84, 0x00]]),
+                pts: 0,
+                is_keyframe: true,
+            })
+            .unwrap();
         for i in 1..4u64 {
-            muxer.add_packet(EncodedPacket { data: au(&[&[0x41, 0x9a, 0x02, 0x03]]), pts: i, is_keyframe: false }).unwrap();
+            muxer
+                .add_packet(EncodedPacket {
+                    data: au(&[&[0x41, 0x9a, 0x02, 0x03]]),
+                    pts: i,
+                    is_keyframe: false,
+                })
+                .unwrap();
         }
         muxer.finalize().unwrap().to_vec()
     }
@@ -677,10 +744,22 @@ mod tests {
             eprintln!("SKIP: this build encodes 10-bit AV1 ({caps:?})");
             return;
         }
-        let err = format!("{:#}", result.expect_err("an 8-bit AV1 build cannot keep 10 bits"));
-        assert!(err.contains("the zero-config transcode keeps an SDR source's depth"), "{err}");
+        let err = format!(
+            "{:#}",
+            result.expect_err("an 8-bit AV1 build cannot keep 10 bits")
+        );
+        assert!(
+            err.contains("the zero-config transcode keeps an SDR source's depth"),
+            "{err}"
+        );
         assert!(err.contains("the source is Yuv420p10le"), "{err}");
-        assert!(err.contains("`--pixel-format 8bit` encodes it at 8 bits"), "{err}");
-        assert!(!err.contains("decode") && !err.contains("select_encoder"), "refused after work began: {err}");
+        assert!(
+            err.contains("`--pixel-format 8bit` encodes it at 8 bits"),
+            "{err}"
+        );
+        assert!(
+            !err.contains("decode") && !err.contains("select_encoder"),
+            "refused after work began: {err}"
+        );
     }
 }

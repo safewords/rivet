@@ -48,7 +48,10 @@ pub fn vp8_frame_info(frame: &[u8]) -> Option<VpxFrameInfo> {
 /// inter frame.
 pub fn vp9_frame_info(frame: &[u8]) -> Option<VpxFrameInfo> {
     let frame = last_superframe_frame(frame).unwrap_or(frame);
-    let mut r = Bits { data: frame, pos: 0 };
+    let mut r = Bits {
+        data: frame,
+        pos: 0,
+    };
     if r.read(2)? != 2 {
         return None;
     }
@@ -58,7 +61,13 @@ pub fn vp9_frame_info(frame: &[u8]) -> Option<VpxFrameInfo> {
     if profile == 3 {
         r.read(1)?;
     }
-    let mut info = VpxFrameInfo { key_frame: false, profile, bit_depth: 8, subsampling: (1, 1), full_range: false };
+    let mut info = VpxFrameInfo {
+        key_frame: false,
+        profile,
+        bit_depth: 8,
+        subsampling: (1, 1),
+        full_range: false,
+    };
     if r.read(1)? == 1 {
         // show_existing_frame
         return Some(info);
@@ -140,7 +149,10 @@ pub fn vp9_level(width: u32, height: u32, frame_rate: f64) -> u8 {
     ];
     let size = u64::from(width) * u64::from(height);
     let rate = (size as f64 * frame_rate.max(0.0)).ceil() as u64;
-    LEVELS.iter().find(|(_, s, r)| size <= *s && rate <= *r).map_or(62, |(l, _, _)| *l)
+    LEVELS
+        .iter()
+        .find(|(_, s, r)| size <= *s && rate <= *r)
+        .map_or(62, |(l, _, _)| *l)
 }
 
 /// The VP codec configuration a sample entry, a CMAF init segment and the
@@ -164,8 +176,19 @@ impl VpxConfig {
     /// frame), coded at `width` x `height` and `frame_rate`, tagged with
     /// `color`. `vp9` selects the VP9 header reader; VP8 is profile 0, 8-bit
     /// 4:2:0.
-    pub fn from_stream(vp9: bool, first: &[u8], width: u32, height: u32, frame_rate: f64, color: &ColorMetadata) -> Self {
-        let info = if vp9 { vp9_frame_info(first) } else { vp8_frame_info(first) };
+    pub fn from_stream(
+        vp9: bool,
+        first: &[u8],
+        width: u32,
+        height: u32,
+        frame_rate: f64,
+        color: &ColorMetadata,
+    ) -> Self {
+        let info = if vp9 {
+            vp9_frame_info(first)
+        } else {
+            vp8_frame_info(first)
+        };
         let info = info.unwrap_or(VpxFrameInfo {
             key_frame: true,
             profile: 0,
@@ -181,7 +204,11 @@ impl VpxConfig {
         VpxConfig {
             profile: info.profile,
             // VP8 has no levels: the field is VP9's.
-            level: if vp9 { vp9_level(width, height, frame_rate) } else { 0 },
+            level: if vp9 {
+                vp9_level(width, height, frame_rate)
+            } else {
+                0
+            },
             bit_depth: info.bit_depth,
             chroma_subsampling,
             full_range: info.full_range || color.full_range,
@@ -196,7 +223,11 @@ impl VpxConfig {
         let mut body = vec![1u8, 0, 0, 0]; // version 1, flags 0
         body.push(self.profile);
         body.push(self.level);
-        body.push((self.bit_depth << 4) | ((self.chroma_subsampling & 0x7) << 1) | u8::from(self.full_range));
+        body.push(
+            (self.bit_depth << 4)
+                | ((self.chroma_subsampling & 0x7) << 1)
+                | u8::from(self.full_range),
+        );
         body.push(self.colour_primaries);
         body.push(self.transfer_characteristics);
         body.push(self.matrix_coefficients);
@@ -295,7 +326,11 @@ mod tests {
 
     #[test]
     fn vp8_key_frames_are_tag_bit_zero() {
-        assert!(vp8_frame_info(&[0x10, 0x02, 0x00, 0x9d, 0x01, 0x2a]).unwrap().key_frame);
+        assert!(
+            vp8_frame_info(&[0x10, 0x02, 0x00, 0x9d, 0x01, 0x2a])
+                .unwrap()
+                .key_frame
+        );
         assert!(!vp8_frame_info(&[0x11, 0x02, 0x00]).unwrap().key_frame);
         assert!(vp8_frame_info(&[0x10]).is_none());
     }
@@ -308,7 +343,15 @@ mod tests {
         let hdr = [0x82, 0x49, 0x83, 0x42, 0b0100_0000, 0, 0, 0];
         let info = vp9_frame_info(&hdr).unwrap();
         assert!(info.key_frame);
-        assert_eq!((info.profile, info.bit_depth, info.subsampling, info.full_range), (0, 8, (1, 1), false));
+        assert_eq!(
+            (
+                info.profile,
+                info.bit_depth,
+                info.subsampling,
+                info.full_range
+            ),
+            (0, 8, (1, 1), false)
+        );
         // An inter frame: frame_type 1.
         assert!(!vp9_frame_info(&[0x86, 0, 0]).unwrap().key_frame);
     }

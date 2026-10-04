@@ -1,10 +1,10 @@
 // Box primitives, sample-table builders, chunk-offset switching.
 // 13 #[test] functions.
 
-use frame::VideoCodec;
-use super::super::boxes::{BoxBuilder, build_ftyp, build_moov, write_leb128, read_leb128};
-use super::super::sample_table::{build_stsc, build_stco, build_co64, compute_chunk_offsets};
+use super::super::boxes::{BoxBuilder, build_ftyp, build_moov, read_leb128, write_leb128};
+use super::super::sample_table::{build_co64, build_stco, build_stsc, compute_chunk_offsets};
 use super::find_fourcc;
+use frame::VideoCodec;
 
 // ---- ftyp / leb128 / BoxBuilder ------------------------------------------
 
@@ -102,8 +102,7 @@ fn build_stco_emits_32bit_offsets() {
     let offs = vec![8u64, 1_000_000, u32::MAX as u64];
     let box_bytes = build_stco(&offs);
     assert_eq!(&box_bytes[4..8], b"stco");
-    let count =
-        u32::from_be_bytes([box_bytes[12], box_bytes[13], box_bytes[14], box_bytes[15]]);
+    let count = u32::from_be_bytes([box_bytes[12], box_bytes[13], box_bytes[14], box_bytes[15]]);
     assert_eq!(count, 3);
     // 3 × 4 = 12 entry bytes. Header: 4 size + 4 type + 1 ver + 3 flags + 4 count = 16.
     assert_eq!(box_bytes.len(), 16 + 12);
@@ -117,8 +116,7 @@ fn build_co64_emits_64bit_offsets() {
     let offs = vec![8u64, big, big + 1_000_000];
     let box_bytes = build_co64(&offs);
     assert_eq!(&box_bytes[4..8], b"co64");
-    let count =
-        u32::from_be_bytes([box_bytes[12], box_bytes[13], box_bytes[14], box_bytes[15]]);
+    let count = u32::from_be_bytes([box_bytes[12], box_bytes[13], box_bytes[14], box_bytes[15]]);
     assert_eq!(count, 3);
     // 3 × 8 = 24 entry bytes. Header = 16.
     assert_eq!(box_bytes.len(), 16 + 24);

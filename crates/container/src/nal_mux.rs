@@ -392,7 +392,12 @@ pub(crate) struct ParamSetLedger {
 
 impl ParamSetLedger {
     pub(crate) fn new(codec: NalMuxCodec) -> Self {
-        Self { codec, vps: Vec::new(), sps: Vec::new(), pps: Vec::new() }
+        Self {
+            codec,
+            vps: Vec::new(),
+            sps: Vec::new(),
+            pps: Vec::new(),
+        }
     }
 
     /// Hold `nal` if it is a parameter set. `None` for any other NAL unit.
@@ -464,11 +469,17 @@ fn keep_by_id(store: &mut Vec<Vec<u8>>, nal: &[u8], codec: NalMuxCodec, kind: Na
         store.push(nal.to_vec());
         return Kept::New;
     };
-    let ids: Vec<Option<u32>> = store.iter().map(|held| param_set_id(held, codec, kind)).collect();
+    let ids: Vec<Option<u32>> = store
+        .iter()
+        .map(|held| param_set_id(held, codec, kind))
+        .collect();
     if ids.contains(&Some(id)) {
         return Kept::Conflict(id);
     }
-    let at = ids.iter().position(|held| held.is_none_or(|h| h > id)).unwrap_or(store.len());
+    let at = ids
+        .iter()
+        .position(|held| held.is_none_or(|h| h > id))
+        .unwrap_or(store.len());
     store.insert(at, nal.to_vec());
     Kept::New
 }
@@ -491,7 +502,10 @@ fn param_set_id(nal: &[u8], codec: NalMuxCodec, kind: NalClass) -> Option<u32> {
         NalMuxCodec::H265 => 2,
     };
     let rbsp = unescape(nal.get(header..)?);
-    let mut r = Bits { data: &rbsp, pos: 0 };
+    let mut r = Bits {
+        data: &rbsp,
+        pos: 0,
+    };
     match (codec, kind) {
         // profile_idc, the constraint flags and level_idc come first.
         (NalMuxCodec::H264, NalClass::Sps) => {
@@ -779,7 +793,10 @@ mod tests {
         }
         let mut out = header.to_vec();
         let mut zeros = 0;
-        for byte in bits.chunks(8).map(|c| c.iter().fold(0u8, |b, &x| b << 1 | x)) {
+        for byte in bits
+            .chunks(8)
+            .map(|c| c.iter().fold(0u8, |b, &x| b << 1 | x))
+        {
             if zeros >= 2 && byte <= 3 {
                 out.push(3);
                 zeros = 0;
@@ -795,7 +812,18 @@ mod tests {
     fn h264_pps(id: u32, qp_code: u32) -> Vec<u8> {
         // entropy, bottom_field_pic_order, slice groups, l0/l1 defaults,
         // weighted_pred, weighted_bipred_idc, then pic_init_qp_minus26.
-        let fields = [(id, 0), (0, 0), (0, 1), (0, 1), (0, 0), (0, 0), (0, 0), (0, 1), (0, 2), (qp_code, 0)];
+        let fields = [
+            (id, 0),
+            (0, 0),
+            (0, 1),
+            (0, 1),
+            (0, 0),
+            (0, 0),
+            (0, 0),
+            (0, 1),
+            (0, 2),
+            (qp_code, 0),
+        ];
         nal(&[0x68], &fields)
     }
 
@@ -834,10 +862,18 @@ mod tests {
         samples.extend(w.push_packet(&au(&[&pps1, &H264_P])));
         samples.extend(w.push_packet(&au(&[&H264_P])));
         assert_eq!(w.pps, vec![pps0, pps1], "one PPS per id, in id order");
-        assert!(w.conflicts.is_empty(), "two ids are no conflict: {:?}", w.conflicts);
+        assert!(
+            w.conflicts.is_empty(),
+            "two ids are no conflict: {:?}",
+            w.conflicts
+        );
         assert_eq!(samples.len(), 3);
         assert_eq!(samples[0].data, length_prefixed(&[&H264_IDR]));
-        assert_eq!(samples[1].data, length_prefixed(&[&H264_P]), "avc1: the re-sent PPS lives in avcC");
+        assert_eq!(
+            samples[1].data,
+            length_prefixed(&[&H264_P]),
+            "avc1: the re-sent PPS lives in avcC"
+        );
         // And the record lists both: numOfPictureParameterSets = 2, id 0 first.
         let avcc = crate::mux::build_avcc(&w.sps, &w.pps);
         let at = 8 + 6 + 2 + H264_SPS.len();
@@ -853,9 +889,17 @@ mod tests {
         w.push_packet(&au(&[&H264_SPS, &pps0, &H264_IDR]));
         let b = w.push_packet(&au(&[&pps1, &H264_P]));
         let again = w.push_packet(&au(&[&pps1, &H264_P]));
-        assert_eq!(b[0].data, length_prefixed(&[&pps1, &H264_P]), "avc3: the set stays in its access unit");
+        assert_eq!(
+            b[0].data,
+            length_prefixed(&[&pps1, &H264_P]),
+            "avc3: the set stays in its access unit"
+        );
         assert_eq!(again[0].data, b[0].data, "every repeat too");
-        assert_eq!(w.pps, vec![pps0, pps1], "the box's default hint has both ids");
+        assert_eq!(
+            w.pps,
+            vec![pps0, pps1],
+            "the box's default hint has both ids"
+        );
     }
 
     #[test]
@@ -866,14 +910,26 @@ mod tests {
         assert!(!w.in_band(), "fixed so far: avc1");
         let b = w.push_packet(&au(&[&changed, &H264_P]));
         let c = w.push_packet(&au(&[&first, &H264_P]));
-        assert_eq!(w.pps, vec![first.clone()], "one set per id: the one the first pictures use");
-        assert_eq!(w.conflicts, vec![(NalClass::Pps, 0)], "named once, by kind and id");
+        assert_eq!(
+            w.pps,
+            vec![first.clone()],
+            "one set per id: the one the first pictures use"
+        );
+        assert_eq!(
+            w.conflicts,
+            vec![(NalClass::Pps, 0)],
+            "named once, by kind and id"
+        );
         // From the change on, every set travels in band, under avc3: the
         // pictures before it take theirs from the config box.
         assert!(w.in_band() && w.param_sets_changed());
         assert_eq!(a[0].data, length_prefixed(&[&H264_IDR]));
         assert_eq!(b[0].data, length_prefixed(&[&changed, &H264_P]));
-        assert_eq!(c[0].data, length_prefixed(&[&first, &H264_P]), "and the first set again, in band");
+        assert_eq!(
+            c[0].data,
+            length_prefixed(&[&first, &H264_P]),
+            "and the first set again, in band"
+        );
 
         // Inline, a re-sent set replaces the one before it in-band: no conflict.
         let mut w = NalSampleWriter::new_inline(NalMuxCodec::H264);
@@ -922,7 +978,16 @@ mod tests {
     /// An H.265 SPS declaring `id`, with `sub_layers` temporal sub-layers whose
     /// profile and level are both signalled (so the id sits past them).
     fn h265_sps(id: u32, sub_layers: u32) -> Vec<u8> {
-        let general = [(0, 2), (0, 1), (1, 5), (0x6000_0000, 32), (0b1001, 4), (0, 32), (0, 11), (0, 1)];
+        let general = [
+            (0, 2),
+            (0, 1),
+            (1, 5),
+            (0x6000_0000, 32),
+            (0b1001, 4),
+            (0, 32),
+            (0, 11),
+            (0, 1),
+        ];
         let mut fields = vec![(0, 4), (sub_layers, 3), (1, 1)];
         fields.extend(general);
         fields.push((93, 8)); // general_level_idc
@@ -942,20 +1007,40 @@ mod tests {
 
     #[test]
     fn h265_sets_are_kept_one_per_id_in_id_order() {
-        let vps = |id: u32| nal(&[0x40, 0x01], &[(id, 4), (3, 2), (0, 6), (0, 3), (1, 1), (0xFFFF, 16)]);
+        let vps = |id: u32| {
+            nal(
+                &[0x40, 0x01],
+                &[(id, 4), (3, 2), (0, 6), (0, 3), (1, 1), (0xFFFF, 16)],
+            )
+        };
         let pps = |id: u32| nal(&[0x44, 0x01], &[(id, 0), (0, 0), (0, 1), (0, 1), (0, 3)]);
         let idr = [0x26u8, 0x01, 0xAF];
         for sub_layers in [0, 2] {
             let (sps0, sps1) = (h265_sps(0, sub_layers), h265_sps(1, sub_layers));
-            assert_eq!(param_set_id(&sps1, NalMuxCodec::H265, NalClass::Sps), Some(1));
+            assert_eq!(
+                param_set_id(&sps1, NalMuxCodec::H265, NalClass::Sps),
+                Some(1)
+            );
             let mut w = NalSampleWriter::new(NalMuxCodec::H265);
-            let s = w.push_packet(&au(&[&vps(1), &vps(0), &sps1, &sps0, &pps(1), &pps(0), &idr]));
+            let s = w.push_packet(&au(&[
+                &vps(1),
+                &vps(0),
+                &sps1,
+                &sps0,
+                &pps(1),
+                &pps(0),
+                &idr,
+            ]));
             w.push_packet(&au(&[&pps(1), &sps1, &idr]));
             assert_eq!(w.vps, vec![vps(0), vps(1)]);
             assert_eq!(w.sps, vec![sps0, sps1], "{sub_layers} sub-layers");
             assert_eq!(w.pps, vec![pps(0), pps(1)]);
             assert!(w.conflicts.is_empty());
-            assert_eq!(s[0].data, length_prefixed(&[&idr]), "hvc1: every set out of band");
+            assert_eq!(
+                s[0].data,
+                length_prefixed(&[&idr]),
+                "hvc1: every set out of band"
+            );
         }
     }
 
@@ -966,6 +1051,9 @@ mod tests {
         // past them reads only from the unescaped payload.
         let sps = h265_sps(5, 0);
         assert!(sps.windows(3).any(|w| w == [0, 0, 3]), "{sps:02x?}");
-        assert_eq!(param_set_id(&sps, NalMuxCodec::H265, NalClass::Sps), Some(5));
+        assert_eq!(
+            param_set_id(&sps, NalMuxCodec::H265, NalClass::Sps),
+            Some(5)
+        );
     }
 }

@@ -62,7 +62,9 @@ impl PcmFormat {
             Self::S24Le => (i32::from_le_bytes([0, b[0], b[1], b[2]]) >> 8) as f32 / 8_388_608.0,
             Self::S32Le => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32 / 2_147_483_648.0,
             Self::F32Le => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
-            Self::F64Le => f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f32,
+            Self::F64Le => {
+                f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f32
+            }
         }
     }
 }
@@ -89,7 +91,14 @@ impl PcmDecoder {
                 "PCM needs a channel count and a sample rate (got {channels} channel(s) at {sample_rate} Hz)"
             )));
         }
-        Ok(Self { format, sample_rate, channels, pending: Vec::new(), first_pts_us: None, frames_out: 0 })
+        Ok(Self {
+            format,
+            sample_rate,
+            channels,
+            pending: Vec::new(),
+            first_pts_us: None,
+            frames_out: 0,
+        })
     }
 }
 
@@ -109,7 +118,12 @@ impl AudioDecoder for PcmDecoder {
         self.pending.drain(..whole);
         let pts = first_pts_us + (self.frames_out as i64 * 1_000_000) / i64::from(self.sample_rate);
         self.frames_out += (whole / frame_bytes) as u64;
-        Ok(vec![AudioFrame { samples, sample_rate: self.sample_rate, channels: self.channels, pts }])
+        Ok(vec![AudioFrame {
+            samples,
+            sample_rate: self.sample_rate,
+            channels: self.channels,
+            pts,
+        }])
     }
 
     fn flush(&mut self) -> Result<Vec<AudioFrame>, AudioError> {
@@ -149,20 +163,40 @@ mod tests {
     fn a_frame_split_across_packets_is_joined_and_timed() {
         let mut dec = PcmDecoder::new("pcm_s16le", 48_000, 2).unwrap();
         // Three stereo frames (12 bytes) cut 5 / 7.
-        let bytes: Vec<u8> = [100i16, -100, 200, -200, 300, -300].iter().flat_map(|s| s.to_le_bytes()).collect();
+        let bytes: Vec<u8> = [100i16, -100, 200, -200, 300, -300]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
         let a = dec.decode(&bytes[..5], 1_000).unwrap();
         assert_eq!(a[0].samples.len(), 2, "one whole frame");
         assert_eq!(a[0].pts, 1_000);
         let b = dec.decode(&bytes[5..], 9_999).unwrap();
-        assert_eq!(b[0].samples, vec![200.0 / 32_768.0, -200.0 / 32_768.0, 300.0 / 32_768.0, -300.0 / 32_768.0]);
-        assert_eq!(b[0].pts, 1_000 + 1_000_000 / 48_000, "one frame after the first packet's PTS");
+        assert_eq!(
+            b[0].samples,
+            vec![
+                200.0 / 32_768.0,
+                -200.0 / 32_768.0,
+                300.0 / 32_768.0,
+                -300.0 / 32_768.0
+            ]
+        );
+        assert_eq!(
+            b[0].pts,
+            1_000 + 1_000_000 / 48_000,
+            "one frame after the first packet's PTS"
+        );
         assert!(dec.decode(&[1], 0).unwrap().is_empty());
-        assert!(dec.flush().unwrap().is_empty(), "a partial frame at the end is dropped");
+        assert!(
+            dec.flush().unwrap().is_empty(),
+            "a partial frame at the end is dropped"
+        );
     }
 
     #[test]
     fn other_codecs_are_refused_by_name() {
-        let err = PcmDecoder::new("pcm_alaw", 8_000, 1).err().expect("not linear PCM");
+        let err = PcmDecoder::new("pcm_alaw", 8_000, 1)
+            .err()
+            .expect("not linear PCM");
         assert!(err.to_string().contains("pcm_alaw"), "{err}");
     }
 }

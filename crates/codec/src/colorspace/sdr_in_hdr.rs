@@ -300,14 +300,23 @@ impl SdrToHdr {
     /// its order (no fused multiply-add; the table reads are gathers of the
     /// same entries), and a chroma sample's four values are summed in the
     /// same order.
-    pub(crate) fn convert_at(&self, frame: &VideoFrame, level: crate::simd::Level) -> Result<VideoFrame> {
+    pub(crate) fn convert_at(
+        &self,
+        frame: &VideoFrame,
+        level: crate::simd::Level,
+    ) -> Result<VideoFrame> {
         self.convert_with(frame, level, crate::simd::picture_threads())
     }
 
     /// [`Self::convert_at`] with its rows split across up to `threads`
     /// threads (bands of at least 16 chroma rows). Every split writes the
     /// same bytes.
-    fn convert_with(&self, frame: &VideoFrame, level: crate::simd::Level, threads: usize) -> Result<VideoFrame> {
+    fn convert_with(
+        &self,
+        frame: &VideoFrame,
+        level: crate::simd::Level,
+        threads: usize,
+    ) -> Result<VideoFrame> {
         let depth: u32 = match frame.format {
             PixelFormat::Yuv420p => 8,
             PixelFormat::Yuv420p10le => 10,
@@ -342,7 +351,18 @@ impl SdrToHdr {
         };
         let (cb_at, cr_at) = (w * h, w * h + cw * ch);
         #[cfg(target_arch = "x86_64")]
-        let rows = Rows { data, bytes, w, cw, cb_at, cr_at, black, y_span, mid, c_span };
+        let rows = Rows {
+            data,
+            bytes,
+            w,
+            cw,
+            cb_at,
+            cr_at,
+            black,
+            y_span,
+            mid,
+            c_span,
+        };
 
         let mut y_code = vec![0u16; w * h];
         let mut cb_sum = vec![0f32; cw * ch];
@@ -353,7 +373,11 @@ impl SdrToHdr {
         let band = |cy0: usize, y_code: &mut [u16], cb_sum: &mut [f32], cr_sum: &mut [f32]| {
             for py in 2 * cy0..(2 * cy0 + y_code.len() / w.max(1)).min(h) {
                 let r = py - 2 * cy0;
-                let (yc, cbs, crs) = (&mut y_code[r * w..(r + 1) * w], &mut cb_sum[(r / 2) * cw..], &mut cr_sum[(r / 2) * cw..]);
+                let (yc, cbs, crs) = (
+                    &mut y_code[r * w..(r + 1) * w],
+                    &mut cb_sum[(r / 2) * cw..],
+                    &mut cr_sum[(r / 2) * cw..],
+                );
                 #[allow(unused_mut)]
                 let mut done = 0;
                 #[cfg(target_arch = "x86_64")]
@@ -404,7 +428,9 @@ impl SdrToHdr {
             for cy in 0..ch {
                 for cx in 0..cw {
                     let n = ((w - 2 * cx).min(2) * (h - 2 * cy).min(2)) as f32;
-                    out.extend_from_slice(&code(896.0 * sums[cy * cw + cx] / n + 512.0).to_le_bytes());
+                    out.extend_from_slice(
+                        &code(896.0 * sums[cy * cw + cx] / n + 512.0).to_le_bytes(),
+                    );
                 }
             }
         }
@@ -430,7 +456,14 @@ impl SdrToHdr {
     /// start at the row's first chroma sample.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
-    unsafe fn row_avx2(&self, rows: &Rows<'_>, py: usize, y_code: &mut [u16], cb_sum: &mut [f32], cr_sum: &mut [f32]) -> usize {
+    unsafe fn row_avx2(
+        &self,
+        rows: &Rows<'_>,
+        py: usize,
+        y_code: &mut [u16],
+        cb_sum: &mut [f32],
+        cr_sum: &mut [f32],
+    ) -> usize {
         use std::arch::x86_64::*;
         unsafe {
             let w = rows.w;
@@ -439,27 +472,44 @@ impl SdrToHdr {
             // Eight samples at index `at` of a plane, as f32 (exact).
             let load8 = |at: usize| -> __m256 {
                 let v = if rows.bytes == 1 {
-                    _mm256_cvtepu8_epi32(_mm_loadl_epi64(rows.data.as_ptr().add(at) as *const __m128i))
+                    _mm256_cvtepu8_epi32(_mm_loadl_epi64(
+                        rows.data.as_ptr().add(at) as *const __m128i
+                    ))
                 } else {
-                    _mm256_cvtepu16_epi32(_mm_loadu_si128(rows.data.as_ptr().add(2 * at) as *const __m128i))
+                    _mm256_cvtepu16_epi32(_mm_loadu_si128(
+                        rows.data.as_ptr().add(2 * at) as *const __m128i
+                    ))
                 };
                 _mm256_cvtepi32_ps(v)
             };
             // Four chroma samples at `at`, each twice: the eight pixels' own.
             let load4x2 = |at: usize| -> __m256 {
                 let v = if rows.bytes == 1 {
-                    _mm_cvtepu8_epi32(_mm_cvtsi32_si128((rows.data.as_ptr().add(at) as *const i32).read_unaligned()))
+                    _mm_cvtepu8_epi32(_mm_cvtsi32_si128(
+                        (rows.data.as_ptr().add(at) as *const i32).read_unaligned(),
+                    ))
                 } else {
-                    _mm_cvtepu16_epi32(_mm_loadl_epi64(rows.data.as_ptr().add(2 * at) as *const __m128i))
+                    _mm_cvtepu16_epi32(_mm_loadl_epi64(
+                        rows.data.as_ptr().add(2 * at) as *const __m128i
+                    ))
                 };
                 let f = _mm256_castps128_ps256(_mm_cvtepi32_ps(v));
                 _mm256_permutevar8x32_ps(f, _mm256_setr_epi32(0, 0, 1, 1, 2, 2, 3, 3))
             };
             let set = _mm256_set1_ps;
-            let (black, y_span, mid, c_span) = (set(rows.black), set(rows.y_span), set(rows.mid), set(rows.c_span));
+            let (black, y_span, mid, c_span) = (
+                set(rows.black),
+                set(rows.y_span),
+                set(rows.mid),
+                set(rows.c_span),
+            );
             let (kr, kb) = (self.kr, self.kb);
             // The scalar pixel's constants, computed as it computes them.
-            let (k_r, k_b, k_g) = (set(2.0 * (1.0 - kr)), set(2.0 * (1.0 - kb)), set(1.0 - kr - kb));
+            let (k_r, k_b, k_g) = (
+                set(2.0 * (1.0 - kr)),
+                set(2.0 * (1.0 - kb)),
+                set(1.0 - kr - kb),
+            );
             let (zero, one) = (_mm256_setzero_ps(), set(1.0));
             let lerp = |table: &[f32], x: __m256| lerp_avx2(table, x);
             let m = self.primaries;
@@ -474,30 +524,53 @@ impl SdrToHdr {
                 // `pixel`, step by step.
                 let r = _mm256_add_ps(y, _mm256_mul_ps(k_r, cr));
                 let b = _mm256_add_ps(y, _mm256_mul_ps(k_b, cb));
-                let g = _mm256_div_ps(_mm256_sub_ps(_mm256_sub_ps(y, _mm256_mul_ps(set(kr), r)), _mm256_mul_ps(set(kb), b)), k_g);
-                let lin = [lerp(&self.eotf, r), lerp(&self.eotf, g), lerp(&self.eotf, b)];
+                let g = _mm256_div_ps(
+                    _mm256_sub_ps(
+                        _mm256_sub_ps(y, _mm256_mul_ps(set(kr), r)),
+                        _mm256_mul_ps(set(kb), b),
+                    ),
+                    k_g,
+                );
+                let lin = [
+                    lerp(&self.eotf, r),
+                    lerp(&self.eotf, g),
+                    lerp(&self.eotf, b),
+                ];
                 let l: [__m256; 3] = std::array::from_fn(|i| {
                     let s = _mm256_add_ps(
-                        _mm256_add_ps(_mm256_mul_ps(set(m[i][0]), lin[0]), _mm256_mul_ps(set(m[i][1]), lin[1])),
+                        _mm256_add_ps(
+                            _mm256_mul_ps(set(m[i][0]), lin[0]),
+                            _mm256_mul_ps(set(m[i][1]), lin[1]),
+                        ),
                         _mm256_mul_ps(set(m[i][2]), lin[2]),
                     );
                     _mm256_min_ps(_mm256_max_ps(s, zero), one)
                 });
                 let out = l.map(|v| lerp(&self.pq, _mm256_sqrt_ps(v)));
-                let yp = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(kr20, out[0]), _mm256_mul_ps(kg20, out[1])), _mm256_mul_ps(kb20, out[2]));
+                let yp = _mm256_add_ps(
+                    _mm256_add_ps(_mm256_mul_ps(kr20, out[0]), _mm256_mul_ps(kg20, out[1])),
+                    _mm256_mul_ps(kb20, out[2]),
+                );
                 let cbo = _mm256_div_ps(_mm256_sub_ps(out[2], yp), dcb);
                 let cro = _mm256_div_ps(_mm256_sub_ps(out[0], yp), dcr);
                 // Luma codes: `round` (half away from zero), clamp, narrow.
                 let v = _mm256_add_ps(_mm256_mul_ps(set(876.0), yp), set(64.0));
                 let t = _mm256_round_ps::<{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }>(v);
-                let half = _mm256_cmp_ps::<_CMP_GE_OQ>(_mm256_andnot_ps(set(-0.0), _mm256_sub_ps(v, t)), set(0.5));
+                let half = _mm256_cmp_ps::<_CMP_GE_OQ>(
+                    _mm256_andnot_ps(set(-0.0), _mm256_sub_ps(v, t)),
+                    set(0.5),
+                );
                 let away = _mm256_and_ps(half, _mm256_or_ps(_mm256_and_ps(v, set(-0.0)), one));
                 let q = _mm256_min_ps(_mm256_max_ps(_mm256_add_ps(t, away), zero), set(1023.0));
                 let q = _mm256_cvttps_epi32(q);
-                let q = _mm_packus_epi32(_mm256_castsi256_si128(q), _mm256_extracti128_si256::<1>(q));
+                let q =
+                    _mm_packus_epi32(_mm256_castsi256_si128(q), _mm256_extracti128_si256::<1>(q));
                 _mm_storeu_si128(y_code.as_mut_ptr().add(x) as *mut __m128i, q);
                 // Chroma: the even pixel's value first, then the odd one's.
-                let (even, odd) = (_mm256_setr_epi32(0, 2, 4, 6, 0, 0, 0, 0), _mm256_setr_epi32(1, 3, 5, 7, 0, 0, 0, 0));
+                let (even, odd) = (
+                    _mm256_setr_epi32(0, 2, 4, 6, 0, 0, 0, 0),
+                    _mm256_setr_epi32(1, 3, 5, 7, 0, 0, 0, 0),
+                );
                 for (sums, v) in [(&mut *cb_sum, cbo), (&mut *cr_sum, cro)] {
                     let p = sums.as_mut_ptr().add(x / 2);
                     let e = _mm256_castps256_ps128(_mm256_permutevar8x32_ps(v, even));
@@ -522,8 +595,14 @@ impl SdrToHdr {
 unsafe fn lerp_avx2(table: &[f32], x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
     use std::arch::x86_64::*;
     unsafe {
-        let p = _mm256_mul_ps(_mm256_min_ps(_mm256_max_ps(x, _mm256_setzero_ps()), _mm256_set1_ps(1.0)), _mm256_set1_ps(LUT_STEPS as f32));
-        let i = _mm256_min_epi32(_mm256_cvttps_epi32(p), _mm256_set1_epi32(LUT_STEPS as i32 - 1));
+        let p = _mm256_mul_ps(
+            _mm256_min_ps(_mm256_max_ps(x, _mm256_setzero_ps()), _mm256_set1_ps(1.0)),
+            _mm256_set1_ps(LUT_STEPS as f32),
+        );
+        let i = _mm256_min_epi32(
+            _mm256_cvttps_epi32(p),
+            _mm256_set1_epi32(LUT_STEPS as i32 - 1),
+        );
         let f = _mm256_sub_ps(p, _mm256_cvtepi32_ps(i));
         let a = _mm256_i32gather_ps::<4>(table.as_ptr(), i);
         let b = _mm256_i32gather_ps::<4>(table.as_ptr().add(1), i);
@@ -687,10 +766,14 @@ mod tests {
     fn every_simd_level_writes_the_scalar_bytes() {
         let mut seed = 0x5d0_u64;
         let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) as u32
         };
-        let levels = [crate::simd::Level::Avx2, crate::simd::Level::Avx512].into_iter().filter(|&l| l <= crate::simd::Level::host());
+        let levels = [crate::simd::Level::Avx2, crate::simd::Level::Avx512]
+            .into_iter()
+            .filter(|&l| l <= crate::simd::Level::host());
         let mut checked = 0;
         for level in levels {
             for &(w, h) in &[(16usize, 4usize), (37, 5), (64, 3), (8, 8), (7, 3)] {
@@ -698,18 +781,36 @@ mod tests {
                     let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
                     let n = w * h + 2 * cw * ch;
                     let data: Vec<u8> = if ten {
-                        (0..n).flat_map(|_| ((next() % 1024) as u16).to_le_bytes()).collect()
+                        (0..n)
+                            .flat_map(|_| ((next() % 1024) as u16).to_le_bytes())
+                            .collect()
                     } else {
                         (0..n).map(|_| next() as u8).collect()
                     };
-                    let format = if ten { PixelFormat::Yuv420p10le } else { PixelFormat::Yuv420p };
-                    let frame = VideoFrame::new(Bytes::from(data), w as u32, h as u32, format, ColorSpace::Bt709, 3);
+                    let format = if ten {
+                        PixelFormat::Yuv420p10le
+                    } else {
+                        PixelFormat::Yuv420p
+                    };
+                    let frame = VideoFrame::new(
+                        Bytes::from(data),
+                        w as u32,
+                        h as u32,
+                        format,
+                        ColorSpace::Bt709,
+                        3,
+                    );
                     for target in [TransferFn::St2084, TransferFn::AribStdB67] {
-                        for (matrix, primaries, full) in [(1, 1, false), (6, 6, false), (1, 1, true), (9, 9, false)] {
+                        for (matrix, primaries, full) in
+                            [(1, 1, false), (6, 6, false), (1, 1, true), (9, 9, false)]
+                        {
                             let c = SdrToHdr::new(&sdr(matrix, primaries, full), target).unwrap();
                             let want = c.convert_at(&frame, crate::simd::Level::Scalar).unwrap();
                             let got = c.convert_at(&frame, level).unwrap();
-                            assert!(got.data == want.data, "{level:?} {w}x{h} ten={ten} {target:?} matrix {matrix} full {full}");
+                            assert!(
+                                got.data == want.data,
+                                "{level:?} {w}x{h} ten={ten} {target:?} matrix {matrix} full {full}"
+                            );
                             checked += 1;
                         }
                     }
@@ -727,15 +828,29 @@ mod tests {
     fn bands_write_the_whole_pictures_bytes() {
         let (w, h) = (70usize, 130usize);
         let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
-        let data: Vec<u8> = (0..w * h + 2 * cw * ch).map(|i| (i * 37 % 251) as u8).collect();
-        let frame = VideoFrame::new(Bytes::from(data), w as u32, h as u32, PixelFormat::Yuv420p, ColorSpace::Bt709, 0);
-        let levels = [crate::simd::Level::Scalar, crate::simd::Level::Avx2].into_iter().filter(|&l| l <= crate::simd::Level::host());
+        let data: Vec<u8> = (0..w * h + 2 * cw * ch)
+            .map(|i| (i * 37 % 251) as u8)
+            .collect();
+        let frame = VideoFrame::new(
+            Bytes::from(data),
+            w as u32,
+            h as u32,
+            PixelFormat::Yuv420p,
+            ColorSpace::Bt709,
+            0,
+        );
+        let levels = [crate::simd::Level::Scalar, crate::simd::Level::Avx2]
+            .into_iter()
+            .filter(|&l| l <= crate::simd::Level::host());
         for level in levels {
             for target in [TransferFn::St2084, TransferFn::AribStdB67] {
                 let c = SdrToHdr::new(&sdr(1, 1, false), target).unwrap();
                 let whole = c.convert_with(&frame, level, 1).unwrap();
                 for threads in [2usize, 3, 5, 64] {
-                    assert!(c.convert_with(&frame, level, threads).unwrap().data == whole.data, "{level:?} {target:?} {threads} threads");
+                    assert!(
+                        c.convert_with(&frame, level, threads).unwrap().data == whole.data,
+                        "{level:?} {target:?} {threads} threads"
+                    );
                 }
             }
         }

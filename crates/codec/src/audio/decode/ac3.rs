@@ -71,7 +71,11 @@ impl Ac3Decoder {
         Self::with_options(sample_rate, channels, Ac3Options::default())
     }
 
-    pub fn with_options(sample_rate: u32, channels: u8, opts: Ac3Options) -> Result<Self, AudioError> {
+    pub fn with_options(
+        sample_rate: u32,
+        channels: u8,
+        opts: Ac3Options,
+    ) -> Result<Self, AudioError> {
         if channels > 8 {
             return Err(AudioError::Unsupported(format!(
                 "ac3: {channels} channels — AC-3 carries at most 6, E-AC-3 here at most 8 (7.1)"
@@ -129,7 +133,9 @@ impl AudioDecoder for Ac3Decoder {
     }
 
     fn layout(&self) -> Option<ChannelLayout> {
-        self.layout.clone().or_else(|| self.inner.last_header().map(|h| layout(&h)))
+        self.layout
+            .clone()
+            .or_else(|| self.inner.last_header().map(|h| layout(&h)))
     }
 }
 
@@ -201,10 +207,16 @@ mod tests {
     /// as arbitrary packet boundaries, stamped from the first packet's pts.
     #[test]
     fn adapter_reassembles_split_frames_and_stamps_them() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../rivet/tests/data/audio/tones_51.ac3");
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../rivet/tests/data/audio/tones_51.ac3");
         let es = std::fs::read(&path).expect("tones_51.ac3");
         let mut direct = ac3::Decoder::new();
-        let mut expected: Vec<f32> = direct.decode(&es).unwrap().into_iter().flat_map(|f| f.samples).collect();
+        let mut expected: Vec<f32> = direct
+            .decode(&es)
+            .unwrap()
+            .into_iter()
+            .flat_map(|f| f.samples)
+            .collect();
         expected.extend(direct.flush().unwrap().into_iter().flat_map(|f| f.samples));
 
         let mut dec = Ac3Decoder::with_options(48_000, 6, Ac3Options { drc_scale: 1.0 }).unwrap();
@@ -221,13 +233,20 @@ mod tests {
         out.extend(dec.flush().unwrap().into_iter().flat_map(|f| f.samples));
         assert_eq!(out, expected);
         assert_eq!(pts_seen[0], 5_000);
-        assert_eq!(pts_seen[1], 5_000 + 32_000, "one 1536-sample syncframe is 32 ms");
+        assert_eq!(
+            pts_seen[1],
+            5_000 + 32_000,
+            "one 1536-sample syncframe is 32 ms"
+        );
         assert_eq!(dec.layout(), Some(ChannelLayout::named("5.1(side)")));
     }
 
     #[test]
     fn more_than_eight_declared_channels_is_unsupported() {
         assert!(Ac3Decoder::new(48_000, 8).is_ok());
-        assert!(matches!(Ac3Decoder::new(48_000, 10), Err(AudioError::Unsupported(_))));
+        assert!(matches!(
+            Ac3Decoder::new(48_000, 10),
+            Err(AudioError::Unsupported(_))
+        ));
     }
 }

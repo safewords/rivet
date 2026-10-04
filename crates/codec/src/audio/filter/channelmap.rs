@@ -76,9 +76,7 @@ impl FromStr for ChannelLabel {
             "BC" => ChannelLabel::BC,
             "SL" => ChannelLabel::SL,
             "SR" => ChannelLabel::SR,
-            o => bail!(
-                "unknown channel '{o}' (want FL|FR|FC|LFE|BL|BR|BC|SL|SR)"
-            ),
+            o => bail!("unknown channel '{o}' (want FL|FR|FC|LFE|BL|BR|BC|SL|SR)"),
         })
     }
 }
@@ -214,8 +212,12 @@ impl fmt::Display for ChannelLayout {
         if let Some((name, _)) = NAMED_LAYOUTS.iter().find(|(_, l)| *l == self.0.as_slice()) {
             return f.write_str(name);
         }
-        let joined =
-            self.0.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("+");
+        let joined = self
+            .0
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("+");
         f.write_str(&joined)
     }
 }
@@ -271,7 +273,11 @@ pub(super) fn parse(args: &str) -> Result<AudioFilter> {
         None => (args.trim(), None),
     };
 
-    let entries: Vec<&str> = map.split('|').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let entries: Vec<&str> = map
+        .split('|')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
     if entries.is_empty() {
         bail!("channelmap needs at least one channel pair");
     }
@@ -319,12 +325,8 @@ pub(super) fn parse(args: &str) -> Result<AudioFilter> {
 /// if the default layout for this channel count doesn't have every channel the
 /// map reads, look for the named layout of that width that does. One match is
 /// the answer; several is ambiguous and none is a mistake, and both say so.
-fn input_layout(
-    pairs: &[(ChannelLabel, ChannelLabel)],
-    in_channels: u8,
-) -> Result<ChannelLayout> {
-    let has_all =
-        |l: &ChannelLayout| pairs.iter().all(|(src, _)| l.index_of(*src).is_some());
+fn input_layout(pairs: &[(ChannelLabel, ChannelLabel)], in_channels: u8) -> Result<ChannelLayout> {
+    let has_all = |l: &ChannelLayout| pairs.iter().all(|(src, _)| l.index_of(*src).is_some());
 
     let default = ChannelLayout::default_for(in_channels)?;
     if has_all(&default) {
@@ -363,7 +365,10 @@ fn input_layout(
         many => bail!(
             "channelmap is ambiguous for a {in_channels}-channel input — the channels it reads \
              fit {}; name the input channels unambiguously",
-            many.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(" and ")
+            many.iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join(" and ")
         ),
     }
 }

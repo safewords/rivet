@@ -28,7 +28,14 @@ fn frame(pts: u64) -> VideoFrame {
         }
     }
     data.extend(std::iter::repeat_n(128u8, 2 * chroma));
-    VideoFrame::new(Bytes::from(data), W, H, PixelFormat::Yuv420p, ColorSpace::Bt709, pts)
+    VideoFrame::new(
+        Bytes::from(data),
+        W,
+        H,
+        PixelFormat::Yuv420p,
+        ColorSpace::Bt709,
+        pts,
+    )
 }
 
 /// Annex-B NAL unit types in a packet, in order.
@@ -68,7 +75,13 @@ fn stream(enc: &mut dyn Encoder, first_pts: u64, n: u64) -> Vec<codec::encode::E
 
 fn check(codec: VideoCodec) {
     let hevc = codec == VideoCodec::H265;
-    let cfg = EncoderConfig { width: W, height: H, codec, keyframe_interval: 1000, ..Default::default() };
+    let cfg = EncoderConfig {
+        width: W,
+        height: H,
+        codec,
+        keyframe_interval: 1000,
+        ..Default::default()
+    };
     let mut enc = match NvencEncoder::new(cfg, 0) {
         Ok(e) => e,
         Err(e) => {
@@ -76,37 +89,74 @@ fn check(codec: VideoCodec) {
             return;
         }
     };
-    let (sps, pps, idr): (Vec<u8>, Vec<u8>, Vec<u8>) =
-        if hevc { (vec![33], vec![34], vec![19, 20]) } else { (vec![7], vec![8], vec![5]) };
+    let (sps, pps, idr): (Vec<u8>, Vec<u8>, Vec<u8>) = if hevc {
+        (vec![33], vec![34], vec![19, 20])
+    } else {
+        (vec![7], vec![8], vec![5])
+    };
 
     let mut first_types = Vec::new();
     let mut first_headers: Vec<Vec<u8>> = Vec::new();
     for round in 0..3 {
         if round > 0 {
             enc.reset().expect("NVENC reset");
-            assert!(enc.receive_packet().unwrap().is_none(), "nothing queued right after a reset");
+            assert!(
+                enc.receive_packet().unwrap().is_none(),
+                "nothing queued right after a reset"
+            );
         }
         let packets = stream(&mut enc, round * 100, 6);
         assert_eq!(packets.len(), 6, "round {round}: one packet per frame");
-        assert!(packets[0].is_keyframe, "round {round}: first packet must be a keyframe");
-        assert!(packets[1..].iter().all(|p| !p.is_keyframe), "round {round}: one IDR per stream at this GOP");
-        assert_eq!(packets[0].pts, round * 100, "round {round}: the new stream's own timestamps");
+        assert!(
+            packets[0].is_keyframe,
+            "round {round}: first packet must be a keyframe"
+        );
+        assert!(
+            packets[1..].iter().all(|p| !p.is_keyframe),
+            "round {round}: one IDR per stream at this GOP"
+        );
+        assert_eq!(
+            packets[0].pts,
+            round * 100,
+            "round {round}: the new stream's own timestamps"
+        );
         let types = nal_types(&packets[0].data, hevc);
-        eprintln!("{codec:?} round {round}: first packet {} bytes, NAL types {types:?}", packets[0].data.len());
-        assert!(types.iter().any(|t| idr.contains(t)), "round {round}: first packet is an IDR AU: {types:?}");
-        assert!(types.iter().any(|t| sps.contains(t)), "round {round}: first packet carries the SPS: {types:?}");
-        assert!(types.iter().any(|t| pps.contains(t)), "round {round}: first packet carries the PPS: {types:?}");
+        eprintln!(
+            "{codec:?} round {round}: first packet {} bytes, NAL types {types:?}",
+            packets[0].data.len()
+        );
+        assert!(
+            types.iter().any(|t| idr.contains(t)),
+            "round {round}: first packet is an IDR AU: {types:?}"
+        );
+        assert!(
+            types.iter().any(|t| sps.contains(t)),
+            "round {round}: first packet carries the SPS: {types:?}"
+        );
+        assert!(
+            types.iter().any(|t| pps.contains(t)),
+            "round {round}: first packet carries the PPS: {types:?}"
+        );
         first_types.push(types);
         first_headers.push(parameter_sets(&packets[0].data, hevc));
     }
-    assert_eq!(first_types[0], first_types[1], "a reset stream opens exactly like a fresh session");
+    assert_eq!(
+        first_types[0], first_types[1],
+        "a reset stream opens exactly like a fresh session"
+    );
     assert_eq!(first_types[1], first_types[2]);
     // Byte-identical parameter sets: what a reset stream is given up front
     // is exactly what the driver wrote in-band for the fresh session.
     assert!(!first_headers[0].is_empty());
-    assert_eq!(first_headers[0], first_headers[1], "reset stream's parameter sets differ from the session's");
+    assert_eq!(
+        first_headers[0], first_headers[1],
+        "reset stream's parameter sets differ from the session's"
+    );
     assert_eq!(first_headers[1], first_headers[2]);
-    eprintln!("{codec:?}: parameter sets identical across 3 streams ({} bytes)", first_headers[0].len());
+    eprintln!(
+        "{codec:?}: parameter sets identical across 3 streams ({} bytes)",
+        first_headers[0].len()
+    );
 }
 
 /// The bytes of a packet up to its first VCL NAL unit — the parameter sets.
@@ -114,7 +164,11 @@ fn parameter_sets(data: &[u8], hevc: bool) -> Vec<u8> {
     let mut i = 0;
     while i + 3 < data.len() {
         if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 {
-            let t = if hevc { (data[i + 3] >> 1) & 0x3f } else { data[i + 3] & 0x1f };
+            let t = if hevc {
+                (data[i + 3] >> 1) & 0x3f
+            } else {
+                data[i + 3] & 0x1f
+            };
             let vcl = if hevc { t < 32 } else { t <= 5 };
             if vcl {
                 // Include a preceding zero byte of a 4-byte start code.

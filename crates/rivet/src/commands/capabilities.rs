@@ -156,7 +156,11 @@ fn encode_report(enc: &[&str], by_codec: &[CodecOutputCaps]) -> String {
     // What `--color` / `--pixel-format` are validated against for each `--codec`.
     s.push_str("  by codec   : what --color / --pixel-format are checked against (HDR: PQ / HLG, BT.2020, 10-bit)\n");
     for p in by_codec {
-        s.push_str(&format!("    {:<5}: {}\n", output_codec_label(p.codec), by_codec_line(p)));
+        s.push_str(&format!(
+            "    {:<5}: {}\n",
+            output_codec_label(p.codec),
+            by_codec_line(p)
+        ));
     }
     s.push_str(&format!(
         "  every codec: {} (what any --codec gets; `encode.max_bit_depth` / `encode.hdr` in --json)\n",
@@ -246,9 +250,15 @@ mod tests {
              {\"codec\":\"prores\",\"max_bit_depth\":8,\"hdr\":false,\"backends\":[]}]"
         );
         // Each of rivet's own encoders answers for its codec alone.
-        let vp9 = CodecOutputCaps::over(VideoCodec::Vp9, &[EncoderBackend::Nvenc, EncoderBackend::Vp9]);
+        let vp9 = CodecOutputCaps::over(
+            VideoCodec::Vp9,
+            &[EncoderBackend::Nvenc, EncoderBackend::Vp9],
+        );
         assert_eq!(by_codec_line(&vp9), "10-bit SDR (vp9 10-bit SDR)");
-        let prores = CodecOutputCaps::over(VideoCodec::ProRes(rivet::spec::ProresProfile::Hq), &[EncoderBackend::ProRes]);
+        let prores = CodecOutputCaps::over(
+            VideoCodec::ProRes(rivet::spec::ProresProfile::Hq),
+            &[EncoderBackend::ProRes],
+        );
         assert_eq!(by_codec_line(&prores), "10-bit HDR (prores 10-bit HDR)");
         let h264_hw = CodecOutputCaps::over(VideoCodec::H264, &[EncoderBackend::Nvenc]);
         assert_eq!(by_codec_line(&h264_hw), "8-bit SDR (nvenc 8-bit SDR)");
@@ -267,13 +277,26 @@ mod tests {
         let sets: [(&[&str], &[EncoderBackend]); 3] = [
             (&["nvenc"], &[EncoderBackend::Nvenc]),
             (&["h26x"], &[EncoderBackend::H26x]),
-            (&["nvenc", "av1", "h26x"], &[EncoderBackend::Nvenc, EncoderBackend::Av1, EncoderBackend::H26x]),
+            (
+                &["nvenc", "av1", "h26x"],
+                &[
+                    EncoderBackend::Nvenc,
+                    EncoderBackend::Av1,
+                    EncoderBackend::H26x,
+                ],
+            ),
         ];
         for (names, set) in sets {
-            let by_codec: Vec<CodecOutputCaps> = OUTPUT_CODECS.iter().map(|&c| CodecOutputCaps::over(c, set)).collect();
+            let by_codec: Vec<CodecOutputCaps> = OUTPUT_CODECS
+                .iter()
+                .map(|&c| CodecOutputCaps::over(c, set))
+                .collect();
             let text = encode_report(names, &by_codec);
             let json = by_codec_json(&by_codec);
-            assert!(!text.contains("best") && !text.contains("max depth"), "{text}");
+            assert!(
+                !text.contains("best") && !text.contains("max depth"),
+                "{text}"
+            );
             for p in &by_codec {
                 let label = output_codec_label(p.codec);
                 assert!(
@@ -286,21 +309,37 @@ mod tests {
                 let line = if p.backends.is_empty() {
                     format!("    {label:<5}: no encoder in this build\n")
                 } else {
-                    format!("    {label:<5}: {}-bit {} (", p.caps.max_bit_depth, if p.caps.hdr { "HDR" } else { "SDR" })
+                    format!(
+                        "    {label:<5}: {}-bit {} (",
+                        p.caps.max_bit_depth,
+                        if p.caps.hdr { "HDR" } else { "SDR" }
+                    )
                 };
                 assert!(text.contains(&line), "{names:?}: no `{line}` in\n{text}");
             }
             let every = every_codec_output_caps(&by_codec);
-            let line = format!("  every codec: {}-bit {} (", every.max_bit_depth, if every.hdr { "HDR" } else { "SDR" });
+            let line = format!(
+                "  every codec: {}-bit {} (",
+                every.max_bit_depth,
+                if every.hdr { "HDR" } else { "SDR" }
+            );
             assert!(text.contains(&line), "{names:?}: no `{line}` in\n{text}");
         }
         // The NVENC-only build, spelled out: AV1 and H.265 reach 10-bit HDR,
         // H.264 does not, so a job may count on 8-bit SDR whatever its codec.
-        let by_codec: Vec<CodecOutputCaps> =
-            OUTPUT_CODECS.iter().map(|&c| CodecOutputCaps::over(c, &[EncoderBackend::Nvenc])).collect();
+        let by_codec: Vec<CodecOutputCaps> = OUTPUT_CODECS
+            .iter()
+            .map(|&c| CodecOutputCaps::over(c, &[EncoderBackend::Nvenc]))
+            .collect();
         let text = encode_report(&["nvenc"], &by_codec);
-        assert!(text.contains("    h264 : 8-bit SDR (nvenc 8-bit SDR)\n"), "{text}");
-        assert!(text.contains("    h265 : 10-bit HDR (nvenc 10-bit HDR)\n"), "{text}");
+        assert!(
+            text.contains("    h264 : 8-bit SDR (nvenc 8-bit SDR)\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("    h265 : 10-bit HDR (nvenc 10-bit HDR)\n"),
+            "{text}"
+        );
         assert!(text.contains("  every codec: 8-bit SDR ("), "{text}");
     }
 }

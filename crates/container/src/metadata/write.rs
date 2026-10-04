@@ -21,7 +21,17 @@ use super::isobmff::boxes;
 use super::{Metadata, be16, be32, be64, iso6709};
 
 /// The descriptive names every writer carries, and their QuickTime keys.
-const DESCRIPTIVE: [&str; 9] = ["title", "artist", "album", "copyright", "comment", "description", "keywords", "genre", "composer"];
+const DESCRIPTIVE: [&str; 9] = [
+    "title",
+    "artist",
+    "album",
+    "copyright",
+    "comment",
+    "description",
+    "keywords",
+    "genre",
+    "composer",
+];
 
 const QT_KEY: &str = "com.apple.quicktime.";
 
@@ -41,7 +51,10 @@ fn quicktime_items(m: &Metadata) -> Vec<(String, String)> {
     push("model", &m.device.model);
     push("software", &m.device.software);
     push("camera.lens_model", &m.device.lens);
-    push("creationdate", &m.capture_time.as_deref().map(quicktime_date));
+    push(
+        "creationdate",
+        &m.capture_time.as_deref().map(quicktime_date),
+    );
     for name in DESCRIPTIVE {
         push(name, &m.descriptive.get(name).cloned());
     }
@@ -89,12 +102,20 @@ impl Builder {
 /// handler, `keys` and `ilst`.
 fn build_mdta_meta(items: &[(String, String)]) -> Vec<u8> {
     let mut hdlr = Builder::new(b"hdlr");
-    hdlr.u32(0).u32(0).bytes(b"mdta").u32(0).u32(0).u32(0).bytes(&[0]);
+    hdlr.u32(0)
+        .u32(0)
+        .bytes(b"mdta")
+        .u32(0)
+        .u32(0)
+        .u32(0)
+        .bytes(&[0]);
     let mut keys = Builder::new(b"keys");
     keys.u32(0).u32(items.len() as u32);
     let mut ilst = Builder::new(b"ilst");
     for (i, (key, value)) in items.iter().enumerate() {
-        keys.u32(8 + key.len() as u32).bytes(b"mdta").bytes(key.as_bytes());
+        keys.u32(8 + key.len() as u32)
+            .bytes(b"mdta")
+            .bytes(key.as_bytes());
         let mut data = Builder::new(b"data");
         data.u32(1).u32(0).bytes(value.as_bytes()); // UTF-8, default locale
         let index = (i as u32 + 1).to_be_bytes();
@@ -103,7 +124,9 @@ fn build_mdta_meta(items: &[(String, String)]) -> Vec<u8> {
         ilst.bytes(&item.finish());
     }
     let mut meta = Builder::new(b"meta");
-    meta.bytes(&hdlr.finish()).bytes(&keys.finish()).bytes(&ilst.finish());
+    meta.bytes(&hdlr.finish())
+        .bytes(&keys.finish())
+        .bytes(&ilst.finish());
     meta.finish()
 }
 
@@ -112,7 +135,9 @@ fn build_mdta_meta(items: &[(String, String)]) -> Vec<u8> {
 fn build_udta(m: &Metadata) -> Option<Vec<u8>> {
     let xyz = iso6709::format(m.location.as_ref()?)?;
     let mut item = Builder::new(&[0xA9, b'x', b'y', b'z']);
-    item.bytes(&(xyz.len() as u16).to_be_bytes()).bytes(&0x15C7u16.to_be_bytes()).bytes(xyz.as_bytes());
+    item.bytes(&(xyz.len() as u16).to_be_bytes())
+        .bytes(&0x15C7u16.to_be_bytes())
+        .bytes(xyz.as_bytes());
     let mut udta = Builder::new(b"udta");
     udta.bytes(&item.finish());
     Some(udta.finish())
@@ -125,7 +150,12 @@ fn build_udta(m: &Metadata) -> Option<Vec<u8>> {
 pub fn mp4(file: &[u8], m: &Metadata) -> Result<Vec<u8>> {
     let items = quicktime_items(m);
     let udta = build_udta(m);
-    let created = m.capture_time.as_deref().and_then(super::parse_unix_time).map(|s| s + 2_082_844_800).filter(|&s| s > 0);
+    let created = m
+        .capture_time
+        .as_deref()
+        .and_then(super::parse_unix_time)
+        .map(|s| s + 2_082_844_800)
+        .filter(|&s| s > 0);
     if items.is_empty() && udta.is_none() {
         return Ok(file.to_vec());
     }
@@ -133,7 +163,9 @@ pub fn mp4(file: &[u8], m: &Metadata) -> Result<Vec<u8>> {
     if top.iter().any(|b| &b.kind == b"moof") {
         bail!("metadata cannot be written into a fragmented MP4");
     }
-    let Some(moov) = top.iter().find(|b| &b.kind == b"moov") else { bail!("no moov box to write metadata into") };
+    let Some(moov) = top.iter().find(|b| &b.kind == b"moov") else {
+        bail!("no moov box to write metadata into")
+    };
     let mut body = Vec::with_capacity(moov.body.len() + 512);
     for c in boxes(moov.body) {
         match &c.kind {
@@ -207,8 +239,9 @@ fn shift_chunk_offsets(moov: &mut [u8], from: u64, delta: i64) -> Result<()> {
                         let p = at + 16 + i * 4;
                         let Some(v) = be32(moov, p) else { break };
                         if u64::from(v) >= from {
-                            let nv = u32::try_from(i64::from(v) + delta)
-                                .map_err(|_| anyhow::anyhow!("chunk offset past 4 GiB after writing metadata"))?;
+                            let nv = u32::try_from(i64::from(v) + delta).map_err(|_| {
+                                anyhow::anyhow!("chunk offset past 4 GiB after writing metadata")
+                            })?;
                             moov[p..p + 4].copy_from_slice(&nv.to_be_bytes());
                         }
                     }
@@ -255,14 +288,24 @@ fn vorbis_comments(m: &Metadata) -> Vec<String> {
 /// holding `m` (and no vendor string). Every other block stays.
 pub fn flac(file: &[u8], m: &Metadata) -> Result<Vec<u8>> {
     let comments = vorbis_comments(m);
-    let Some(blocks) = file.strip_prefix(b"fLaC") else { bail!("not a native FLAC stream") };
+    let Some(blocks) = file.strip_prefix(b"fLaC") else {
+        bail!("not a native FLAC stream")
+    };
     let mut kept: Vec<(u8, &[u8])> = Vec::new();
     let mut at = 0;
     loop {
-        let Some(&header) = blocks.get(at) else { bail!("FLAC: metadata ends early") };
-        let Some(len_bytes) = blocks.get(at + 1..at + 4) else { bail!("FLAC: metadata ends early") };
-        let len = (usize::from(len_bytes[0]) << 16) | (usize::from(len_bytes[1]) << 8) | usize::from(len_bytes[2]);
-        let Some(body) = blocks.get(at + 4..at + 4 + len) else { bail!("FLAC: metadata ends early") };
+        let Some(&header) = blocks.get(at) else {
+            bail!("FLAC: metadata ends early")
+        };
+        let Some(len_bytes) = blocks.get(at + 1..at + 4) else {
+            bail!("FLAC: metadata ends early")
+        };
+        let len = (usize::from(len_bytes[0]) << 16)
+            | (usize::from(len_bytes[1]) << 8)
+            | usize::from(len_bytes[2]);
+        let Some(body) = blocks.get(at + 4..at + 4 + len) else {
+            bail!("FLAC: metadata ends early")
+        };
         if header & 0x7F != 4 {
             kept.push((header & 0x7F, body));
         }
@@ -311,7 +354,14 @@ pub fn mp3(file: &[u8], m: &Metadata) -> Vec<u8> {
         b.extend_from_slice(s.as_bytes());
         b
     };
-    for (name, id) in [("title", b"TIT2"), ("artist", b"TPE1"), ("album", b"TALB"), ("copyright", b"TCOP"), ("genre", b"TCON"), ("composer", b"TCOM")] {
+    for (name, id) in [
+        ("title", b"TIT2"),
+        ("artist", b"TPE1"),
+        ("album", b"TALB"),
+        ("copyright", b"TCOP"),
+        ("genre", b"TCON"),
+        ("composer", b"TCOM"),
+    ] {
         if let Some(v) = m.descriptive.get(name) {
             text_frame(id, utf8(v));
         }
@@ -348,7 +398,12 @@ pub fn mp3(file: &[u8], m: &Metadata) -> Vec<u8> {
 }
 
 fn syncsafe(n: u32) -> [u8; 4] {
-    [(n >> 21) as u8 & 0x7F, (n >> 14) as u8 & 0x7F, (n >> 7) as u8 & 0x7F, n as u8 & 0x7F]
+    [
+        (n >> 21) as u8 & 0x7F,
+        (n >> 14) as u8 & 0x7F,
+        (n >> 7) as u8 & 0x7F,
+        n as u8 & 0x7F,
+    ]
 }
 
 // ---- stills ----------------------------------------------------------------------
@@ -418,7 +473,11 @@ fn crc32(data: &[u8]) -> u32 {
     for &b in data {
         crc ^= u32::from(b);
         for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
         }
     }
     !crc
@@ -489,11 +548,19 @@ fn read_iloc(b: &[u8]) -> Result<Iloc> {
     };
     let (offset_size, length_size) = (usize::from(sizes >> 4), usize::from(sizes & 15));
     let base_size = usize::from(sizes2 >> 4);
-    let index_size = if version >= 1 { usize::from(sizes2 & 15) } else { 0 };
+    let index_size = if version >= 1 {
+        usize::from(sizes2 & 15)
+    } else {
+        0
+    };
     let read_n = |at: &mut usize, n: usize| -> Result<u64> {
         let mut v = 0u64;
         for i in 0..n {
-            v = (v << 8) | u64::from(*b.get(*at + i).ok_or_else(|| anyhow::anyhow!("HEIF: iloc ends early"))?);
+            v = (v << 8)
+                | u64::from(
+                    *b.get(*at + i)
+                        .ok_or_else(|| anyhow::anyhow!("HEIF: iloc ends early"))?,
+                );
         }
         *at += n;
         Ok(v)
@@ -504,17 +571,39 @@ fn read_iloc(b: &[u8]) -> Result<Iloc> {
     let mut items = Vec::new();
     for _ in 0..count {
         let id = read_n(&mut at, id_size)? as u32;
-        let method = if version >= 1 { (read_n(&mut at, 2)? & 15) as u16 } else { 0 };
+        let method = if version >= 1 {
+            (read_n(&mut at, 2)? & 15) as u16
+        } else {
+            0
+        };
         let data_ref = read_n(&mut at, 2)? as u16;
         let base = read_n(&mut at, base_size)?;
         let n = read_n(&mut at, 2)?;
         let mut extents = Vec::new();
         for _ in 0..n {
-            extents.push((read_n(&mut at, index_size)?, read_n(&mut at, offset_size)?, read_n(&mut at, length_size)?));
+            extents.push((
+                read_n(&mut at, index_size)?,
+                read_n(&mut at, offset_size)?,
+                read_n(&mut at, length_size)?,
+            ));
         }
-        items.push(IlocItem { id, method, data_ref, base, extents });
+        items.push(IlocItem {
+            id,
+            method,
+            data_ref,
+            base,
+            extents,
+        });
     }
-    Ok(Iloc { head: b[..6].to_vec(), version, offset_size, length_size, base_size, index_size, items })
+    Ok(Iloc {
+        head: b[..6].to_vec(),
+        version,
+        offset_size,
+        length_size,
+        base_size,
+        index_size,
+        items,
+    })
 }
 
 fn write_n(out: &mut Vec<u8>, v: u64, n: usize) {
@@ -536,12 +625,24 @@ impl Iloc {
             write_n(&mut out, u64::from(item.data_ref), 2);
             let in_file = item.method == 0 && item.data_ref == 0;
             let base_moves = in_file && item.base > 0 && item.base >= moved_from;
-            write_n(&mut out, if base_moves { item.base + delta } else { item.base }, self.base_size);
+            write_n(
+                &mut out,
+                if base_moves {
+                    item.base + delta
+                } else {
+                    item.base
+                },
+                self.base_size,
+            );
             write_n(&mut out, item.extents.len() as u64, 2);
             for &(index, offset, length) in &item.extents {
                 write_n(&mut out, index, self.index_size);
                 let moves = in_file && !base_moves && item.base + offset >= moved_from;
-                write_n(&mut out, if moves { offset + delta } else { offset }, self.offset_size);
+                write_n(
+                    &mut out,
+                    if moves { offset + delta } else { offset },
+                    self.offset_size,
+                );
                 write_n(&mut out, length, self.length_size);
             }
         }
@@ -551,7 +652,9 @@ impl Iloc {
 
 fn heif_exif(file: &[u8], tiff: &[u8]) -> Result<Vec<u8>> {
     let top: Vec<_> = boxes(file).collect();
-    let Some(meta) = top.iter().find(|b| &b.kind == b"meta") else { bail!("HEIF: no meta box") };
+    let Some(meta) = top.iter().find(|b| &b.kind == b"meta") else {
+        bail!("HEIF: no meta box")
+    };
     if meta.body.len() < 4 {
         bail!("HEIF: meta too short");
     }
@@ -563,20 +666,37 @@ fn heif_exif(file: &[u8], tiff: &[u8]) -> Result<Vec<u8>> {
         Some(p) => be32(p.body, 4).unwrap_or(1),
         None => bail!("HEIF: no primary item"),
     };
-    let Some(iloc_box) = find(b"iloc") else { bail!("HEIF: no iloc") };
-    let Some(iinf) = find(b"iinf") else { bail!("HEIF: no iinf") };
+    let Some(iloc_box) = find(b"iloc") else {
+        bail!("HEIF: no iloc")
+    };
+    let Some(iinf) = find(b"iinf") else {
+        bail!("HEIF: no iinf")
+    };
     let mut iloc = read_iloc(iloc_box.body)?;
     if iloc.offset_size < 4 || iloc.length_size < 4 {
         bail!("HEIF: iloc offsets too narrow to point at new data");
     }
-    let exif_id = iloc.items.iter().map(|i| i.id).max().unwrap_or(0).max(primary) + 1;
+    let exif_id = iloc
+        .items
+        .iter()
+        .map(|i| i.id)
+        .max()
+        .unwrap_or(0)
+        .max(primary)
+        + 1;
     if iloc.version < 2 && exif_id > 0xFFFF {
         bail!("HEIF: no item id left");
     }
     // The item: a 4-byte offset to the TIFF header (0), then the TIFF.
     let mut payload = 0u32.to_be_bytes().to_vec();
     payload.extend_from_slice(tiff);
-    iloc.items.push(IlocItem { id: exif_id, method: 0, data_ref: 0, base: 0, extents: vec![(0, 0, payload.len() as u64)] });
+    iloc.items.push(IlocItem {
+        id: exif_id,
+        method: 0,
+        data_ref: 0,
+        base: 0,
+        extents: vec![(0, 0, payload.len() as u64)],
+    });
 
     // iinf with one more `infe` (version 2: 16-bit ids; 3: 32-bit).
     let iv = iinf.body.first().copied().unwrap_or(0);
@@ -590,9 +710,13 @@ fn heif_exif(file: &[u8], tiff: &[u8]) -> Result<Vec<u8>> {
     iinf_body.extend_from_slice(&iinf.body[head..]);
     let mut infe = Builder::new(b"infe");
     if exif_id > 0xFFFF {
-        infe.u32(0x0300_0000).u32(exif_id).bytes(&0u16.to_be_bytes());
+        infe.u32(0x0300_0000)
+            .u32(exif_id)
+            .bytes(&0u16.to_be_bytes());
     } else {
-        infe.u32(0x0200_0000).bytes(&(exif_id as u16).to_be_bytes()).bytes(&0u16.to_be_bytes());
+        infe.u32(0x0200_0000)
+            .bytes(&(exif_id as u16).to_be_bytes())
+            .bytes(&0u16.to_be_bytes());
     }
     infe.bytes(b"Exif").bytes(&[0]);
     iinf_body.extend(infe.finish());
@@ -603,7 +727,9 @@ fn heif_exif(file: &[u8], tiff: &[u8]) -> Result<Vec<u8>> {
     if wide {
         cdsc.u32(exif_id).bytes(&1u16.to_be_bytes()).u32(primary);
     } else {
-        cdsc.bytes(&(exif_id as u16).to_be_bytes()).bytes(&1u16.to_be_bytes()).bytes(&(primary as u16).to_be_bytes());
+        cdsc.bytes(&(exif_id as u16).to_be_bytes())
+            .bytes(&1u16.to_be_bytes())
+            .bytes(&(primary as u16).to_be_bytes());
     }
     let cdsc = cdsc.finish();
 

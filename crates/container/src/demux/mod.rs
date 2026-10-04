@@ -6,30 +6,30 @@
 ///   - `audio` — audio track extraction for all containers (AAC, Opus, AC-3, …)
 ///   - `hdr`  — HDR static metadata (`mdcv`/`clli`) pulled from visual sample entries
 ///   - `tests` — unit tests (compiled only under `#[cfg(test)]`)
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use frame::StreamInfo;
 
 use crate::avi::demux_avi;
 use crate::ts::demux_ts;
 
-pub mod mp4;
-pub mod mkv;
-pub(crate) mod audio;
 pub(crate) mod aspect;
+pub(crate) mod audio;
 pub(crate) mod hdr;
+pub mod mkv;
+pub mod mp4;
 pub mod subtitle;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod colour_fixture_tests;
+#[cfg(test)]
+mod tests;
 
 // Re-export every item that was `pub` on the old flat `demux` module so
 // all existing `use crate::demux::…` call-sites remain valid.
 // Public surface (matches the original flat module's `pub` items).
-pub use mp4::{demux_mp4, Mp4StreamingDemuxer};
-pub use mkv::{demux_mkv, probe_mkv_color_info, MkvStreamingDemuxer};
 pub use hdr::{Nclx, colour_from_parameter_sets, reads_bitstream_colour};
+pub use mkv::{MkvStreamingDemuxer, demux_mkv, probe_mkv_color_info};
+pub use mp4::{Mp4StreamingDemuxer, demux_mp4};
 // Crate-internal entry points for the streaming dispatcher.
 pub(crate) use mkv::demux_mkv_streaming_init;
 pub(crate) use mp4::demux_mp4_streaming_init;
@@ -113,10 +113,12 @@ pub fn demux(data: &[u8]) -> Result<DemuxResult> {
         "mkv" => demux_mkv(data),
         "avi" => demux_avi(data),
         "ts" => demux_ts(data),
-        "ps" => demux_whole(crate::ps::demux_ps_streaming_init(bytes::Bytes::copy_from_slice(data))?),
-        "h264" | "hevc" | "ivf" | "obu" | "m2v" => {
-            demux_whole(crate::es::demux_es_streaming_init(bytes::Bytes::copy_from_slice(data))?)
-        }
+        "ps" => demux_whole(crate::ps::demux_ps_streaming_init(
+            bytes::Bytes::copy_from_slice(data),
+        )?),
+        "h264" | "hevc" | "ivf" | "obu" | "m2v" => demux_whole(crate::es::demux_es_streaming_init(
+            bytes::Bytes::copy_from_slice(data),
+        )?),
         other => bail!("unsupported container: {other}"),
     }
 }
@@ -184,7 +186,9 @@ pub(super) fn find_box_body<'a>(data: &'a [u8], path: &[&[u8; 4]]) -> Option<&'a
 /// angle reads as 0 and is left alone, which is what happened before this
 /// existed.
 pub fn video_rotation_degrees(data: &[u8]) -> u32 {
-    let Some(moov) = find_direct_child(data, b"moov") else { return 0 };
+    let Some(moov) = find_direct_child(data, b"moov") else {
+        return 0;
+    };
 
     for trak in direct_children(moov, b"trak") {
         // Video track only: an audio track's matrix is meaningless, and a
@@ -195,7 +199,9 @@ pub fn video_rotation_degrees(data: &[u8]) -> u32 {
             continue;
         }
 
-        let Some(tkhd) = find_direct_child(trak, b"tkhd") else { continue };
+        let Some(tkhd) = find_direct_child(trak, b"tkhd") else {
+            continue;
+        };
         if tkhd.is_empty() {
             continue;
         }
@@ -204,9 +210,15 @@ pub fn video_rotation_degrees(data: &[u8]) -> u32 {
         // v0: 4 vf + 4 + 4 + 4 id + 4 resv + 4 dur; v1 widens the three times
         // to 8 bytes each. Then 8 reserved, layer, alternate_group, volume and
         // one reserved u16 before the matrix itself.
-        let offset = if tkhd[0] == 1 { 4 + 8 + 8 + 4 + 4 + 8 } else { 4 + 4 + 4 + 4 + 4 + 4 };
+        let offset = if tkhd[0] == 1 {
+            4 + 8 + 8 + 4 + 4 + 8
+        } else {
+            4 + 4 + 4 + 4 + 4 + 4
+        };
         let offset = offset + 8 + 2 + 2 + 2 + 2;
-        let Some(matrix) = tkhd.get(offset..offset + 36) else { continue };
+        let Some(matrix) = tkhd.get(offset..offset + 36) else {
+            continue;
+        };
 
         let fixed = |i: usize| -> i32 {
             i32::from_be_bytes([matrix[i], matrix[i + 1], matrix[i + 2], matrix[i + 3]])
@@ -259,7 +271,9 @@ pub(super) fn find_video_stsd(data: &[u8]) -> Option<&[u8]> {
         }
 
         // `hdlr`: 4 bytes version+flags, 4 pre_defined, then the handler type.
-        let Some(hdlr) = find_box_body(trak, &[b"mdia", b"hdlr"]) else { continue };
+        let Some(hdlr) = find_box_body(trak, &[b"mdia", b"hdlr"]) else {
+            continue;
+        };
         if hdlr.len() >= 12 && &hdlr[8..12] == b"vide" {
             return Some(stsd);
         }

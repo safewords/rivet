@@ -31,23 +31,25 @@
 //!   `movi` is missing (which real-world files don't exhibit).
 
 mod audio;
-pub(crate) mod riff;
 mod opendml;
+pub(crate) mod riff;
 mod streaming;
 
 #[cfg(test)]
 mod tests;
 
-pub use streaming::AviStreamingDemuxer;
 pub(crate) use audio::{wave_format_codec, wave_format_name};
+pub use streaming::AviStreamingDemuxer;
 pub(crate) use streaming::demux_avi_streaming_init;
 
+use crate::demux::DemuxResult;
 use anyhow::{Context, Result, bail};
 use frame::{ColorSpace, PixelFormat, StreamInfo};
-use crate::demux::DemuxResult;
 use opendml::read_dmlh_total_frames;
-use riff::{ascii, collect_movi_samples, find_video_stream, fourcc_to_codec,
-           frames_per_second, scan_top_level_records};
+use riff::{
+    ascii, collect_movi_samples, find_video_stream, fourcc_to_codec, frames_per_second,
+    scan_top_level_records,
+};
 
 pub(crate) fn demux_avi(data: &[u8]) -> Result<DemuxResult> {
     // RIFF header: "RIFF" u32-LE size "AVI ".  (Guaranteed present by
@@ -226,12 +228,16 @@ pub(crate) fn has_video(data: &[u8]) -> Result<bool> {
     let ((start, end), _) = hdrl_and_movi(data)?;
     let hdrl = &data[start..end];
     // Each `LIST strl` holds a `strh` whose first four bytes are the type.
-    Ok(hdrl.windows(12).any(|w| &w[..4] == b"strh" && &w[8..12] == b"vids"))
+    Ok(hdrl
+        .windows(12)
+        .any(|w| &w[..4] == b"strh" && &w[8..12] == b"vids"))
 }
 
 /// The first audio stream of an AVI with no video stream (an `-vn` capture,
 /// a WAV-in-AVI), read exactly as beside video; `None` when it has none.
-pub(crate) fn read_audio_only(data: &[u8]) -> Result<Option<(crate::demux::AudioTrack, Option<crate::edit::AudioEdit>)>> {
+pub(crate) fn read_audio_only(
+    data: &[u8],
+) -> Result<Option<(crate::demux::AudioTrack, Option<crate::edit::AudioEdit>)>> {
     let ((start, end), movi_lists) = hdrl_and_movi(data)?;
     Ok(audio::read_audio(data, &data[start..end], &movi_lists).map(|a| (a.track, a.edit)))
 }

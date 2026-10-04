@@ -91,7 +91,10 @@ impl SubtitleTrack {
                 })
             })
             .collect();
-        SubtitleTrack { cues, ..self.clone() }
+        SubtitleTrack {
+            cues,
+            ..self.clone()
+        }
     }
 
     /// Every cue moved later by `offset` ticks — placing a clip's cues on the
@@ -100,9 +103,15 @@ impl SubtitleTrack {
         let cues = self
             .cues
             .iter()
-            .map(|c| SubtitleCue { start: c.start + offset, ..c.clone() })
+            .map(|c| SubtitleCue {
+                start: c.start + offset,
+                ..c.clone()
+            })
             .collect();
-        SubtitleTrack { cues, ..self.clone() }
+        SubtitleTrack {
+            cues,
+            ..self.clone()
+        }
     }
 
     /// The same cues expressed on another timescale, rounded to the nearest
@@ -128,7 +137,11 @@ impl SubtitleTrack {
                 }
             })
             .collect();
-        SubtitleTrack { cues, timescale, ..self.clone() }
+        SubtitleTrack {
+            cues,
+            timescale,
+            ..self.clone()
+        }
     }
 
     /// Append `other`'s cues after this track's, converting them onto this
@@ -161,7 +174,9 @@ fn mkv_text_codec(codec_id: &str) -> Option<&'static str> {
 /// is left out. An empty result means the file has nothing `tx3g` can carry.
 pub fn extract_mkv_subtitle_tracks(data: &[u8]) -> Vec<SubtitleTrack> {
     let cursor = Cursor::new(data);
-    let Ok(mut mkv) = MatroskaFile::open(cursor) else { return Vec::new() };
+    let Ok(mut mkv) = MatroskaFile::open(cursor) else {
+        return Vec::new();
+    };
 
     // Matroska block timestamps are in units of `TimestampScale` nanoseconds;
     // the default is 1 ms. Cue timing doesn't need sample accuracy, so a
@@ -172,7 +187,11 @@ pub fn extract_mkv_subtitle_tracks(data: &[u8]) -> Vec<SubtitleTrack> {
     // (track number, codec label, language, cues) per text track, in the
     // order the header lists them.
     let mut tracks: Vec<(u64, &'static str, String, Vec<SubtitleCue>)> = Vec::new();
-    for t in mkv.tracks().iter().filter(|t| t.track_type() == MkvTrackType::Subtitle) {
+    for t in mkv
+        .tracks()
+        .iter()
+        .filter(|t| t.track_type() == MkvTrackType::Subtitle)
+    {
         match mkv_text_codec(t.codec_id().trim_end_matches('\0')) {
             Some(c) => tracks.push((
                 t.track_number().get(),
@@ -212,7 +231,11 @@ pub fn extract_mkv_subtitle_tracks(data: &[u8]) -> Vec<SubtitleTrack> {
                 // A cue with no duration is a bug in the source; give it a
                 // readable two seconds rather than a zero-length flash.
                 let duration = frame.duration.map(to_ms).unwrap_or(2_000).max(1) as u32;
-                slot.3.push(SubtitleCue { start, duration, text });
+                slot.3.push(SubtitleCue {
+                    start,
+                    duration,
+                    text,
+                });
             }
             Ok(false) => break,
             Err(_) => break,
@@ -252,7 +275,12 @@ pub(crate) fn finish(
     if cues.is_empty() {
         return None;
     }
-    Some(SubtitleTrack { codec: codec.to_string(), cues, timescale, language })
+    Some(SubtitleTrack {
+        codec: codec.to_string(),
+        cues,
+        timescale,
+        language,
+    })
 }
 
 /// Reduce a source cue to the plain UTF-8 text `tx3g` carries.
@@ -334,11 +362,20 @@ mod tests {
     use super::*;
 
     fn cue(start: u64, duration: u32, text: &str) -> SubtitleCue {
-        SubtitleCue { start, duration, text: text.into() }
+        SubtitleCue {
+            start,
+            duration,
+            text: text.into(),
+        }
     }
 
     fn track(cues: Vec<SubtitleCue>) -> SubtitleTrack {
-        SubtitleTrack { codec: "subrip".into(), cues, timescale: 1_000, language: "eng".into() }
+        SubtitleTrack {
+            codec: "subrip".into(),
+            cues,
+            timescale: 1_000,
+            language: "eng".into(),
+        }
     }
 
     #[test]
@@ -347,7 +384,10 @@ mod tests {
         let raw = "0,0,Default,,0,0,0,,{\\an8}Hello\\Nthere";
         assert_eq!(strip_markup(raw, "ass"), "Hello\nthere");
         // Commas inside the text survive the field split.
-        assert_eq!(strip_markup("0,0,D,,0,0,0,,Yes, really", "ass"), "Yes, really");
+        assert_eq!(
+            strip_markup("0,0,D,,0,0,0,,Yes, really", "ass"),
+            "Yes, really"
+        );
         // The raw-.ass form carries `Dialogue:` plus two time fields.
         let dialogue = "Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hi";
         assert_eq!(strip_markup(dialogue, "ass"), "Hi");
@@ -364,7 +404,10 @@ mod tests {
 
     #[test]
     fn vtt_character_references_become_characters() {
-        assert_eq!(strip_markup("Tom &amp; Jerry &lt;3", "webvtt"), "Tom & Jerry <3");
+        assert_eq!(
+            strip_markup("Tom &amp; Jerry &lt;3", "webvtt"),
+            "Tom & Jerry <3"
+        );
         // Only WebVTT is HTML-escaped; SRT text is literal.
         assert_eq!(strip_markup("Tom &amp; Jerry", "subrip"), "Tom &amp; Jerry");
     }
@@ -380,7 +423,10 @@ mod tests {
     fn overlapping_cues_are_truncated_not_reordered() {
         let cues = vec![cue(0, 5_000, "first"), cue(2_000, 1_000, "second")];
         let t = finish("subrip", cues, 1_000, "und".into()).unwrap();
-        assert_eq!(t.cues[0].duration, 2_000, "first cue truncated to the second's start");
+        assert_eq!(
+            t.cues[0].duration, 2_000,
+            "first cue truncated to the second's start"
+        );
         assert_eq!(t.cues[1].start, 2_000);
         assert_eq!(t.end_time(), 3_000);
     }
@@ -389,7 +435,10 @@ mod tests {
     fn cues_are_sorted_by_start() {
         let cues = vec![cue(4_000, 1_000, "b"), cue(1_000, 1_000, "a")];
         let t = finish("subrip", cues, 1_000, "und".into()).unwrap();
-        assert_eq!(t.cues.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(
+            t.cues.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+            ["a", "b"]
+        );
     }
 
     #[test]
@@ -411,7 +460,11 @@ mod tests {
     #[test]
     fn window_keeps_overlapping_cues_clipped_and_rebased() {
         // Cues at [1,2), [3,5), [6,7) seconds; keep [2.5, 6.5).
-        let t = track(vec![cue(1_000, 1_000, "a"), cue(3_000, 2_000, "b"), cue(6_000, 1_000, "c")]);
+        let t = track(vec![
+            cue(1_000, 1_000, "a"),
+            cue(3_000, 2_000, "b"),
+            cue(6_000, 1_000, "c"),
+        ]);
         let w = t.window(2_500, Some(6_500));
         // "a" ends before the window; "b" is inside and moves left by 2.5 s;
         // "c" straddles the end and is cut there.
@@ -427,14 +480,23 @@ mod tests {
     fn shifted_moves_every_cue_and_nothing_else() {
         let t = track(vec![cue(0, 1_000, "a"), cue(5_000, 1_000, "b")]);
         let s = t.shifted(8_000);
-        assert_eq!(s.cues, vec![cue(8_000, 1_000, "a"), cue(13_000, 1_000, "b")]);
-        assert_eq!((s.codec.as_str(), s.timescale, s.language.as_str()), ("subrip", 1_000, "eng"));
+        assert_eq!(
+            s.cues,
+            vec![cue(8_000, 1_000, "a"), cue(13_000, 1_000, "b")]
+        );
+        assert_eq!(
+            (s.codec.as_str(), s.timescale, s.language.as_str()),
+            ("subrip", 1_000, "eng")
+        );
     }
 
     #[test]
     fn rescaled_rounds_to_the_nearest_tick_and_never_zeroes_a_cue() {
         // 600 Hz → 1000 Hz: tick 601 = 1001.67 ms → 1002.
-        let t = SubtitleTrack { timescale: 600, ..track(vec![cue(601, 300, "a"), cue(1_200, 1, "b")]) };
+        let t = SubtitleTrack {
+            timescale: 600,
+            ..track(vec![cue(601, 300, "a"), cue(1_200, 1, "b")])
+        };
         let r = t.rescaled(1_000);
         assert_eq!(r.timescale, 1_000);
         assert_eq!(r.cues[0].start, 1_002);
@@ -449,7 +511,10 @@ mod tests {
     fn append_concatenates_on_one_timescale_in_time_order() {
         let mut a = track(vec![cue(0, 1_000, "a")]);
         // A second clip's track on a different timescale, already shifted.
-        let b = SubtitleTrack { timescale: 90_000, ..track(vec![cue(180_000, 90_000, "b")]) };
+        let b = SubtitleTrack {
+            timescale: 90_000,
+            ..track(vec![cue(180_000, 90_000, "b")])
+        };
         a.append(&b);
         assert_eq!(a.cues, vec![cue(0, 1_000, "a"), cue(2_000, 1_000, "b")]);
         assert_eq!(a.timescale, 1_000);

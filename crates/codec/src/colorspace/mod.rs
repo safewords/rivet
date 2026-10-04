@@ -21,9 +21,7 @@ mod tests;
 pub use bt601_to_709::{
     bt601_to_bt709_planes, bt601_to_bt709_planes_full_range, bt601_to_bt709_planes_scalar,
 };
-pub use bt601_to_709_10bit::{
-    bt601_to_bt709_planes_10bit, bt601_to_bt709_planes_10bit_scalar,
-};
+pub use bt601_to_709_10bit::{bt601_to_bt709_planes_10bit, bt601_to_bt709_planes_10bit_scalar};
 pub use depth::{
     convert_bit_depth_frame, narrow_u16_to_u8, narrow_u16_to_u8_scalar, narrow_u16_to_u16,
     narrow_u16_to_u16_scalar, planar_bit_depth, widen_u8_to_u16_scalar, with_bit_depth,

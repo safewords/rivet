@@ -18,7 +18,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use rivet::codec::encode::tuning::{EncodeOverrides, RateMode};
-use rivet::{EncodePolicy, GpuFamily, OutputSpec, Quality, Rung, RungArtifact, RungStatus, VideoCodecPolicy, fn_sink, run_job_blocking};
+use rivet::{
+    EncodePolicy, GpuFamily, OutputSpec, Quality, Rung, RungArtifact, RungStatus, VideoCodecPolicy,
+    fn_sink, run_job_blocking,
+};
 
 const FPS: u32 = 30;
 const TARGET: u32 = 2_000_000;
@@ -32,7 +35,10 @@ fn required() -> bool {
 /// `RIVET_TEST_CODECS` is a comma-separated list, unset for all of them. The
 /// Intel GPU CI runs one job per codec and names its codec here.
 fn wanted(codec: &str) -> bool {
-    std::env::var("RIVET_TEST_CODECS").map_or(true, |list| list.split(',').any(|c| c.trim().eq_ignore_ascii_case(codec)))
+    std::env::var("RIVET_TEST_CODECS").map_or(true, |list| {
+        list.split(',')
+            .any(|c| c.trim().eq_ignore_ascii_case(codec))
+    })
 }
 
 /// Skip, or fail when the Intel GPU job requires the test to run.
@@ -72,11 +78,17 @@ fn run(input: &[u8], spec: &OutputSpec, out: Option<&Path>) -> Option<rivet::Job
     match run_job_blocking(input, spec, out, Arc::new(sink)) {
         Ok(o) if !o.rungs.is_empty() => Some(o),
         Ok(_) => {
-            skip(&format!("no rung was produced: {}", failures.lock().unwrap().join(" | ")));
+            skip(&format!(
+                "no rung was produced: {}",
+                failures.lock().unwrap().join(" | ")
+            ));
             None
         }
         Err(e) => {
-            skip(&format!("no Intel encoder for this job: {e:#}; rungs: {}", failures.lock().unwrap().join(" | ")));
+            skip(&format!(
+                "no Intel encoder for this job: {e:#}; rungs: {}",
+                failures.lock().unwrap().join(" | ")
+            ));
             None
         }
     }
@@ -84,7 +96,9 @@ fn run(input: &[u8], spec: &OutputSpec, out: Option<&Path>) -> Option<rivet::Job
 
 /// Every video sample's size, in bytes, in decode order.
 fn sample_sizes(mp4: &[u8]) -> Vec<usize> {
-    let mut demux = rivet::container::streaming::demux_streaming_shared(bytes::Bytes::copy_from_slice(mp4)).expect("demux the output");
+    let mut demux =
+        rivet::container::streaming::demux_streaming_shared(bytes::Bytes::copy_from_slice(mp4))
+            .expect("demux the output");
     let mut sizes = Vec::new();
     while let Some(s) = demux.next_video_sample().expect("sample") {
         sizes.push(s.data.len());
@@ -96,9 +110,11 @@ fn sample_sizes(mp4: &[u8]) -> Vec<usize> {
 fn a_constant_rate_holds_its_rate_on_an_intel_gpu() {
     let input = make_input();
     let buffer_bits = f64::from(TARGET) * f64::from(BUFFER_MS) / 1000.0;
-    for (policy, name, key) in
-        [(VideoCodecPolicy::Av1, "AV1", "av1"), (VideoCodecPolicy::H264, "H.264", "h264"), (VideoCodecPolicy::H265, "H.265", "h265")]
-    {
+    for (policy, name, key) in [
+        (VideoCodecPolicy::Av1, "AV1", "av1"),
+        (VideoCodecPolicy::H264, "H.264", "h264"),
+        (VideoCodecPolicy::H265, "H.265", "h265"),
+    ] {
         if !wanted(key) {
             continue;
         }
@@ -106,16 +122,26 @@ fn a_constant_rate_holds_its_rate_on_an_intel_gpu() {
         let spec = OutputSpec::single_file(vec![Rung::new(1280, 720).with_quality(cbr())])
             .with_video_codec(policy)
             .encode_policy(EncodePolicy::SingleGpu(None));
-        let Some(out) = run(&input, &spec, None) else { return };
-        let RungArtifact::File(mp4) = &out.rungs[0].artifact else { panic!("{name}: a single file") };
+        let Some(out) = run(&input, &spec, None) else {
+            return;
+        };
+        let RungArtifact::File(mp4) = &out.rungs[0].artifact else {
+            panic!("{name}: a single file")
+        };
         let sizes = sample_sizes(mp4);
-        assert!(sizes.len() >= (FPS * 5) as usize, "{name}: {} frames", sizes.len());
+        assert!(
+            sizes.len() >= (FPS * 5) as usize,
+            "{name}: {} frames",
+            sizes.len()
+        );
 
         let seconds = sizes.len() as f64 / f64::from(FPS);
         let average = sizes.iter().sum::<usize>() as f64 * 8.0 / seconds;
         let achieved = average / f64::from(TARGET);
-        let windows: Vec<f64> =
-            sizes.windows(FPS as usize).map(|w| w.iter().sum::<usize>() as f64 * 8.0).collect();
+        let windows: Vec<f64> = sizes
+            .windows(FPS as usize)
+            .map(|w| w.iter().sum::<usize>() as f64 * 8.0)
+            .collect();
         let peak = windows.iter().copied().fold(0.0, f64::max);
         let bound = f64::from(TARGET) + buffer_bits;
         eprintln!(
@@ -123,14 +149,22 @@ fn a_constant_rate_holds_its_rate_on_an_intel_gpu() {
              window {peak:.0} bits (bound {bound:.0})",
             sizes.len()
         );
-        assert!((0.90..=1.10).contains(&achieved), "{name}: average {average:.0} bit/s against {TARGET} ({achieved:.3})");
-        assert!(peak <= bound * 1.05, "{name}: a one-second window spent {peak:.0} bits, over the rate plus the buffer ({bound:.0})");
+        assert!(
+            (0.90..=1.10).contains(&achieved),
+            "{name}: average {average:.0} bit/s against {TARGET} ({achieved:.3})"
+        );
+        assert!(
+            peak <= bound * 1.05,
+            "{name}: a one-second window spent {peak:.0} bits, over the rate plus the buffer ({bound:.0})"
+        );
     }
 }
 
 /// The average bit rate of `segments`.
 fn rates_avg(segments: &[(f64, u64)]) -> f64 {
-    let (secs, bytes) = segments.iter().fold((0.0, 0u64), |(s, b), &(ss, bb)| (s + ss, b + bb));
+    let (secs, bytes) = segments
+        .iter()
+        .fold((0.0, 0u64), |(s, b), &(ss, bb)| (s + ss, b + bb));
     bytes as f64 * 8.0 / secs
 }
 
@@ -143,8 +177,14 @@ fn segments(playlist: &Path) -> Vec<(f64, u64)> {
         .iter()
         .enumerate()
         .filter_map(|(i, l)| {
-            let secs: f64 = l.strip_prefix("#EXTINF:")?.trim_end_matches(',').parse().ok()?;
-            let bytes = std::fs::metadata(dir.join(lines[i + 1].trim())).expect("segment file").len();
+            let secs: f64 = l
+                .strip_prefix("#EXTINF:")?
+                .trim_end_matches(',')
+                .parse()
+                .ok()?;
+            let bytes = std::fs::metadata(dir.join(lines[i + 1].trim()))
+                .expect("segment file")
+                .len();
             Some((secs, bytes))
         })
         .collect()
@@ -166,7 +206,10 @@ fn an_hls_constant_rate_rendition_declares_its_rate_plus_the_audio() {
     }
     let master = std::fs::read_to_string(root.join("master.m3u8")).expect("master playlist");
     let audio = segments(&root.join("audio").join("audio.m3u8"));
-    let audio_peak = audio.iter().map(|&(s, b)| b as f64 * 8.0 / s).fold(0.0, f64::max);
+    let audio_peak = audio
+        .iter()
+        .map(|&(s, b)| b as f64 * 8.0 / s)
+        .fold(0.0, f64::max);
     let inf = master
         .lines()
         .take_while(|l| l.trim() != "video/720p/playlist.m3u8")
@@ -180,10 +223,17 @@ fn an_hls_constant_rate_rendition_declares_its_rate_plus_the_audio() {
             .unwrap()
     };
     let (bandwidth, average) = (attr("BANDWIDTH"), attr("AVERAGE-BANDWIDTH"));
-    let video_avg = rates_avg(&segments(&root.join("video").join("720p").join("playlist.m3u8")));
+    let video_avg = rates_avg(&segments(
+        &root.join("video").join("720p").join("playlist.m3u8"),
+    ));
     let audio_avg = rates_avg(&audio);
-    eprintln!("cbr_rates: HLS BANDWIDTH {bandwidth} AVERAGE-BANDWIDTH {average}; target {TARGET}, video average {video_avg:.0}, audio peak {audio_peak:.0}");
-    assert!(average <= bandwidth, "AVERAGE-BANDWIDTH {average} over BANDWIDTH {bandwidth}");
+    eprintln!(
+        "cbr_rates: HLS BANDWIDTH {bandwidth} AVERAGE-BANDWIDTH {average}; target {TARGET}, video average {video_avg:.0}, audio peak {audio_peak:.0}"
+    );
+    assert!(
+        average <= bandwidth,
+        "AVERAGE-BANDWIDTH {average} over BANDWIDTH {bandwidth}"
+    );
     assert!(
         ((average - (video_avg + audio_avg)) / average).abs() <= 0.01,
         "AVERAGE-BANDWIDTH {average} is not the measured {video_avg:.0} + {audio_avg:.0}"

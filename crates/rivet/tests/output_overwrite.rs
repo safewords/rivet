@@ -17,7 +17,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn rivet(args: &[&std::ffi::OsStr]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rivet")).args(args).output().expect("rivet runs")
+    Command::new(env!("CARGO_BIN_EXE_rivet"))
+        .args(args)
+        .output()
+        .expect("rivet runs")
 }
 
 fn os<S: AsRef<std::ffi::OsStr> + ?Sized>(s: &S) -> &std::ffi::OsStr {
@@ -27,10 +30,19 @@ fn os<S: AsRef<std::ffi::OsStr> + ?Sized>(s: &S) -> &std::ffi::OsStr {
 /// Half a second of a 1 kHz tone as a bare `.mp3`, from rivet's own encoder.
 fn mp3_tone() -> Vec<u8> {
     use rivet::codec::audio::{AudioCodec, AudioEncoderConfig, AudioFrame, create_encoder};
-    let mut enc = create_encoder(AudioEncoderConfig::new(AudioCodec::Mp3, 48_000, 1, 64_000)).unwrap();
-    let samples =
-        (0..24_000).map(|i| 0.4 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 48_000.0).sin()).collect();
-    let mut frames = enc.encode(&AudioFrame { samples, sample_rate: 48_000, channels: 1, pts: 0 }).unwrap();
+    let mut enc =
+        create_encoder(AudioEncoderConfig::new(AudioCodec::Mp3, 48_000, 1, 64_000)).unwrap();
+    let samples = (0..24_000)
+        .map(|i| 0.4 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 48_000.0).sin())
+        .collect();
+    let mut frames = enc
+        .encode(&AudioFrame {
+            samples,
+            sample_rate: 48_000,
+            channels: 1,
+            pts: 0,
+        })
+        .unwrap();
     frames.extend(enc.flush().unwrap());
     frames.into_iter().flat_map(|p| p.data).collect()
 }
@@ -48,9 +60,21 @@ fn stderr(o: &Output) -> String {
 
 /// Refused, naming the reason, with the source as it was.
 fn assert_refused(o: &Output, input: &Path, original: &[u8]) {
-    assert!(!o.status.success(), "must be refused; stdout: {}", String::from_utf8_lossy(&o.stdout));
-    assert!(stderr(o).contains("refusing"), "the reason is given: {}", stderr(o));
-    assert_eq!(std::fs::read(input).unwrap(), original, "the source is untouched");
+    assert!(
+        !o.status.success(),
+        "must be refused; stdout: {}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    assert!(
+        stderr(o).contains("refusing"),
+        "the reason is given: {}",
+        stderr(o)
+    );
+    assert_eq!(
+        std::fs::read(input).unwrap(),
+        original,
+        "the source is untouched"
+    );
 }
 
 /// Whether the file system under `dir` ignores case.
@@ -66,13 +90,28 @@ fn an_mp3_in_audio_mode_with_no_output_is_written_beside_it() {
     let dir = tempfile::tempdir().unwrap();
     let mp3 = mp3_tone();
     let input = source(dir.path(), "x.mp3", &mp3);
-    let o = rivet(&[os("transcode"), input.as_os_str(), os("--mode"), os("audio")]);
+    let o = rivet(&[
+        os("transcode"),
+        input.as_os_str(),
+        os("--mode"),
+        os("audio"),
+    ]);
     assert!(o.status.success(), "{}", stderr(&o));
-    assert_eq!(std::fs::read(&input).unwrap(), mp3, "the source is untouched");
+    assert_eq!(
+        std::fs::read(&input).unwrap(),
+        mp3,
+        "the source is untouched"
+    );
     let out = dir.path().join("x.rivet.mp3");
-    assert!(std::fs::metadata(&out).unwrap().len() > 0, "the output is x.rivet.mp3");
+    assert!(
+        std::fs::metadata(&out).unwrap().len() > 0,
+        "the output is x.rivet.mp3"
+    );
     // Nothing else (no temporary) is left in the directory.
-    let mut names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    let mut names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
     names.sort();
     assert_eq!(names, ["x.mp3", "x.rivet.mp3"]);
 
@@ -101,7 +140,11 @@ fn an_mp3_in_audio_mode_with_no_output_is_written_beside_it() {
         os("fast"),
     ]);
     assert!(o.status.success(), "{}", stderr(&o));
-    assert_eq!(std::fs::read(&flac).unwrap(), flac_bytes, "the FLAC source is untouched");
+    assert_eq!(
+        std::fs::read(&flac).unwrap(),
+        flac_bytes,
+        "the FLAC source is untouched"
+    );
     assert!(dir.path().join("y.rivet.flac").exists());
 }
 
@@ -122,12 +165,24 @@ fn an_output_that_is_the_input_by_any_spelling_is_refused() {
         spellings.push(link);
     }
     for out in &spellings {
-        let o = rivet(&[os("transcode"), input.as_os_str(), os("--mode"), os("audio"), os("-o"), out.as_os_str()]);
+        let o = rivet(&[
+            os("transcode"),
+            input.as_os_str(),
+            os("--mode"),
+            os("audio"),
+            os("-o"),
+            out.as_os_str(),
+        ]);
         assert_refused(&o, &input, &mp3);
     }
     // Single mode with the same `-o` (an audio-only input is written as audio
     // by itself), and asked for explicitly as a video codec's file.
-    let o = rivet(&[os("transcode"), input.as_os_str(), os("-o"), input.as_os_str()]);
+    let o = rivet(&[
+        os("transcode"),
+        input.as_os_str(),
+        os("-o"),
+        input.as_os_str(),
+    ]);
     assert_refused(&o, &input, &mp3);
 }
 
@@ -138,17 +193,42 @@ fn a_video_source_is_never_its_own_output() {
     let input = source(dir.path(), "clip.mp4", &clip);
     // Single file.
     let upper = dir.path().join("CLIP.mp4");
-    let target = if case_insensitive(dir.path()) { &upper } else { &input };
-    let o = rivet(&[os("transcode"), input.as_os_str(), os("--codec"), os("mpeg4"), os("-o"), target.as_os_str()]);
+    let target = if case_insensitive(dir.path()) {
+        &upper
+    } else {
+        &input
+    };
+    let o = rivet(&[
+        os("transcode"),
+        input.as_os_str(),
+        os("--codec"),
+        os("mpeg4"),
+        os("-o"),
+        target.as_os_str(),
+    ]);
     assert_refused(&o, &input, &clip);
     // HLS: the asset root is the input file, or holds the input where the
     // package writes.
-    let o = rivet(&[os("transcode"), input.as_os_str(), os("--mode"), os("hls"), os("-o"), input.as_os_str()]);
+    let o = rivet(&[
+        os("transcode"),
+        input.as_os_str(),
+        os("--mode"),
+        os("hls"),
+        os("-o"),
+        input.as_os_str(),
+    ]);
     assert_refused(&o, &input, &clip);
     let pkg = dir.path().join("pkg");
     std::fs::create_dir_all(pkg.join("video")).unwrap();
     let inside = source(&pkg.join("video"), "clip.mp4", &clip);
-    let o = rivet(&[os("transcode"), inside.as_os_str(), os("--mode"), os("hls"), os("-o"), pkg.as_os_str()]);
+    let o = rivet(&[
+        os("transcode"),
+        inside.as_os_str(),
+        os("--mode"),
+        os("hls"),
+        os("-o"),
+        pkg.as_os_str(),
+    ]);
     assert_refused(&o, &inside, &clip);
     // A directory of rungs that is the input file.
     let o = rivet(&[
@@ -193,7 +273,11 @@ fn a_batch_job_never_writes_over_its_input() {
     let b = source(dir.path(), "b.mp3", &mp3);
     // `a` has no output: the default `<stem>.mp3` is its own name. `b` names
     // itself (in another case where the file system ignores it).
-    let b_out = if case_insensitive(dir.path()) { "B.MP3" } else { "b.mp3" };
+    let b_out = if case_insensitive(dir.path()) {
+        "B.MP3"
+    } else {
+        "b.mp3"
+    };
     let manifest = source(
         dir.path(),
         "jobs.yaml",
@@ -206,7 +290,10 @@ fn a_batch_job_never_writes_over_its_input() {
     assert!(out.contains("refusing"), "{out}");
     assert_eq!(std::fs::read(&a).unwrap(), mp3);
     assert_eq!(std::fs::read(&b).unwrap(), mp3);
-    assert!(dir.path().join("a.rivet.mp3").exists(), "a's output is beside it");
+    assert!(
+        dir.path().join("a.rivet.mp3").exists(),
+        "a's output is beside it"
+    );
 }
 
 /// Every file under `dir`, recursively.
@@ -216,7 +303,11 @@ fn files_under(dir: &Path) -> Vec<PathBuf> {
     while let Some(d) = stack.pop() {
         for e in std::fs::read_dir(&d).unwrap() {
             let p = e.unwrap().path();
-            if p.is_dir() { stack.push(p) } else { out.push(p) }
+            if p.is_dir() {
+                stack.push(p)
+            } else {
+                out.push(p)
+            }
         }
     }
     out.sort();
@@ -250,18 +341,28 @@ fn an_hls_package_is_written_file_by_file_whole() {
     let o = run();
     assert!(o.status.success(), "HLS job: {}", stderr(&o));
     let files = files_under(&pkg);
-    assert!(files.iter().any(|p| p.extension().is_some_and(|e| e == "m4s")), "segments written: {files:?}");
+    assert!(
+        files
+            .iter()
+            .any(|p| p.extension().is_some_and(|e| e == "m4s")),
+        "segments written: {files:?}"
+    );
     let leftovers: Vec<_> = files
         .iter()
         .filter(|p| p.file_name().unwrap().to_string_lossy().ends_with(".part"))
         .collect();
-    assert!(leftovers.is_empty(), "no temporary files left behind: {leftovers:?}");
+    assert!(
+        leftovers.is_empty(),
+        "no temporary files left behind: {leftovers:?}"
+    );
 
     // Hard-link a file that is not an input over the first video segment,
     // then write the package again.
     let segment = files
         .iter()
-        .find(|p| p.extension().is_some_and(|e| e == "m4s") && p.to_string_lossy().contains("video"))
+        .find(|p| {
+            p.extension().is_some_and(|e| e == "m4s") && p.to_string_lossy().contains("video")
+        })
         .expect("a video segment")
         .clone();
     let other = source(dir.path(), "other.bin", b"not a segment");
@@ -271,9 +372,21 @@ fn an_hls_package_is_written_file_by_file_whole() {
     }
     let o = run();
     assert!(o.status.success(), "HLS job again: {}", stderr(&o));
-    assert_eq!(std::fs::read(&other).unwrap(), b"not a segment", "the other name keeps its contents");
-    assert_ne!(std::fs::read(&segment).unwrap(), b"not a segment", "the segment is rewritten");
-    assert_eq!(std::fs::read(&input).unwrap(), clip, "the source is untouched");
+    assert_eq!(
+        std::fs::read(&other).unwrap(),
+        b"not a segment",
+        "the other name keeps its contents"
+    );
+    assert_ne!(
+        std::fs::read(&segment).unwrap(),
+        b"not a segment",
+        "the segment is rewritten"
+    );
+    assert_eq!(
+        std::fs::read(&input).unwrap(),
+        clip,
+        "the source is untouched"
+    );
 }
 
 /// The rename does not loosen the guard: an input hard-linked at a path the
@@ -289,6 +402,13 @@ fn an_input_linked_into_an_hls_package_is_still_refused() {
     if std::fs::hard_link(&input, &linked).is_err() {
         return;
     }
-    let o = rivet(&[os("transcode"), linked.as_os_str(), os("--mode"), os("hls"), os("-o"), pkg.as_os_str()]);
+    let o = rivet(&[
+        os("transcode"),
+        linked.as_os_str(),
+        os("--mode"),
+        os("hls"),
+        os("-o"),
+        pkg.as_os_str(),
+    ]);
     assert_refused(&o, &input, &clip);
 }

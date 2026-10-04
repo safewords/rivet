@@ -1,4 +1,4 @@
-use super::super::{demux_ts_streaming_init, STREAM_TYPE_H264, STREAM_TYPE_MPEG2_VIDEO};
+use super::super::{STREAM_TYPE_H264, STREAM_TYPE_MPEG2_VIDEO, demux_ts_streaming_init};
 use super::build_two_program_ts;
 use crate::streaming::StreamingDemuxer;
 
@@ -30,10 +30,7 @@ fn streaming_demuxer_default_picks_first_program() {
     assert_eq!(dem.header().codec, "mpeg2", "program 1 is MPEG-2");
     // Drain — samples should be 0xAA-filled (program 1's bytes).
     let s = dem.next_video_sample().expect("sample").expect("some");
-    assert!(
-        s.data.contains(&0xAA),
-        "program 1 sample should carry 0xAA"
-    );
+    assert!(s.data.contains(&0xAA), "program 1 sample should carry 0xAA");
     assert!(
         !s.data.contains(&0xBB),
         "program 1 sample must not carry program 2's 0xBB"
@@ -48,10 +45,7 @@ fn streaming_demuxer_select_program_switches_active_streams() {
     assert_eq!(dem.active_program_index(), 1);
     assert_eq!(dem.header().codec, "h264", "program 2 is H.264");
     let s = dem.next_video_sample().expect("sample").expect("some");
-    assert!(
-        s.data.contains(&0xBB),
-        "program 2 sample should carry 0xBB"
-    );
+    assert!(s.data.contains(&0xBB), "program 2 sample should carry 0xBB");
     assert!(
         !s.data.contains(&0xAA),
         "program 2 sample must not carry program 1's 0xAA"

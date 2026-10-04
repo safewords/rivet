@@ -17,7 +17,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 
-use rivet::per_title::{DEFAULT_CANDIDATES, SampleSpec, Selection, sample_frames, select_shift, sweep_on_pool};
+use rivet::per_title::{
+    DEFAULT_CANDIDATES, SampleSpec, Selection, sample_frames, select_shift, sweep_on_pool,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,10 +30,17 @@ async fn main() -> Result<()> {
         eprintln!("usage: per_title <input> [floor=0.9985] [WxH]");
         std::process::exit(2);
     };
-    let floor: f64 = args.get(2).map(|s| s.parse()).transpose().context("floor")?.unwrap_or(0.9985);
+    let floor: f64 = args
+        .get(2)
+        .map(|s| s.parse())
+        .transpose()
+        .context("floor")?
+        .unwrap_or(0.9985);
 
     let input = Bytes::from(std::fs::read(input_path).context("reading input")?);
-    let header = rivet::container::streaming::demux_streaming(&input)?.header().clone();
+    let header = rivet::container::streaming::demux_streaming(&input)?
+        .header()
+        .clone();
     let (width, height) = match args.get(3) {
         Some(dims) => {
             let (w, h) = dims.split_once('x').context("WxH")?;
@@ -44,7 +53,13 @@ async fn main() -> Result<()> {
     // normalise it, and the candidates encode what its encoders would.
     let output = rivet::OutputSpec::single_file(vec![rivet::Rung::new(width, height)]);
     let frames = sample_frames(&input, &header, &SampleSpec::default(), &output)?;
-    println!("sampled {} frames from {}x{} {}", frames.len(), header.info.width, header.info.height, header.codec);
+    println!(
+        "sampled {} frames from {}x{} {}",
+        frames.len(),
+        header.info.width,
+        header.info.height,
+        header.codec
+    );
 
     let (color_metadata, pixel_format) =
         output.resolve_output(header.info.color_metadata, header.info.pixel_format);
@@ -67,11 +82,18 @@ async fn main() -> Result<()> {
     })
     .await?;
 
-    println!("{:>6} {:>10} {:>9} {:>8} {:>7}", "delta", "bytes", "ssim", "dB", "psnr");
+    println!(
+        "{:>6} {:>10} {:>9} {:>8} {:>7}",
+        "delta", "bytes", "ssim", "dB", "psnr"
+    );
     for s in &sweep.samples {
         println!(
             "{:>6} {:>10} {:>9.6} {:>8.2} {:>7.2}",
-            s.quality_delta, s.trimmed_bytes, s.ssim, s.ssim_db(), s.psnr
+            s.quality_delta,
+            s.trimmed_bytes,
+            s.ssim,
+            s.ssim_db(),
+            s.psnr
         );
     }
     match select_shift(&sweep, floor, &deltas) {
@@ -79,9 +101,15 @@ async fn main() -> Result<()> {
             "floor {floor}: shift the ladder by {:+} (ssim {:.6}){}",
             sample.quality_delta,
             sample.ssim,
-            if capped { " — capped by the candidate range; widen it to find where the content stops" } else { "" }
+            if capped {
+                " — capped by the candidate range; widen it to find where the content stops"
+            } else {
+                ""
+            }
         ),
-        Selection::KeptBase => println!("floor {floor}: nothing reached it; the clip keeps its base quality"),
+        Selection::KeptBase => {
+            println!("floor {floor}: nothing reached it; the clip keeps its base quality")
+        }
     }
     Ok(())
 }

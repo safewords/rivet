@@ -101,8 +101,8 @@ impl MediaInfo {
 
 pub fn probe_file(input: impl AsRef<Path>) -> Result<MediaInfo> {
     let input = input.as_ref();
-    let bytes = std::fs::read(input)
-        .with_context(|| format!("reading input file {}", input.display()))?;
+    let bytes =
+        std::fs::read(input).with_context(|| format!("reading input file {}", input.display()))?;
     probe_bytes(&bytes)
 }
 
@@ -175,7 +175,10 @@ pub fn probe_bytes_shared(input: bytes::Bytes) -> Result<MediaInfo> {
 fn audio_only_info(container: String, src: &streaming::AudioSource) -> MediaInfo {
     let t = &src.track;
     let ticks: u64 = t.durations.iter().map(|&d| u64::from(d)).sum();
-    let duration = match src.edit.and_then(|e| e.media_end.map(|end| end.saturating_sub(e.media_start))) {
+    let duration = match src
+        .edit
+        .and_then(|e| e.media_end.map(|end| end.saturating_sub(e.media_start)))
+    {
         Some(presented) => presented as f64 / f64::from(t.timescale.max(1)),
         None => ticks as f64 / f64::from(t.timescale.max(1)),
     };
@@ -191,7 +194,11 @@ fn audio_only_info(container: String, src: &streaming::AudioSource) -> MediaInfo
         frame_rate: 0.0,
         duration,
         pixel_format: "none".into(),
-        audio: Some(AudioStreamInfo { codec: t.codec.to_ascii_lowercase(), sample_rate: t.sample_rate, channels: t.channels }),
+        audio: Some(AudioStreamInfo {
+            codec: t.codec.to_ascii_lowercase(),
+            sample_rate: t.sample_rate,
+            channels: t.channels,
+        }),
         subtitles: Vec::new(),
     }
 }

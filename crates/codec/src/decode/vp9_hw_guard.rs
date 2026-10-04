@@ -128,8 +128,11 @@ impl Vp9HwPolicy {
 /// on their own. 8- and 10-bit 4:2:0 up to 8192x8192 — "VP9 8,10b: 8K" for
 /// every VCN in AMD's AMF wiki table (GPU and APU HW Features and Support) —
 /// and from 16x16, the smallest size the decoder is initialised at here.
-pub const AMF_POLICY: Vp9HwPolicy =
-    Vp9HwPolicy { min_size: (16, 16), max_size: (8192, 8192), ..Vp9HwPolicy::BASELINE };
+pub const AMF_POLICY: Vp9HwPolicy = Vp9HwPolicy {
+    min_size: (16, 16),
+    max_size: (8192, 8192),
+    ..Vp9HwPolicy::BASELINE
+};
 /// QSV, measured on the Intel CI runner (Arc A750, oneVPL GPU runtime; the
 /// bare decoder on every one of the WebM project's 343 profile 0 / 2
 /// vectors): error-resilient streams, segmentation, `show_existing_frame`,
@@ -226,7 +229,12 @@ pub struct Vp9HardwareGuard {
 
 impl Vp9HardwareGuard {
     /// Guard `hw`, a hardware decoder for the VP9 stream `info`.
-    pub fn new(label: &'static str, hw: Box<dyn Decoder>, info: StreamInfo, policy: Vp9HwPolicy) -> Self {
+    pub fn new(
+        label: &'static str,
+        hw: Box<dyn Decoder>,
+        info: StreamInfo,
+        policy: Vp9HwPolicy,
+    ) -> Self {
         let init_size = (info.width > 0 && info.height > 0).then_some((info.width, info.height));
         let init_ten_bit = info.pixel_format == crate::frame::PixelFormat::Yuv420p10le;
         Self {
@@ -284,7 +292,9 @@ impl Vp9HardwareGuard {
 
     fn pull_hw(&mut self) -> Result<()> {
         while let Some(hw) = self.hw.as_mut() {
-            let Some(frame) = hw.decode_next()? else { break };
+            let Some(frame) = hw.decode_next()? else {
+                break;
+            };
             self.hw_frames += 1;
             let frame = match self.owed_sizes.pop_front().flatten() {
                 Some((w, h)) => crop(frame, w, h),
@@ -297,7 +307,9 @@ impl Vp9HardwareGuard {
 
     fn pull_sw(&mut self) -> Result<()> {
         while let Some(sw) = self.sw.as_mut() {
-            let Some(frame) = sw.decode_next()? else { break };
+            let Some(frame) = sw.decode_next()? else {
+                break;
+            };
             self.emit(frame);
         }
         Ok(())
@@ -307,7 +319,10 @@ impl Vp9HardwareGuard {
     /// with, if anything — read before anything decodes it. Updates the
     /// reference sizes and the key-frame bookkeeping either way.
     #[allow(clippy::type_complexity)]
-    fn needs_software(&mut self, packet: &[u8]) -> (Option<String>, Vec<Option<(u32, u32)>>, Option<(u32, u32)>) {
+    fn needs_software(
+        &mut self,
+        packet: &[u8],
+    ) -> (Option<String>, Vec<Option<(u32, u32)>>, Option<(u32, u32)>) {
         let mut why = None;
         let mut shown = Vec::new();
         let mut restart = None;
@@ -320,7 +335,9 @@ impl Vp9HardwareGuard {
             ));
         }
         for (i, frame) in frames.iter().enumerate() {
-            let Some(header) = vp9_header::peek(frame) else { continue };
+            let Some(header) = vp9_header::peek(frame) else {
+                continue;
+            };
             if let FrameHeader::Coded(c) = &header
                 && c.key
                 && i == 0
@@ -442,7 +459,10 @@ impl Vp9HardwareGuard {
     /// key frame — not the size the decoder was set up for.
     fn size_refusal(&self, size: (u32, u32), first_key: bool) -> Option<String> {
         if !self.policy.odd_sizes && (size.0 % 2 == 1 || size.1 % 2 == 1) {
-            return Some(format!("a {}x{} frame: this decoder resamples odd sizes", size.0, size.1));
+            return Some(format!(
+                "a {}x{} frame: this decoder resamples odd sizes",
+                size.0, size.1
+            ));
         }
         let (min, max) = (self.policy.min_size, self.policy.max_size);
         if size.0 < min.0 || size.1 < min.1 || size.0 > max.0 || size.1 > max.1 {
@@ -493,7 +513,9 @@ impl Vp9HardwareGuard {
                         }
                     }
                 },
-                Err(e) => tracing::debug!(error = %format!("{e:#}"), "hardware VP9 decoder failed to drain for a switch"),
+                Err(e) => {
+                    tracing::debug!(error = %format!("{e:#}"), "hardware VP9 decoder failed to drain for a switch")
+                }
             }
         }
         let mut sw: Box<dyn Decoder> = Box::new(super::vp9_sw::Vp9Decoder::new(self.info.clone())?);
@@ -506,7 +528,8 @@ impl Vp9HardwareGuard {
         }
         // The hardware has already returned the pictures of the kept
         // packets it could decode; the rest are new.
-        let already = (self.hw_frames.saturating_sub(self.shown_before_kept) as usize).min(replayed.len());
+        let already =
+            (self.hw_frames.saturating_sub(self.shown_before_kept) as usize).min(replayed.len());
         tracing::info!(
             decoder = self.label,
             reason = why,
@@ -580,7 +603,11 @@ impl Decoder for Vp9HardwareGuard {
             self.shown_total += 1;
             self.owed_sizes.push_back(shown.last().copied().flatten());
         }
-        let pushed = self.hw.as_mut().expect("hardware until the switch").push_sample(data);
+        let pushed = self
+            .hw
+            .as_mut()
+            .expect("hardware until the switch")
+            .push_sample(data);
         match pushed.and_then(|()| self.pull_hw()) {
             Ok(()) => Ok(()),
             Err(e) => self.recover(e),
@@ -641,7 +668,9 @@ fn crop(frame: VideoFrame, w: u32, h: u32) -> VideoFrame {
     for plane in 0..2 {
         let base = (sw * sh + plane * scw * sch) * bytes;
         for row in 0..dch {
-            out.extend_from_slice(&frame.data[base + row * scw * bytes..base + (row * scw + dcw) * bytes]);
+            out.extend_from_slice(
+                &frame.data[base + row * scw * bytes..base + (row * scw + dcw) * bytes],
+            );
         }
     }
     VideoFrame::new(out.into(), w, h, frame.format, frame.color_space, frame.pts)
@@ -724,10 +753,17 @@ mod tests {
         };
         let demuxed = container::demux::demux(&data).expect("demux");
         let packets: Vec<Vec<u8>> = demuxed.samples.iter().map(|s| s.to_vec()).collect();
-        let want = all(Box::new(crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap()), &packets);
-        let lossy = DropsShowExisting { inner: crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap() };
+        let want = all(
+            Box::new(crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap()),
+            &packets,
+        );
+        let lossy = DropsShowExisting {
+            inner: crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap(),
+        };
         let unguarded = all(
-            Box::new(DropsShowExisting { inner: crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap() }),
+            Box::new(DropsShowExisting {
+                inner: crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap(),
+            }),
             &packets,
         );
         assert!(unguarded.len() < want.len(), "the stand-in drops pictures");
@@ -750,7 +786,10 @@ mod tests {
         let packets: Vec<Vec<u8>> = (0..4).map(|_| enc.encode(&frame).unwrap()).collect();
         let hw = Box::new(crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap());
         // rivet's own encoder codes its inter frames error-resilient.
-        let policy = Vp9HwPolicy { error_resilient: true, ..Vp9HwPolicy::BASELINE };
+        let policy = Vp9HwPolicy {
+            error_resilient: true,
+            ..Vp9HwPolicy::BASELINE
+        };
         let mut guard = Vp9HardwareGuard::new("test", hw, info(), policy);
         for p in &packets {
             guard.push_sample(p).unwrap();
@@ -778,12 +817,25 @@ mod tests {
     fn a_stream_that_is_not_what_the_decoder_was_set_up_for_stays_in_software() {
         let (w, h) = (64u32, 48u32);
         let mut enc = vp9::Encoder::new(vp9::Config::new(w, h));
-        let key = enc.encode(&vp9::Frame::new(w, h, 8, vp9::ChromaFormat::Yuv420)).unwrap();
-        let trusting = Vp9HwPolicy { error_resilient: true, ..Vp9HwPolicy::BASELINE };
+        let key = enc
+            .encode(&vp9::Frame::new(w, h, 8, vp9::ChromaFormat::Yuv420))
+            .unwrap();
+        let trusting = Vp9HwPolicy {
+            error_resilient: true,
+            ..Vp9HwPolicy::BASELINE
+        };
         let cases: [(u32, u32, PixelFormat, Vp9HwPolicy); 3] = [
             (320, 240, PixelFormat::Yuv420p, trusting),
             (64, 48, PixelFormat::Yuv420p10le, trusting),
-            (64, 48, PixelFormat::Yuv420p, Vp9HwPolicy { min_size: (128, 128), ..trusting }),
+            (
+                64,
+                48,
+                PixelFormat::Yuv420p,
+                Vp9HwPolicy {
+                    min_size: (128, 128),
+                    ..trusting
+                },
+            ),
         ];
         for (cw, ch, format, policy) in cases {
             let mut i = info();
@@ -792,7 +844,10 @@ mod tests {
             let mut guard = Vp9HardwareGuard::new("test", hw, i, policy);
             guard.push_sample(&key).unwrap();
             assert!(guard.switched(), "{cw}x{ch} {format:?} {policy:?}");
-            let f = guard.decode_next().unwrap().expect("the picture, from software");
+            let f = guard
+                .decode_next()
+                .unwrap()
+                .expect("the picture, from software");
             assert_eq!((f.width, f.height, f.pts), (w, h, 0));
         }
         // What it was set up for: stays.
@@ -808,13 +863,30 @@ mod tests {
     fn crop_takes_the_top_left_of_each_plane() {
         // 4x4 → 3x3: luma rows of 3, chroma 2x2 out of 2x2.
         let data: Vec<u8> = (0..24).collect();
-        let f = VideoFrame::new(data.into(), 4, 4, PixelFormat::Yuv420p, ColorSpace::Bt709, 7);
+        let f = VideoFrame::new(
+            data.into(),
+            4,
+            4,
+            PixelFormat::Yuv420p,
+            ColorSpace::Bt709,
+            7,
+        );
         let c = crop(f, 3, 3);
         assert_eq!((c.width, c.height, c.pts), (3, 3, 7));
-        assert_eq!(&c.data[..], &[0, 1, 2, 4, 5, 6, 8, 9, 10, 16, 17, 18, 19, 20, 21, 22, 23][..]);
+        assert_eq!(
+            &c.data[..],
+            &[0, 1, 2, 4, 5, 6, 8, 9, 10, 16, 17, 18, 19, 20, 21, 22, 23][..]
+        );
         // 10-bit, 4x2 → 2x2.
         let data: Vec<u8> = (0..24).collect();
-        let f = VideoFrame::new(data.into(), 4, 2, PixelFormat::Yuv420p10le, ColorSpace::Bt709, 0);
+        let f = VideoFrame::new(
+            data.into(),
+            4,
+            2,
+            PixelFormat::Yuv420p10le,
+            ColorSpace::Bt709,
+            0,
+        );
         let c = crop(f, 2, 2);
         assert_eq!(&c.data[..], &[0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 20, 21][..]);
     }
@@ -825,7 +897,10 @@ mod tests {
     /// rivet's own decoder's.
     #[test]
     fn a_key_frame_at_a_new_size_restarts_the_hardware() {
-        let trusting = Vp9HwPolicy { error_resilient: true, ..Vp9HwPolicy::BASELINE };
+        let trusting = Vp9HwPolicy {
+            error_resilient: true,
+            ..Vp9HwPolicy::BASELINE
+        };
         let mut packets = Vec::new();
         for (w, h) in [(64u32, 48u32), (96, 64)] {
             let mut enc = vp9::Encoder::new(vp9::Config::new(w, h));
@@ -834,7 +909,10 @@ mod tests {
                 packets.push(enc.encode(&frame).unwrap());
             }
         }
-        let want = all(Box::new(crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap()), &packets);
+        let want = all(
+            Box::new(crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap()),
+            &packets,
+        );
         assert_eq!(want.len(), 6);
 
         let built = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -842,11 +920,16 @@ mod tests {
         let mut i = info();
         (i.width, i.height) = (64, 48);
         let hw = Box::new(crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap());
-        let mut guard = Vp9HardwareGuard::new("test", hw, i.clone(), trusting).with_rebuild(Box::new(move |info| {
-            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            assert_eq!((info.width, info.height), (96, 64));
-            Ok(Box::new(crate::decode::vp9_sw::Vp9Decoder::new(info.clone())?) as Box<dyn Decoder>)
-        }));
+        let mut guard = Vp9HardwareGuard::new("test", hw, i.clone(), trusting).with_rebuild(
+            Box::new(move |info| {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                assert_eq!((info.width, info.height), (96, 64));
+                Ok(
+                    Box::new(crate::decode::vp9_sw::Vp9Decoder::new(info.clone())?)
+                        as Box<dyn Decoder>,
+                )
+            }),
+        );
         let mut got = Vec::new();
         for p in &packets {
             guard.push_sample(p).unwrap();
@@ -888,14 +971,20 @@ mod tests {
         // correctly, but enough to count frames — the guard must not hand
         // it to the hardware, whatever is in it.
         let big = vp9::superframe::join(&[&inter[0], &inter[1], &inter[2]]);
-        let trusting = Vp9HwPolicy { error_resilient: true, ..Vp9HwPolicy::BASELINE };
+        let trusting = Vp9HwPolicy {
+            error_resilient: true,
+            ..Vp9HwPolicy::BASELINE
+        };
         struct Refuses;
         impl Decoder for Refuses {
             fn stream_info(&self) -> &StreamInfo {
                 unreachable!()
             }
             fn push_sample(&mut self, data: &[u8]) -> Result<()> {
-                assert!(vp9::superframe::split(data).len() <= 2, "a big superframe reached the hardware");
+                assert!(
+                    vp9::superframe::split(data).len() <= 2,
+                    "a big superframe reached the hardware"
+                );
                 Ok(())
             }
             fn finish(&mut self) -> Result<()> {
@@ -917,11 +1006,21 @@ mod tests {
     fn odd_sizes_stay_in_software_where_the_policy_says() {
         let (w, h) = (65u32, 48u32);
         let mut enc = vp9::Encoder::new(vp9::Config::new(w, h));
-        let key = enc.encode(&vp9::Frame::new(w, h, 8, vp9::ChromaFormat::Yuv420)).unwrap();
+        let key = enc
+            .encode(&vp9::Frame::new(w, h, 8, vp9::ChromaFormat::Yuv420))
+            .unwrap();
         let mut i = info();
         (i.width, i.height) = (w, h);
         let hw = Box::new(crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap());
-        let mut guard = Vp9HardwareGuard::new("test", hw, i.clone(), Vp9HwPolicy { odd_sizes: false, ..Vp9HwPolicy::BASELINE });
+        let mut guard = Vp9HardwareGuard::new(
+            "test",
+            hw,
+            i.clone(),
+            Vp9HwPolicy {
+                odd_sizes: false,
+                ..Vp9HwPolicy::BASELINE
+            },
+        );
         guard.push_sample(&key).unwrap();
         assert!(guard.switched());
         let hw = Box::new(crate::decode::vp9_sw::Vp9Decoder::new(info()).unwrap());

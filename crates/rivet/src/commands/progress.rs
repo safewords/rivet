@@ -63,7 +63,9 @@ impl ProgressSink for ProgressPrinter {
         let now = Instant::now();
         let terminal = matches!(p.status, RungStatus::Completed | RungStatus::Failed);
 
-        let Ok(mut states) = self.inner.lock() else { return };
+        let Ok(mut states) = self.inner.lock() else {
+            return;
+        };
         if p.rung_index >= states.len() {
             states.resize_with(p.rung_index + 1, RungState::default);
         }
@@ -108,7 +110,11 @@ impl ProgressSink for ProgressPrinter {
         // pipeline ends in a burst as already-queued chunks drain, so the EMA
         // finishes far above the rate actually achieved (162 fps printed on a
         // run that averaged 45). Close with the average instead.
-        let rate = if terminal { self.average_fps(p.frames_done) } else { st.fps };
+        let rate = if terminal {
+            self.average_fps(p.frames_done)
+        } else {
+            st.fps
+        };
         let line = self.render(&p, rate);
         let mut err = std::io::stderr().lock();
         if self.inplace && !terminal {
@@ -333,8 +339,14 @@ mod tests {
 
         pr.on_rung(progress(3990, Some(4000), 39_000_000));
         let st = &pr.inner.lock().unwrap()[0];
-        assert!(st.finished, "a stale Running tick must not un-finish the rung");
-        assert!(!st.line_open, "nor reopen the line the summary prints after");
+        assert!(
+            st.finished,
+            "a stale Running tick must not un-finish the rung"
+        );
+        assert!(
+            !st.line_open,
+            "nor reopen the line the summary prints after"
+        );
     }
 
     #[test]

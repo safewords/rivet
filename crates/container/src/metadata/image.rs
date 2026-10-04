@@ -29,7 +29,9 @@ pub(crate) fn read_jpeg(data: &[u8], m: &mut Metadata) {
             return;
         }
         let len = usize::from(u16::from_be_bytes([data[at + 2], data[at + 3]]));
-        let Some(body) = data.get(at + 4..at + 2 + len).filter(|_| len >= 2) else { return };
+        let Some(body) = data.get(at + 4..at + 2 + len).filter(|_| len >= 2) else {
+            return;
+        };
         match marker {
             0xE1 if body.starts_with(b"Exif\0\0") => exif::read_exif(body, m),
             0xE1 if body.starts_with(XMP_SIG) => xmp::read(&body[XMP_SIG.len()..], m),
@@ -43,7 +45,12 @@ pub(crate) fn read_jpeg(data: &[u8], m: &mut Metadata) {
             }
             0xFE => m.set_descriptive("comment", &super::text(body)),
             0xE1 | 0xE3..=0xEF => {
-                let sig: String = body.iter().take_while(|&&b| b != 0 && b.is_ascii_graphic()).take(24).map(|&b| b as char).collect();
+                let sig: String = body
+                    .iter()
+                    .take_while(|&&b| b != 0 && b.is_ascii_graphic())
+                    .take(24)
+                    .map(|&b| b as char)
+                    .collect();
                 m.unclassified(format!("jpeg/APP{} {sig}", marker - 0xE0));
             }
             _ => {}
@@ -55,9 +62,13 @@ pub(crate) fn read_jpeg(data: &[u8], m: &mut Metadata) {
 pub(crate) fn read_png(data: &[u8], m: &mut Metadata) {
     let mut at = 8;
     while at + 8 <= data.len() {
-        let Some(len) = be32(data, at).map(|l| l as usize) else { return };
+        let Some(len) = be32(data, at).map(|l| l as usize) else {
+            return;
+        };
         let kind = &data[at + 4..at + 8];
-        let Some(body) = data.get(at + 8..at + 8 + len) else { return };
+        let Some(body) = data.get(at + 8..at + 8 + len) else {
+            return;
+        };
         match kind {
             b"eXIf" => exif::read_exif(body, m),
             b"tEXt" => {
@@ -125,7 +136,9 @@ fn png_text(m: &mut Metadata, keyword: &str, value: &str) {
 fn png_text_presence(m: &mut Metadata, keyword: &str) {
     let category = match keyword.to_ascii_lowercase().replace(' ', "_").as_str() {
         "creation_time" => Category::CaptureTime,
-        "software" | "source" | "raw_profile_type_exif" | "raw_profile_type_app1" => Category::Device,
+        "software" | "source" | "raw_profile_type_exif" | "raw_profile_type_app1" => {
+            Category::Device
+        }
         "xml:com.adobe.xmp" => {
             m.unclassified(String::from("png/compressed XMP"));
             Category::Descriptive
@@ -138,8 +151,12 @@ fn png_text_presence(m: &mut Metadata, keyword: &str) {
 pub(crate) fn read_webp(data: &[u8], m: &mut Metadata) {
     let mut at = 12;
     while at + 8 <= data.len() {
-        let Some(len) = le32(data, at + 4).map(|l| l as usize) else { return };
-        let Some(body) = data.get(at + 8..at + 8 + len) else { return };
+        let Some(len) = le32(data, at + 4).map(|l| l as usize) else {
+            return;
+        };
+        let Some(body) = data.get(at + 8..at + 8 + len) else {
+            return;
+        };
         match &data[at..at + 4] {
             b"EXIF" => exif::read_exif(body, m),
             b"XMP " => xmp::read(body, m),

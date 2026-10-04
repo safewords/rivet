@@ -18,8 +18,8 @@ use crate::demux::subtitle::SubtitleCue;
 
 use super::boxes::BoxBuilder;
 use super::boxes::write_unity_matrix;
+use super::sample_table::{build_co64, build_stco, build_stsc, build_stsz};
 use super::video_track::build_dinf;
-use super::sample_table::{build_stco, build_co64, build_stsc, build_stsz};
 
 /// Track ID of the **first** subtitle track (video = 1, audio = 2); the
 /// second subtitle track is 4, and so on. Fixed rather than "one past the
@@ -45,7 +45,11 @@ impl SubtitleBuildPlan {
     /// ended. Cues are not — they have silence between them — so every gap
     /// becomes an empty sample. Without those, every cue after the first gap
     /// would show up early by the width of the gap.
-    pub(super) fn from_cues(cues: &[SubtitleCue], timescale: u32, language: String) -> Option<Self> {
+    pub(super) fn from_cues(
+        cues: &[SubtitleCue],
+        timescale: u32,
+        language: String,
+    ) -> Option<Self> {
         if cues.is_empty() {
             return None;
         }
@@ -61,7 +65,12 @@ impl SubtitleBuildPlan {
             durations.push(cue.duration.max(1));
             cursor = cue.start + cue.duration.max(1) as u64;
         }
-        Some(Self { samples, durations, timescale, language })
+        Some(Self {
+            samples,
+            durations,
+            timescale,
+            language,
+        })
     }
 
     pub(super) fn sample_sizes(&self) -> Vec<u32> {
@@ -111,12 +120,28 @@ pub(super) fn build_subtitle_trak(
     use_co64: bool,
 ) -> Vec<u8> {
     let mut b = BoxBuilder::new(b"trak");
-    b.extend(&build_subtitle_tkhd(track_id, width, height, duration_in_movie_ts));
-    b.extend(&build_subtitle_mdia(plan, width, height, chunk_offsets, use_co64));
+    b.extend(&build_subtitle_tkhd(
+        track_id,
+        width,
+        height,
+        duration_in_movie_ts,
+    ));
+    b.extend(&build_subtitle_mdia(
+        plan,
+        width,
+        height,
+        chunk_offsets,
+        use_co64,
+    ));
     b.finish()
 }
 
-fn build_subtitle_tkhd(track_id: u32, width: u32, height: u32, duration_in_movie_ts: u64) -> Vec<u8> {
+fn build_subtitle_tkhd(
+    track_id: u32,
+    width: u32,
+    height: u32,
+    duration_in_movie_ts: u64,
+) -> Vec<u8> {
     let mut b = BoxBuilder::new(b"tkhd");
     b.u8(0); // version
     b.extend(&[0, 0, 0x03]); // track_enabled | track_in_movie
@@ -151,7 +176,13 @@ fn build_subtitle_mdia(
     let mut b = BoxBuilder::new(b"mdia");
     b.extend(&build_subtitle_mdhd(plan));
     b.extend(&build_subtitle_hdlr());
-    b.extend(&build_subtitle_minf(plan, width, height, chunk_offsets, use_co64));
+    b.extend(&build_subtitle_minf(
+        plan,
+        width,
+        height,
+        chunk_offsets,
+        use_co64,
+    ));
     b.finish()
 }
 
@@ -209,7 +240,13 @@ fn build_subtitle_minf(
     nmhd.extend(&[0, 0, 0]);
     b.extend(&nmhd.finish());
     b.extend(&build_dinf());
-    b.extend(&build_subtitle_stbl(plan, width, height, chunk_offsets, use_co64));
+    b.extend(&build_subtitle_stbl(
+        plan,
+        width,
+        height,
+        chunk_offsets,
+        use_co64,
+    ));
     b.finish()
 }
 
@@ -313,7 +350,11 @@ mod tests {
     use super::*;
 
     fn cue(start: u64, duration: u32, text: &str) -> SubtitleCue {
-        SubtitleCue { start, duration, text: text.into() }
+        SubtitleCue {
+            start,
+            duration,
+            text: text.into(),
+        }
     }
 
     #[test]
@@ -394,14 +435,25 @@ mod tests {
     fn tx3g_entry_is_well_formed() {
         let e = build_tx3g(1920, 1080);
         let size = u32::from_be_bytes(e[..4].try_into().unwrap()) as usize;
-        assert_eq!(size, e.len(), "declared box size must match the bytes written");
+        assert_eq!(
+            size,
+            e.len(),
+            "declared box size must match the bytes written"
+        );
         assert_eq!(&e[4..8], b"tx3g");
         // The nested ftab must also be self-consistent.
         let ftab_at = e.len() - 19; // ftab: 8 header + 2 + 2 + 1 + 5 = 18… find it
         let _ = ftab_at;
-        let pos = e.windows(4).position(|w| w == b"ftab").expect("ftab present");
+        let pos = e
+            .windows(4)
+            .position(|w| w == b"ftab")
+            .expect("ftab present");
         let ftab_size = u32::from_be_bytes(e[pos - 4..pos].try_into().unwrap()) as usize;
-        assert_eq!(pos - 4 + ftab_size, e.len(), "ftab must be the last box and fit exactly");
+        assert_eq!(
+            pos - 4 + ftab_size,
+            e.len(),
+            "ftab must be the last box and fit exactly"
+        );
     }
 
     #[test]
