@@ -66,6 +66,21 @@ impl Level {
     }
 }
 
+/// Threads a per-frame conversion may split one picture's rows across: the
+/// machine's parallelism, capped by `RIVET_PIPE_THREADS` (read once). The
+/// conversions that use it (the tonemap, SDR into HDR) work on independent
+/// rows, so the split changes how long they take and never what they write.
+pub fn picture_threads() -> usize {
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        match std::env::var("RIVET_PIPE_THREADS").ok().and_then(|v| v.trim().parse::<usize>().ok()) {
+            Some(n) if n >= 1 => n.min(cores),
+            _ => cores,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

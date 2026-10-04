@@ -296,9 +296,59 @@ const DEFAULT_MAX_WHITE_NITS: f32 = 1000.0;
 struct Planes10<'a> {
     w: usize,
     h: usize,
-    y: &'a [u16],
-    cb: &'a [u16],
-    cr: &'a [u16],
+    y: std::borrow::Cow<'a, [u16]>,
+    cb: std::borrow::Cow<'a, [u16]>,
+    cr: std::borrow::Cow<'a, [u16]>,
+}
+
+impl Planes10<'_> {
+    /// Rows `2 * by0 .. 2 * by1` (chroma rows `by0 .. by1`) as a picture of
+    /// their own. The tonemap maps each 2x2 block from its own samples, so
+    /// a strip converts to exactly its rows of the whole picture's output.
+    fn strip(&self, by0: usize, by1: usize) -> Planes10<'_> {
+        let (w, cw) = (self.w, self.w / 2);
+        Planes10 {
+            w,
+            h: 2 * (by1 - by0),
+            y: std::borrow::Cow::Borrowed(&self.y[2 * by0 * w..2 * by1 * w]),
+            cb: std::borrow::Cow::Borrowed(&self.cb[by0 * cw..by1 * cw]),
+            cr: std::borrow::Cow::Borrowed(&self.cr[by0 * cw..by1 * cw]),
+        }
+    }
+}
+
+/// `kernel` over `p` in horizontal strips on up to `threads` threads, the
+/// strips' planes joined in order: the same bytes as one call over `p`.
+fn in_strips(
+    p: &Planes10<'_>,
+    threads: usize,
+    kernel: impl Fn(&Planes10<'_>) -> (Vec<u8>, Vec<u8>, Vec<u8>) + Sync,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    // A strip of at least 16 chroma rows (32 luma rows) pays for a thread.
+    let pairs = p.h / 2;
+    let bands = threads.min(pairs / 16).max(1);
+    if bands == 1 {
+        return kernel(p);
+    }
+    let per = pairs.div_ceil(bands);
+    let parts: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = std::thread::scope(|s| {
+        let kernel = &kernel;
+        let handles: Vec<_> = (0..pairs)
+            .step_by(per)
+            .map(|by0| {
+                let strip = p.strip(by0, (by0 + per).min(pairs));
+                s.spawn(move || kernel(&strip))
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("a tonemap strip panicked")).collect()
+    });
+    let (mut y, mut cb, mut cr) = (Vec::new(), Vec::new(), Vec::new());
+    for (py, pcb, pcr) in parts {
+        y.extend_from_slice(&py);
+        cb.extend_from_slice(&pcb);
+        cr.extend_from_slice(&pcr);
+    }
+    (y, cb, cr)
 }
 
 fn planes_10(src: &VideoFrame) -> Result<Planes10<'_>> {
@@ -324,27 +374,31 @@ fn planes_10(src: &VideoFrame) -> Result<Planes10<'_>> {
             src.data.len()
         );
     }
-    // Reinterpret the byte slice as u16 LE planes. Endianness assumed
-    // little — every host we ship to is x86_64 / aarch64 LE; a future
-    // BE platform would need byteswap helpers here. `Bytes` gives no
-    // alignment promise, so this is only sound as unaligned reads; the
-    // scalar path indexes (the compiler emits unaligned loads for u16
-    // on every target we build) and the AVX2 path uses `loadu`.
+    // The planes as u16 (little-endian, as every host we ship to is). A
+    // `&[u16]` must be 2-aligned even if every read through it is unaligned,
+    // and `Bytes` promises no alignment: an aligned buffer is borrowed, an
+    // odd-addressed one copied.
     let bytes = src.data.as_ref();
-    let y: &[u16] = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u16, w * h) };
-    let cb: &[u16] = unsafe {
-        std::slice::from_raw_parts(
-            bytes.as_ptr().add(y_plane_bytes) as *const u16,
-            (w / 2) * (h / 2),
-        )
+    let plane = |at: usize, n: usize| -> std::borrow::Cow<'_, [u16]> {
+        let b = &bytes[at..at + 2 * n];
+        match bytemuck_u16(b) {
+            Some(s) => std::borrow::Cow::Borrowed(s),
+            None => std::borrow::Cow::Owned(b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()),
+        }
     };
-    let cr: &[u16] = unsafe {
-        std::slice::from_raw_parts(
-            bytes.as_ptr().add(y_plane_bytes + c_plane_bytes) as *const u16,
-            (w / 2) * (h / 2),
-        )
-    };
-    Ok(Planes10 { w, h, y, cb, cr })
+    let cn = (w / 2) * (h / 2);
+    Ok(Planes10 { w, h, y: plane(0, w * h), cb: plane(y_plane_bytes, cn), cr: plane(y_plane_bytes + c_plane_bytes, cn) })
+}
+
+/// `b` as `u16` samples when it is 2-aligned (and the host little-endian).
+fn bytemuck_u16(b: &[u8]) -> Option<&[u16]> {
+    if cfg!(target_endian = "little") && (b.as_ptr() as usize).is_multiple_of(2) {
+        // SAFETY: the pointer is 2-aligned and the slice is `2 * len` bytes
+        // of initialised memory, which every bit pattern of `u16` reads.
+        Some(unsafe { std::slice::from_raw_parts(b.as_ptr() as *const u16, b.len() / 2) })
+    } else {
+        None
+    }
 }
 
 fn max_white_for(max_white_nits: Option<f32>) -> f32 {
@@ -410,14 +464,28 @@ pub fn tonemap_yuv420p10le_bt2020_to_yuv420p_bt709(
             "HDR → SDR tonemap kernel selected"
         );
     });
-    if use_avx2 {
+    let p = planes_10(src)?;
+    let max_white = max_white_for(max_white_nits);
+    let threads = crate::simd::picture_threads();
+    let (out_y, out_cb, out_cr) = if use_avx2 {
         #[cfg(target_arch = "x86_64")]
-        if crate::simd::Level::get() >= crate::simd::Level::Avx512 {
-            return tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_avx512(src, transfer, max_white_nits);
+        if crate::simd::Level::get() >= crate::simd::Level::Avx512 && std::is_x86_feature_detected!("avx512f") {
+            // SAFETY: AVX-512 F, AVX2 and FMA detected; the planes were
+            // bounds-checked by `planes_10` and a strip is a whole picture.
+            let out = in_strips(&p, threads, |s| unsafe { simd512::tonemap_planes_avx512(s, transfer, max_white) });
+            return Ok(pack_frame(src, out.0, out.1, out.2));
         }
-        return tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_avx2(src, transfer, max_white_nits);
-    }
-    tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(src, transfer, max_white_nits)
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            // SAFETY: AVX2 and FMA detected (`use_avx2`); as above.
+            in_strips(&p, threads, |s| unsafe { simd::tonemap_planes_avx2(s, transfer, max_white) })
+        }
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        unreachable!("AVX2 is only detected on x86")
+    } else {
+        in_strips(&p, threads, |s| tonemap_planes_scalar(s, transfer, max_white))
+    };
+    Ok(pack_frame(src, out_y, out_cb, out_cr))
 }
 
 /// The AVX-512 path: the AVX2 + FMA kernel sixteen pixels a vector, writing
@@ -459,9 +527,14 @@ pub fn tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(
     max_white_nits: Option<f32>,
 ) -> Result<VideoFrame> {
     let p = planes_10(src)?;
-    let (w, h) = (p.w, p.h);
     let max_white = max_white_for(max_white_nits);
+    let (out_y, out_cb, out_cr) = tonemap_planes_scalar(&p, transfer, max_white);
+    Ok(pack_frame(src, out_y, out_cb, out_cr))
+}
 
+/// The scalar reference over planes.
+fn tonemap_planes_scalar(p: &Planes10<'_>, transfer: TransferFn, max_white: f32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let (w, h) = (p.w, p.h);
     let mut out_y = vec![0u8; w * h];
     let mut out_cb = vec![0u8; (w / 2) * (h / 2)];
     let mut out_cr = vec![0u8; (w / 2) * (h / 2)];
@@ -493,8 +566,7 @@ pub fn tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(
             out_cr[by * (w / 2) + bx] = (acc_cr * 0.25).round() as u8;
         }
     }
-
-    Ok(pack_frame(src, out_y, out_cb, out_cr))
+    (out_y, out_cb, out_cr)
 }
 
 /// The AVX2 + FMA path. Same contract as
@@ -1486,6 +1558,28 @@ mod tests {
                 assert!(a.data == b.data, "{transfer:?} nits={nits:?} tail={tail}");
             }
         }
+    }
+
+    /// The dispatcher splits a picture into strips across threads; the
+    /// strips' output is the whole picture's, byte for byte, at every
+    /// strip count (including one that leaves a short last strip) and from
+    /// an odd-addressed buffer (copied, not reinterpreted).
+    #[test]
+    fn strips_write_the_whole_pictures_bytes() {
+        // 98 rows, 49 chroma rows: up to three strips of at least 16, the
+        // last one shorter.
+        let frame = ramp_frame(&[0u16, 64, 256, 512, 768, 960, 1023], 6);
+        let p = planes_10(&frame).unwrap();
+        let mw = max_white_for(None);
+        let whole = tonemap_planes_scalar(&p, TransferFn::St2084, mw);
+        for threads in [2usize, 3, 7, 64] {
+            assert_eq!(in_strips(&p, threads, |s| tonemap_planes_scalar(s, TransferFn::St2084, mw)), whole, "{threads} threads");
+        }
+        // The same frame from a buffer one byte off alignment.
+        let mut shifted = vec![0u8];
+        shifted.extend_from_slice(&frame.data);
+        let odd = VideoFrame::new(Bytes::from(shifted).slice(1..), frame.width, frame.height, frame.format, frame.color_space, frame.pts);
+        assert_eq!(tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(&odd, TransferFn::St2084, None).unwrap().data, tonemap_yuv420p10le_bt2020_to_yuv420p_bt709_scalar(&frame, TransferFn::St2084, None).unwrap().data);
     }
 
     #[test]

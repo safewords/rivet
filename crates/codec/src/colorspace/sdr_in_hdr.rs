@@ -301,6 +301,13 @@ impl SdrToHdr {
     /// same entries), and a chroma sample's four values are summed in the
     /// same order.
     pub(crate) fn convert_at(&self, frame: &VideoFrame, level: crate::simd::Level) -> Result<VideoFrame> {
+        self.convert_with(frame, level, crate::simd::picture_threads())
+    }
+
+    /// [`Self::convert_at`] with its rows split across up to `threads`
+    /// threads (bands of at least 16 chroma rows). Every split writes the
+    /// same bytes.
+    fn convert_with(&self, frame: &VideoFrame, level: crate::simd::Level, threads: usize) -> Result<VideoFrame> {
         let depth: u32 = match frame.format {
             PixelFormat::Yuv420p => 8,
             PixelFormat::Yuv420p10le => 10,
@@ -340,33 +347,56 @@ impl SdrToHdr {
         let mut y_code = vec![0u16; w * h];
         let mut cb_sum = vec![0f32; cw * ch];
         let mut cr_sum = vec![0f32; cw * ch];
-        for py in 0..h {
-            let (yc, cbs, crs) = (&mut y_code[py * w..(py + 1) * w], &mut cb_sum[(py / 2) * cw..], &mut cr_sum[(py / 2) * cw..]);
-            #[allow(unused_mut)]
-            let mut done = 0;
-            #[cfg(target_arch = "x86_64")]
-            // PQ only: HLG's inverse OOTF and OETF take `powf` and `ln`, which
-            // have no lane-wise twin that rounds the way the C library does,
-            // and calling them lane by lane from the vector rows measured
-            // slower than the scalar loop (117 ms against 45 at 1080p).
-            if level >= crate::simd::Level::Avx2 && self.target == TransferFn::St2084 {
-                // SAFETY: the level is only ever Avx2 or above on a CPU that
-                // has AVX2 (`Level::host`); `row_avx2` reads and writes only
-                // inside the planes checked above and the row slices.
-                done = unsafe { self.row_avx2(&rows, py, yc, cbs, crs) };
+        // Bands of whole chroma rows (luma row pairs) across threads: each
+        // row's codes and each chroma row's sums come from that band's
+        // samples alone, so the split cannot change a byte.
+        let band = |cy0: usize, y_code: &mut [u16], cb_sum: &mut [f32], cr_sum: &mut [f32]| {
+            for py in 2 * cy0..(2 * cy0 + y_code.len() / w.max(1)).min(h) {
+                let r = py - 2 * cy0;
+                let (yc, cbs, crs) = (&mut y_code[r * w..(r + 1) * w], &mut cb_sum[(r / 2) * cw..], &mut cr_sum[(r / 2) * cw..]);
+                #[allow(unused_mut)]
+                let mut done = 0;
+                #[cfg(target_arch = "x86_64")]
+                // PQ only: HLG's inverse OOTF and OETF take `powf` and `ln`, which
+                // have no lane-wise twin that rounds the way the C library does,
+                // and calling them lane by lane from the vector rows measured
+                // slower than the scalar loop (117 ms against 45 at 1080p).
+                if level >= crate::simd::Level::Avx2 && self.target == TransferFn::St2084 {
+                    // SAFETY: the level is only ever Avx2 or above on a CPU that
+                    // has AVX2 (`Level::host`); `row_avx2` reads and writes only
+                    // inside the planes checked above and the row slices.
+                    done = unsafe { self.row_avx2(&rows, py, yc, cbs, crs) };
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                let _ = level;
+                for px in done..w {
+                    let c = (py / 2) * cw + px / 2;
+                    let yn = (sample(py * w + px) - black) / y_span;
+                    let cbn = (sample(cb_at + c) - mid) / c_span;
+                    let crn = (sample(cr_at + c) - mid) / c_span;
+                    let (yo, cbo, cro) = self.pixel(yn, cbn, crn);
+                    yc[px] = code(876.0 * yo + 64.0);
+                    cbs[px / 2] += cbo;
+                    crs[px / 2] += cro;
+                }
             }
-            #[cfg(not(target_arch = "x86_64"))]
-            let _ = level;
-            for px in done..w {
-                let c = (py / 2) * cw + px / 2;
-                let yn = (sample(py * w + px) - black) / y_span;
-                let cbn = (sample(cb_at + c) - mid) / c_span;
-                let crn = (sample(cr_at + c) - mid) / c_span;
-                let (yo, cbo, cro) = self.pixel(yn, cbn, crn);
-                yc[px] = code(876.0 * yo + 64.0);
-                cbs[px / 2] += cbo;
-                crs[px / 2] += cro;
-            }
+        };
+        let bands = threads.min(ch / 16).max(1);
+        let pairs_per_band = ch.div_ceil(bands);
+        if bands == 1 || w == 0 {
+            band(0, &mut y_code, &mut cb_sum, &mut cr_sum);
+        } else {
+            std::thread::scope(|scope| {
+                let bands = y_code
+                    .chunks_mut(2 * w * pairs_per_band)
+                    .zip(cb_sum.chunks_mut(cw * pairs_per_band))
+                    .zip(cr_sum.chunks_mut(cw * pairs_per_band))
+                    .enumerate();
+                for (i, ((y_code, cb_sum), cr_sum)) in bands {
+                    let band = &band;
+                    scope.spawn(move || band(i * pairs_per_band, y_code, cb_sum, cr_sum));
+                }
+            });
         }
         let mut out = Vec::with_capacity((w * h + 2 * cw * ch) * 2);
         super::write_u16le_vec(&mut out, &y_code);
@@ -688,6 +718,26 @@ mod tests {
         }
         if crate::simd::Level::host() >= crate::simd::Level::Avx2 {
             assert!(checked > 0);
+        }
+    }
+
+    /// Split into bands across threads, a tall picture converts to the same
+    /// bytes as in one piece, at every level the host has.
+    #[test]
+    fn bands_write_the_whole_pictures_bytes() {
+        let (w, h) = (70usize, 130usize);
+        let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+        let data: Vec<u8> = (0..w * h + 2 * cw * ch).map(|i| (i * 37 % 251) as u8).collect();
+        let frame = VideoFrame::new(Bytes::from(data), w as u32, h as u32, PixelFormat::Yuv420p, ColorSpace::Bt709, 0);
+        let levels = [crate::simd::Level::Scalar, crate::simd::Level::Avx2].into_iter().filter(|&l| l <= crate::simd::Level::host());
+        for level in levels {
+            for target in [TransferFn::St2084, TransferFn::AribStdB67] {
+                let c = SdrToHdr::new(&sdr(1, 1, false), target).unwrap();
+                let whole = c.convert_with(&frame, level, 1).unwrap();
+                for threads in [2usize, 3, 5, 64] {
+                    assert!(c.convert_with(&frame, level, threads).unwrap().data == whole.data, "{level:?} {target:?} {threads} threads");
+                }
+            }
         }
     }
 
