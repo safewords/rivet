@@ -101,11 +101,18 @@ enum Engine {
 /// beside the decode, and other decodes beside this one), held to the
 /// building thread's [budget](crate::threads).
 pub fn decode_threads() -> usize {
+    decode_threads_shared(1)
+}
+
+/// [`decode_threads`] for one of `share` decoders running at once.
+pub fn decode_threads_shared(share: usize) -> usize {
     std::env::var("RIVET_AV1_DECODE_THREADS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
-        .unwrap_or_else(|| crate::threads::cap(std::thread::available_parallelism().map_or(1, |n| n.get()).min(4)))
+        .unwrap_or_else(|| {
+            crate::threads::cap((std::thread::available_parallelism().map_or(1, |n| n.get()) / share.max(1)).clamp(1, 4))
+        })
 }
 
 fn worker_disabled() -> bool {
@@ -121,11 +128,16 @@ impl Av1Decoder {
     /// because a container header and a sequence header do disagree in the
     /// wild.
     pub fn new(info: StreamInfo) -> Result<Self> {
+        Self::new_shared(info, 1)
+    }
+
+    /// One of `share` decoders running at once ([`decode_threads_shared`]).
+    pub fn new_shared(info: StreamInfo, share: usize) -> Result<Self> {
         let codec = info.codec.to_ascii_lowercase();
         if !supports(&codec) {
             bail!("the AV1 decoder decodes AV1, not '{codec}'");
         }
-        let threads = decode_threads();
+        let threads = decode_threads_shared(share);
         let engine = if worker_disabled() {
             let mut decoder = av1::Decoder::new();
             decoder.set_threads(threads);

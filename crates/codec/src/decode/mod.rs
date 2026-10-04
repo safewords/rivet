@@ -404,12 +404,23 @@ pub fn decode_capabilities() -> Vec<DecodeSupport> {
 /// lone pump decodes the source once for the whole ladder, so one decoder
 /// owning the cores is the intended shape (as `h26x_sw`); the output does
 /// not depend on the count.
-pub(crate) fn sw_decode_threads(env: &str) -> usize {
-    std::env::var(env)
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or_else(|| crate::threads::cap(std::thread::available_parallelism().map_or(1, |n| n.get())))
+///
+/// `share` is how many decoders run at once ([`create_decoder_shared`]): the
+/// machine's parallelism is divided among them before the budget applies. An
+/// explicit `env` count is per decoder and is taken as it is.
+pub(crate) fn sw_decode_threads(env: &str, share: usize) -> usize {
+    shared_decode_threads(
+        std::env::var(env).ok().and_then(|v| v.trim().parse::<usize>().ok()),
+        std::thread::available_parallelism().map_or(1, |n| n.get()),
+        share,
+    )
+}
+
+/// [`sw_decode_threads`] from its inputs: an explicit count as it is, else
+/// the machine divided `share` ways and held to this thread's
+/// [budget](crate::threads) — never below one.
+pub(crate) fn shared_decode_threads(explicit: Option<usize>, machine: usize, share: usize) -> usize {
+    explicit.filter(|&n| n > 0).unwrap_or_else(|| crate::threads::cap((machine / share.max(1)).max(1)))
 }
 
 pub fn create_decoder(codec: &str, info: StreamInfo) -> Result<Box<dyn Decoder>> {
@@ -612,7 +623,7 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) ->
     if prores_sw::supports(codec_lower) {
         let mut prores_info = info;
         prores_info.codec = codec_lower.to_string();
-        let dec = prores_sw::ProresDecoder::new(prores_info)?;
+        let dec = prores_sw::ProresDecoder::new_shared(prores_info, share)?;
         tracing::info!(backend = "prores", "ProRes software decode engaged (rivet's own decoder)");
         return Ok(Box::new(dec));
     }
@@ -620,7 +631,7 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) ->
     if vp8_sw::supports(codec_lower) {
         let mut vp8_info = info;
         vp8_info.codec = codec_lower.to_string();
-        let dec = vp8_sw::Vp8Decoder::new(vp8_info)?;
+        let dec = vp8_sw::Vp8Decoder::new_shared(vp8_info, share)?;
         tracing::info!(backend = "vp8", "VP8 software decode engaged (rivet's own decoder)");
         return Ok(Box::new(dec));
     }
@@ -628,7 +639,7 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) ->
     if vp9_sw::supports(codec_lower) {
         let mut vp9_info = info;
         vp9_info.codec = codec_lower.to_string();
-        let dec = vp9_sw::Vp9Decoder::new(vp9_info)?;
+        let dec = vp9_sw::Vp9Decoder::new_shared(vp9_info, share)?;
         tracing::info!(backend = "vp9", "VP9 software decode engaged (rivet's own decoder)");
         return Ok(Box::new(dec));
     }
@@ -636,7 +647,7 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) ->
     if mpeg2_sw::supports(codec_lower) {
         let mut mpeg2_info = info;
         mpeg2_info.codec = codec_lower.to_string();
-        let dec = mpeg2_sw::Mpeg2Decoder::new(mpeg2_info)?;
+        let dec = mpeg2_sw::Mpeg2Decoder::new_shared(mpeg2_info, share)?;
         tracing::info!(backend = "mpeg2", "MPEG-2 software decode engaged (rivet's own decoder)");
         return Ok(Box::new(dec));
     }
@@ -653,7 +664,7 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) ->
     if av1_sw::supports(codec_lower) {
         let mut av1_info = info;
         av1_info.codec = codec_lower.to_string();
-        return Ok(Box::new(av1_sw::Av1Decoder::new(av1_info)?));
+        return Ok(Box::new(av1_sw::Av1Decoder::new_shared(av1_info, share)?));
     }
 
     // The native H.264 / HEVC decoders: the only software tier for them.

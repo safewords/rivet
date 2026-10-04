@@ -31,11 +31,17 @@ pub struct ProresDecoder {
 
 impl ProresDecoder {
     pub fn new(info: StreamInfo) -> Result<Self> {
+        Self::new_shared(info, 1)
+    }
+
+    /// One of `share` decoders running at once: a `1/share` part of the
+    /// machine's threads ([`sw_decode_threads`](super::sw_decode_threads)).
+    pub fn new_shared(info: StreamInfo, share: usize) -> Result<Self> {
         let codec = info.codec.to_ascii_lowercase();
         if !supports(&codec) {
             bail!("the ProRes decoder decodes ProRes, not '{codec}'");
         }
-        Ok(Self { inner: prores::Decoder::new().with_threads(super::sw_decode_threads("RIVET_PRORES_DECODE_THREADS")), info, ready: VecDeque::new(), next_pts: 0 })
+        Ok(Self { inner: prores::Decoder::new().with_threads(super::sw_decode_threads("RIVET_PRORES_DECODE_THREADS", share)), info, ready: VecDeque::new(), next_pts: 0 })
     }
 
     /// The frame's colour matrix, from its header (ITU-T H.273 codes), or the

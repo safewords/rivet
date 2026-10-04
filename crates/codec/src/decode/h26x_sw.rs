@@ -87,11 +87,6 @@ pub struct H26xDecoder {
     produced: bool,
 }
 
-/// The threads for one of `share` concurrent decoders: the configured count
-/// (else the machine's) divided among them, at least one each.
-fn shared_threads(configured: Option<usize>, machine: usize, share: usize) -> usize {
-    (configured.filter(|&n| n > 0).unwrap_or(machine) / share.max(1)).max(1)
-}
 
 /// Whether the native tier serves `codec_lower`.
 pub fn supports(codec_lower: &str) -> bool {
@@ -108,12 +103,12 @@ impl H26xDecoder {
         Self::new_shared(info, 1)
     }
 
-    /// One of `share` decoders running at once: this one takes a `1/share`
-    /// part of the threads one decoder alone would use (`H26X_THREADS`, else
-    /// the machine), and at least one.
+    /// One of `share` decoders running at once: `H26X_THREADS` as it is, else
+    /// a `1/share` part of the machine held to the thread's budget
+    /// ([`shared_decode_threads`](super::shared_decode_threads)).
     pub fn new_shared(info: StreamInfo, share: usize) -> Result<Self> {
         let codec = info.codec.to_ascii_lowercase();
-        let threads = shared_threads(
+        let threads = super::shared_decode_threads(
             std::env::var("H26X_THREADS").ok().and_then(|v| v.trim().parse().ok()),
             std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 32),
             share,
@@ -282,11 +277,14 @@ impl Decoder for H26xDecoder {
 mod tests {
     #[test]
     fn concurrent_decoders_divide_the_threads() {
-        assert_eq!(shared_threads(None, 32, 1), 32);
-        assert_eq!(shared_threads(None, 32, 3), 10);
-        assert_eq!(shared_threads(Some(8), 32, 2), 4);
-        assert_eq!(shared_threads(Some(0), 6, 2), 3, "0 is no setting");
-        assert_eq!(shared_threads(None, 2, 4), 1, "never below one");
+        use super::super::shared_decode_threads as threads;
+        assert_eq!(threads(None, 32, 1), 32);
+        assert_eq!(threads(None, 32, 3), 10, "the machine divided among the decoders");
+        assert_eq!(threads(Some(8), 32, 2), 8, "an explicit count is per decoder");
+        assert_eq!(crate::threads::with_budget(6, || threads(None, 32, 4)), 6, "held to the pump's budget");
+        assert_eq!(crate::threads::with_budget(16, || threads(None, 32, 4)), 8, "the budget is a ceiling");
+        assert_eq!(threads(Some(0), 6, 2), 3, "0 is no setting");
+        assert_eq!(threads(None, 2, 4), 1, "never below one");
     }
 
     use super::*;
