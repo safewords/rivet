@@ -28,6 +28,13 @@ fn required() -> bool {
     std::env::var("RIVET_REQUIRE_QSV").is_ok_and(|v| v == "1")
 }
 
+/// Whether this run covers `codec` (`av1`, `h264`, `h265`):
+/// `RIVET_TEST_CODECS` is a comma-separated list, unset for all of them. The
+/// Intel GPU CI runs one job per codec and names its codec here.
+fn wanted(codec: &str) -> bool {
+    std::env::var("RIVET_TEST_CODECS").map_or(true, |list| list.split(',').any(|c| c.trim().eq_ignore_ascii_case(codec)))
+}
+
 /// Skip, or fail when the Intel GPU job requires the test to run.
 fn skip(why: &str) {
     assert!(!required(), "cbr_rates: RIVET_REQUIRE_QSV=1 but: {why}");
@@ -89,7 +96,12 @@ fn sample_sizes(mp4: &[u8]) -> Vec<usize> {
 fn a_constant_rate_holds_its_rate_on_an_intel_gpu() {
     let input = make_input();
     let buffer_bits = f64::from(TARGET) * f64::from(BUFFER_MS) / 1000.0;
-    for (policy, name) in [(VideoCodecPolicy::Av1, "AV1"), (VideoCodecPolicy::H264, "H.264"), (VideoCodecPolicy::H265, "H.265")] {
+    for (policy, name, key) in
+        [(VideoCodecPolicy::Av1, "AV1", "av1"), (VideoCodecPolicy::H264, "H.264", "h264"), (VideoCodecPolicy::H265, "H.265", "h265")]
+    {
+        if !wanted(key) {
+            continue;
+        }
         // One encoder for the whole file, so the rate is held across it.
         let spec = OutputSpec::single_file(vec![Rung::new(1280, 720).with_quality(cbr())])
             .with_video_codec(policy)
@@ -140,6 +152,9 @@ fn segments(playlist: &Path) -> Vec<(f64, u64)> {
 
 #[test]
 fn an_hls_constant_rate_rendition_declares_its_rate_plus_the_audio() {
+    if !wanted("h264") {
+        return;
+    }
     let work = tempfile::tempdir().expect("temp dir");
     let input = make_input();
     let spec = OutputSpec::hls(vec![Rung::new(1280, 720).with_quality(cbr())], 2.0)
