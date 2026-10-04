@@ -118,10 +118,12 @@ pub fn software_pool_plan(parallelism: usize, slots_override: Option<usize>) -> 
     SoftwarePoolPlan { slots, threads, parallelism }
 }
 
-/// [`software_pool_plan`] for this host: the runtime's parallelism and the
-/// [`SOFTWARE_SLOTS_ENV`] override, if set to a number.
+/// [`software_pool_plan`] for this host: this job's share of the runtime's
+/// parallelism ([`crate::thread_budget::per_job`]: all of it for a job
+/// running alone) and the [`SOFTWARE_SLOTS_ENV`] override, if set to a
+/// number.
 pub fn host_software_pool_plan() -> SoftwarePoolPlan {
-    let parallelism = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let parallelism = crate::thread_budget::per_job();
     let over = std::env::var(SOFTWARE_SLOTS_ENV).ok().and_then(|v| v.trim().parse::<usize>().ok());
     software_pool_plan(parallelism, over)
 }

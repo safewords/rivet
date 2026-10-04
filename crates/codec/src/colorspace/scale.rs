@@ -47,12 +47,12 @@ fn scale_frame_8bit(
 
     // Bilinear scale Y plane
     let y_plane = &frame.data[..src_y_size];
-    out.extend(bilinear_scale_plane(y_plane, src_w, src_h, dst_w, dst_h));
+    out.extend_from_slice(&bilinear_scale_plane(y_plane, src_w, src_h, dst_w, dst_h));
 
     // Scale U plane
     let u_offset = src_y_size;
     let u_plane = &frame.data[u_offset..u_offset + src_y_size / 4];
-    out.extend(bilinear_scale_plane(
+    out.extend_from_slice(&bilinear_scale_plane(
         u_plane,
         src_w / 2,
         src_h / 2,
@@ -63,7 +63,7 @@ fn scale_frame_8bit(
     // Scale V plane
     let v_offset = u_offset + src_y_size / 4;
     let v_plane = &frame.data[v_offset..v_offset + src_y_size / 4];
-    out.extend(bilinear_scale_plane(
+    out.extend_from_slice(&bilinear_scale_plane(
         v_plane,
         src_w / 2,
         src_h / 2,
@@ -254,6 +254,152 @@ pub fn bilinear_scale_plane_u16(
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 unsafe fn bilinear_scale_plane_u16_avx2(
+    src: &[u16],
+    src_w: usize,
+    src_h: usize,
+    dst_w: usize,
+    dst_h: usize,
+) -> Vec<u16> {
+    unsafe {
+        #[cfg(target_arch = "x86")]
+        use std::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
+        use std::arch::x86_64::*;
+
+        // The same arithmetic as before, separated: per output pixel
+        // `top = mulhrs(p00, 1 - fx) + mulhrs(p10, fx)` (Q15 weights from
+        // 32.32 steps), `bottom` likewise from the next source row, then
+        // `mulhrs(top, 1 - fy) + mulhrs(bottom, fy)` clamped to 0..=1023.
+        // `top` depends only on the source row, so it is computed once per
+        // source row the output reads (`hrow`) and reused by the output rows
+        // that share it, and each output's two neighbours `p00, p10` — one
+        // 32-bit word, adjacent u16 samples — come with one gather per eight
+        // outputs instead of two scalar loads each.
+        let mut dst = vec![0u16; dst_w * dst_h];
+        let x_step = ((src_w as u64) << 32) / (dst_w as u64);
+        let y_step = ((src_h as u64) << 32) / (dst_h as u64);
+
+        let mut x0s: Vec<u32> = vec![0; dst_w];
+        let mut x1s: Vec<u32> = vec![0; dst_w];
+        let mut fxs_q15: Vec<i16> = vec![0; dst_w];
+        let mut one_minus_fxs_q15: Vec<i16> = vec![0; dst_w];
+        for dx in 0..dst_w {
+            let sx_32_32 = (dx as u64) * x_step;
+            let x0 = ((sx_32_32 >> 32) as usize).min(src_w - 1);
+            let fx_q16 = ((sx_32_32 >> 16) & 0xFFFF) as u32;
+            let fx_q15 = ((fx_q16 as i32) >> 1).min(32767) as i16;
+            if x0 >= src_w - 1 {
+                x0s[dx] = (src_w - 1) as u32;
+                x1s[dx] = (src_w - 1) as u32;
+                fxs_q15[dx] = 0;
+                one_minus_fxs_q15[dx] = 32767;
+            } else {
+                x0s[dx] = x0 as u32;
+                x1s[dx] = (x0 + 1) as u32;
+                fxs_q15[dx] = fx_q15;
+                one_minus_fxs_q15[dx] = 32767 - fx_q15;
+            }
+        }
+        let wide = dst_w & !15;
+        // A group of eight outputs gathers its word pairs when every one of
+        // them has its right neighbour at `x0 + 1` (not the edge repeat,
+        // whose 32-bit read would run past the row).
+        let gatherable: Vec<bool> = (0..wide / 8).map(|g| (0..8).all(|k| x1s[8 * g + k] == x0s[8 * g + k] + 1)).collect();
+
+        let hrow = |y: usize, out: &mut [i16]| {
+            let row = src.as_ptr().add(y * src_w);
+            let mut dx = 0;
+            while dx < wide {
+                let mut half = [_mm256_setzero_si256(); 2];
+                for (h, v) in half.iter_mut().enumerate() {
+                    let g = dx / 8 + h;
+                    *v = if gatherable[g] {
+                        let idx = _mm256_loadu_si256(x0s.as_ptr().add(8 * g) as *const __m256i);
+                        // Byte offsets of the 32-bit words at x0 (scale 2).
+                        _mm256_i32gather_epi32::<2>(row as *const i32, idx)
+                    } else {
+                        let mut w = [0u32; 8];
+                        for (k, w) in w.iter_mut().enumerate() {
+                            let (x0, x1) = (x0s[8 * g + k] as usize, x1s[8 * g + k] as usize);
+                            *w = u32::from(*row.add(x0)) | (u32::from(*row.add(x1)) << 16);
+                        }
+                        _mm256_loadu_si256(w.as_ptr() as *const __m256i)
+                    };
+                }
+                // Words → p00 (low halves) and p10 (high halves), sixteen
+                // each in output order (`packus` works per 128-bit lane, so
+                // the quarters are put back in place after it).
+                let lo16 = _mm256_set1_epi32(0xffff);
+                let p00 = _mm256_permute4x64_epi64::<0b11_01_10_00>(_mm256_packus_epi32(_mm256_and_si256(half[0], lo16), _mm256_and_si256(half[1], lo16)));
+                let p10 = _mm256_permute4x64_epi64::<0b11_01_10_00>(_mm256_packus_epi32(_mm256_srli_epi32::<16>(half[0]), _mm256_srli_epi32::<16>(half[1])));
+                let v_fx = _mm256_loadu_si256(fxs_q15.as_ptr().add(dx) as *const __m256i);
+                let v_omfx = _mm256_loadu_si256(one_minus_fxs_q15.as_ptr().add(dx) as *const __m256i);
+                let top = _mm256_add_epi16(_mm256_mulhrs_epi16(p00, v_omfx), _mm256_mulhrs_epi16(p10, v_fx));
+                _mm256_storeu_si256(out.as_mut_ptr().add(dx) as *mut __m256i, top);
+                dx += 16;
+            }
+        };
+
+        let v_max = _mm256_set1_epi16(1023);
+        let v_zero = _mm256_setzero_si256();
+        let mut cache: [(usize, Vec<i16>); 2] = [(usize::MAX, vec![0; wide]), (usize::MAX, vec![0; wide])];
+        for dy in 0..dst_h {
+            let sy_32_32 = (dy as u64) * y_step;
+            let y0 = ((sy_32_32 >> 32) as usize).min(src_h - 1);
+            let fy_q16 = ((sy_32_32 >> 16) & 0xFFFF) as u32;
+            let y1 = (y0 + 1).min(src_h - 1);
+            let fy_q15 = ((fy_q16 as i32) >> 1).min(32767) as i16;
+            let one_minus_fy_q15 = 32767i16 - fy_q15;
+            for y in [y0, y1] {
+                if cache[0].0 != y && cache[1].0 != y {
+                    let slot = if cache[0].0 == y0 || cache[0].0 == y1 { 1 } else { 0 };
+                    hrow(y, &mut cache[slot].1);
+                    cache[slot].0 = y;
+                }
+            }
+            let top = if cache[0].0 == y0 { &cache[0].1 } else { &cache[1].1 };
+            let bottom = if cache[0].0 == y1 { &cache[0].1 } else { &cache[1].1 };
+            let v_fy = _mm256_set1_epi16(fy_q15);
+            let v_one_minus_fy = _mm256_set1_epi16(one_minus_fy_q15);
+            let dst_row = dy * dst_w;
+            let mut dx = 0usize;
+            while dx < wide {
+                let t = _mm256_loadu_si256(top.as_ptr().add(dx) as *const __m256i);
+                let b = _mm256_loadu_si256(bottom.as_ptr().add(dx) as *const __m256i);
+                let out = _mm256_add_epi16(_mm256_mulhrs_epi16(t, v_one_minus_fy), _mm256_mulhrs_epi16(b, v_fy));
+                let clamped = _mm256_min_epi16(_mm256_max_epi16(out, v_zero), v_max);
+                _mm256_storeu_si256(dst.as_mut_ptr().add(dst_row + dx) as *mut __m256i, clamped);
+                dx += 16;
+            }
+            // Scalar tail, as before.
+            let (row0, row1) = (y0 * src_w, y1 * src_w);
+            while dx < dst_w {
+                let x0 = x0s[dx] as usize;
+                let x1 = x1s[dx] as usize;
+                let fx = fxs_q15[dx] as f64 / 32768.0;
+                let fy = fy_q15 as f64 / 32768.0;
+                let p00 = src[row0 + x0] as f64;
+                let p10 = src[row0 + x1] as f64;
+                let p01 = src[row1 + x0] as f64;
+                let p11 = src[row1 + x1] as f64;
+                let val = p00 * (1.0 - fx) * (1.0 - fy)
+                    + p10 * fx * (1.0 - fy)
+                    + p01 * (1.0 - fx) * fy
+                    + p11 * fx * fy;
+                dst[dst_row + dx] = val.round().clamp(0.0, 1023.0) as u16;
+                dx += 1;
+            }
+        }
+        dst
+    }
+}
+
+/// The 10-bit AVX2 kernel as it was before the separable rewrite: what the
+/// tests hold the rewrite to, byte for byte.
+#[cfg(test)]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+pub(super) unsafe fn bilinear_scale_plane_u16_avx2_gather(
     src: &[u16],
     src_w: usize,
     src_h: usize,
@@ -483,6 +629,174 @@ pub fn bilinear_scale_plane_scalar(
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 unsafe fn bilinear_scale_plane_avx2(
+    src: &[u8],
+    src_w: usize,
+    src_h: usize,
+    dst_w: usize,
+    dst_h: usize,
+) -> Vec<u8> {
+    unsafe {
+        #[cfg(target_arch = "x86")]
+        use std::arch::x86::*;
+        #[cfg(target_arch = "x86_64")]
+        use std::arch::x86_64::*;
+
+        // The arithmetic is the separable form of the one the kernel has
+        // always used, and gives the same bytes: per output column the Q16
+        // source position (32.32 steps) and its Q15 weights, per output
+        // pixel `top = mulhrs(p00 << 7, 1 - fx) + mulhrs(p10 << 7, fx)`
+        // (likewise `bottom` from the next source row), then
+        // `(mulhrs(top, 1 - fy) + mulhrs(bottom, fy) + 64) >> 7`, saturated
+        // to a byte. `top` depends only on the source row, so it is computed
+        // once per source row the output needs (`hrow`) and reused by every
+        // output row that reads that row — about half the horizontal work
+        // of a 1080p -> 720p plane — and its samples are fetched with one
+        // byte shuffle per eight outputs where they span less than sixteen
+        // bytes, instead of a scalar load each.
+        let mut dst = vec![0u8; dst_w * dst_h];
+        let x_step = ((src_w as u64) << 32) / (dst_w as u64);
+        let y_step = ((src_h as u64) << 32) / (dst_h as u64);
+
+        let mut x0s: Vec<u32> = vec![0; dst_w];
+        let mut fxs: Vec<u16> = vec![0; dst_w];
+        for dx in 0..dst_w {
+            let sx_32_32 = (dx as u64) * x_step;
+            let x0 = ((sx_32_32 >> 32) as usize).min(src_w - 1);
+            let fx_q16 = ((sx_32_32 >> 16) & 0xFFFF) as u16;
+            if x0 >= src_w - 1 {
+                x0s[dx] = (src_w - 1) as u32;
+                fxs[dx] = 0;
+            } else {
+                x0s[dx] = x0 as u32;
+                fxs[dx] = fx_q16;
+            }
+        }
+        let mut fx_q15: Vec<i16> = vec![0; dst_w];
+        let mut one_minus_fx_q15: Vec<i16> = vec![0; dst_w];
+        for dx in 0..dst_w {
+            let fxq15 = (fxs[dx] as i32 >> 1).min(32767) as i16;
+            fx_q15[dx] = fxq15;
+            one_minus_fx_q15[dx] = 32767 - fxq15;
+        }
+
+        // Per group of eight outputs: the first source sample it reads and
+        // a shuffle that picks each output's `p0` (bytes 0-7) and `p1`
+        // (bytes 8-15) from the sixteen bytes there — or `None` where the
+        // eight do not fit in sixteen bytes, or the sixteen would read past
+        // the row's end; those are fetched one by one.
+        let wide = dst_w & !15;
+        let groups: Vec<Option<(usize, __m128i)>> = (0..wide / 8)
+            .map(|g| {
+                let base = x0s[8 * g] as usize;
+                let mut idx = [0u8; 16];
+                for k in 0..8 {
+                    let x0 = x0s[8 * g + k] as usize;
+                    let x1 = (x0 + 1).min(src_w - 1);
+                    if x1 - base >= 16 {
+                        return None;
+                    }
+                    idx[k] = (x0 - base) as u8;
+                    idx[8 + k] = (x1 - base) as u8;
+                }
+                (base + 16 <= src_w).then(|| (base, _mm_loadu_si128(idx.as_ptr() as *const __m128i)))
+            })
+            .collect();
+
+        // `top` for every output column of source row `y`, as i16.
+        let hrow = |y: usize, out: &mut [i16]| {
+            let row = &src[y * src_w..(y + 1) * src_w];
+            let mut dx = 0;
+            while dx < wide {
+                let mut p = [_mm_setzero_si128(); 2];
+                for (h, p) in p.iter_mut().enumerate() {
+                    let g = dx / 8 + h;
+                    *p = match groups[g] {
+                        Some((base, ctl)) => _mm_shuffle_epi8(_mm_loadu_si128(row.as_ptr().add(base) as *const __m128i), ctl),
+                        None => {
+                            let mut b = [0u8; 16];
+                            for k in 0..8 {
+                                let x0 = x0s[8 * g + k] as usize;
+                                b[k] = *row.get_unchecked(x0);
+                                b[8 + k] = *row.get_unchecked((x0 + 1).min(src_w - 1));
+                            }
+                            _mm_loadu_si128(b.as_ptr() as *const __m128i)
+                        }
+                    };
+                }
+                // Outputs dx..dx+8 from the first group, dx+8..dx+16 from
+                // the second: p00 and p10 as sixteen i16, times 128.
+                let p00 = _mm256_slli_epi16::<7>(_mm256_cvtepu8_epi16(_mm_unpacklo_epi64(p[0], p[1])));
+                let p10 = _mm256_slli_epi16::<7>(_mm256_cvtepu8_epi16(_mm_unpackhi_epi64(p[0], p[1])));
+                let v_fx = _mm256_loadu_si256(fx_q15.as_ptr().add(dx) as *const __m256i);
+                let v_omfx = _mm256_loadu_si256(one_minus_fx_q15.as_ptr().add(dx) as *const __m256i);
+                let top = _mm256_add_epi16(_mm256_mulhrs_epi16(p00, v_omfx), _mm256_mulhrs_epi16(p10, v_fx));
+                _mm256_storeu_si256(out.as_mut_ptr().add(dx) as *mut __m256i, top);
+                dx += 16;
+            }
+        };
+
+        // The two source rows' `top` most recently computed, by row.
+        let mut cache: [(usize, Vec<i16>); 2] = [(usize::MAX, vec![0; wide]), (usize::MAX, vec![0; wide])];
+        for dy in 0..dst_h {
+            let sy_32_32 = (dy as u64) * y_step;
+            let y0 = ((sy_32_32 >> 32) as usize).min(src_h - 1);
+            let fy_q16 = ((sy_32_32 >> 16) & 0xFFFF) as u32;
+            let y1 = (y0 + 1).min(src_h - 1);
+            let fy_q15 = ((fy_q16 as i32) >> 1).min(32767) as i16;
+            let one_minus_fy_q15 = 32767i16 - fy_q15;
+            for y in [y0, y1] {
+                if cache[0].0 != y && cache[1].0 != y {
+                    // Replace the row neither y0 nor y1 is.
+                    let slot = if cache[0].0 == y0 || cache[0].0 == y1 { 1 } else { 0 };
+                    hrow(y, &mut cache[slot].1);
+                    cache[slot].0 = y;
+                }
+            }
+            let top = if cache[0].0 == y0 { &cache[0].1 } else { &cache[1].1 };
+            let bottom = if cache[0].0 == y1 { &cache[0].1 } else { &cache[1].1 };
+            let v_fy = _mm256_set1_epi16(fy_q15);
+            let v_one_minus_fy = _mm256_set1_epi16(one_minus_fy_q15);
+            let dst_row = dy * dst_w;
+            let mut dx = 0usize;
+            while dx < wide {
+                let t = _mm256_loadu_si256(top.as_ptr().add(dx) as *const __m256i);
+                let b = _mm256_loadu_si256(bottom.as_ptr().add(dx) as *const __m256i);
+                let out_q7 = _mm256_add_epi16(_mm256_mulhrs_epi16(t, v_one_minus_fy), _mm256_mulhrs_epi16(b, v_fy));
+                let shifted = _mm256_srai_epi16::<7>(_mm256_add_epi16(out_q7, _mm256_set1_epi16(64)));
+                let packed = _mm256_permute4x64_epi64::<0b00_00_10_00>(_mm256_packus_epi16(shifted, shifted));
+                _mm_storeu_si128(dst.as_mut_ptr().add(dst_row + dx) as *mut __m128i, _mm256_castsi256_si128(packed));
+                dx += 16;
+            }
+            // Scalar tail, as before.
+            let (row0, row1) = (y0 * src_w, y1 * src_w);
+            while dx < dst_w {
+                let x0 = x0s[dx] as usize;
+                let x1 = (x0 + 1).min(src_w - 1);
+                let fx = fxs[dx] as f64 / 65536.0;
+                let fy = fy_q16 as f64 / 65536.0;
+                let p00 = src[row0 + x0] as f64;
+                let p10 = src[row0 + x1] as f64;
+                let p01 = src[row1 + x0] as f64;
+                let p11 = src[row1 + x1] as f64;
+                let val = p00 * (1.0 - fx) * (1.0 - fy)
+                    + p10 * fx * (1.0 - fy)
+                    + p01 * (1.0 - fx) * fy
+                    + p11 * fx * fy;
+                dst[dst_row + dx] = val.round() as u8;
+                dx += 1;
+            }
+        }
+        dst
+    }
+}
+
+/// The AVX2 kernel as it was before the separable rewrite (a scalar
+/// gather per sample, both rows per output row): what the tests hold the
+/// rewrite to, byte for byte.
+#[cfg(test)]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+pub(super) unsafe fn bilinear_scale_plane_avx2_gather(
     src: &[u8],
     src_w: usize,
     src_h: usize,

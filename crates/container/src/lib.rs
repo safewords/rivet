@@ -2,6 +2,7 @@ pub mod aac_asc;
 pub mod ac3_sync;
 pub mod dts_sync;
 pub(crate) mod annexb;
+pub mod atomic;
 pub mod avi;
 pub mod cmaf;
 pub mod demux;

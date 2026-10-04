@@ -17,11 +17,19 @@ use crate::audio::{AudioEncoder, AudioEncoderConfig, AudioError, AudioFrame, Enc
 pub struct AlacAudioEncoder {
     inner: AlacEncoder,
     samples_out: u64,
+    threads: usize,
 }
 
 impl AlacAudioEncoder {
     pub fn new(config: &AudioEncoderConfig, bits_per_sample: u8) -> Result<Self, AudioError> {
-        Ok(Self { inner: AlacEncoder::new(config.sample_rate, config.channels, bits_per_sample)?, samples_out: 0 })
+        let mut inner = AlacEncoder::new(config.sample_rate, config.channels, bits_per_sample)?;
+        inner.set_threads(config.threads);
+        Ok(Self { inner, samples_out: 0, threads: config.threads })
+    }
+
+    /// The thread count handed to the encoder (`config.threads`).
+    pub fn threads(&self) -> usize {
+        self.threads
     }
 
     fn packets(&mut self, frames: Vec<(Vec<u8>, u32)>) -> Vec<EncodedAudioPacket> {

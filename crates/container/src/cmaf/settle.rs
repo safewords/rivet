@@ -88,7 +88,7 @@ pub fn settle_video_sample_entry(init_path: &Path, segments: &[PathBuf]) -> Resu
         *byte = if fixed { *byte | 0x80 } else { *byte & 0x7F };
     }
     if init != before {
-        std::fs::write(init_path, &init)
+        crate::atomic::write_atomic(init_path, &init)
             .with_context(|| format!("rewriting init segment {}", init_path.display()))?;
     }
     Ok(Some(settled))

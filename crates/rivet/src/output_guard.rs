@@ -22,7 +22,7 @@
 //!   first.
 
 use std::ffi::OsString;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
@@ -145,21 +145,11 @@ pub fn hls_package_writes_at(rel: &Path) -> bool {
 /// renamed over `path` once it is complete. A file already at `path` is
 /// replaced whole or not at all: a failed write leaves it untouched, and a
 /// hard link at `path` is replaced by the new file rather than written
-/// through (the file it shared its data with keeps its contents).
+/// through (the file it shared its data with keeps its contents). The same
+/// write the container muxers use for every file of an HLS package
+/// (`container::atomic`).
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let dir = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
-    };
-    let prefix = path
-        .file_name()
-        .map(|n| format!(".{}.", n.to_string_lossy()))
-        .unwrap_or_else(|| ".rivet-out.".into());
-    let mut tmp = tempfile::Builder::new().prefix(&prefix).suffix(".part").tempfile_in(dir)?;
-    tmp.write_all(bytes)?;
-    tmp.as_file().sync_all()?;
-    tmp.persist(path).map_err(|e| e.error)?;
-    Ok(())
+    container::atomic::write_atomic(path, bytes)
 }
 
 #[cfg(test)]

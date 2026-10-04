@@ -132,6 +132,9 @@ pub async fn run_job(
     output_dir: Option<&Path>,
     sink: Arc<dyn ProgressSink>,
 ) -> Result<JobOutput> {
+    // Counted for as long as it runs: the encoders that would otherwise
+    // take every core share them with the other jobs running now.
+    let _slot = crate::thread_budget::enter_job();
     if spec.hooks.is_empty() {
         return run_job_inner(input, spec, output_dir, sink).await;
     }
@@ -654,6 +657,7 @@ pub async fn run_splice_job(
     output_dir: Option<&Path>,
     sink: Arc<dyn ProgressSink>,
 ) -> Result<JobOutput> {
+    let _slot = crate::thread_budget::enter_job();
     if spec.hooks.is_empty() {
         return run_splice_job_inner(clips, spec, output_dir, sink).await;
     }

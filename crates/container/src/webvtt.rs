@@ -14,7 +14,6 @@
 //! written so the rendition covers the whole timeline.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -138,9 +137,7 @@ pub fn write_webvtt_rendition(
         at = seg_end;
         let body = render_segment(track, seg_start, seg_end, grid.timescale);
         let path: PathBuf = dir.join(format!("seg-{:05}.vtt", i + 1));
-        let mut f = fs::File::create(&path)
-            .with_context(|| format!("creating subtitle segment {}", path.display()))?;
-        f.write_all(body.as_bytes())
+        crate::atomic::write_atomic(&path, body.as_bytes())
             .with_context(|| format!("writing subtitle segment {}", path.display()))?;
         segments.push(SegmentInfo {
             sequence_number: (i + 1) as u32,
