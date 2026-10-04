@@ -195,14 +195,15 @@ jobs:
   # Each job reads its card count from `rivet devices --json`; the
   # multi-card checks say "skipped" when a job holds one card.
   #
-  # The binaries are built once, on a CPU runner (same base image as the GPU
-  # runners, so the same glibc; the Intel runtime is dlopened at run time),
+  # The binaries are built once, on a CPU runner (safewords-runners: the same
+  # Ubuntu 24.04 actions-runner base as the GPU runners, so the same glibc;
+  # the Intel runtime is dlopened at run time),
   # and every GPU job downloads them.
 
   gpu-build:
     name: build the QSV binaries for the GPU jobs
     if: github.event_name != 'pull_request'
-    runs-on: rivet-linux
+    runs-on: safewords-runners
     steps:
       - uses: actions/checkout@v4
         with:
