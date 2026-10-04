@@ -137,7 +137,7 @@ Body fields:
 |-------|-------|
 | `input.path` | a file path **on the server** to read the media from |
 | `input.base64` | …or the media inline, base64-encoded (set exactly one of path/base64) |
-| `output.path` | optional: write the result to a server path (a file for single-rung single-file; a directory for multi-rung / HLS). Omit to keep it in memory / stream it back |
+| `output.path` | optional: write the result to a server path (a file for single-rung single-file; a directory for multi-rung / HLS). Omit to keep it in memory / stream it back. A path that resolves to `input.path` (by any spelling: a case variant, `..`, a link), or an HLS directory holding it where the package writes, is refused with a `400` before the job runs; a file is written to a temporary beside it and renamed into place |
 | `spec` | the structured output spec — the query params below, except `sync` and `hooks` (top-level fields here) and `chroma_downsample` (query only). `rungs` is an array (`["1280x720", "640x360@1M"]`); bit depth is `bit_depth` (`pixel_format` is accepted too); `gop`, `max_fps` and `max_short_side` take a number or a word; `filter` takes a chain string or a structured list (see [Video filters](filters/README.md)). Unknown keys are ignored |
 | `sync` | `true`: block until done; returns the artifact (no `output.path`) or the job status JSON |
 | `hooks` | optional server hooks to run on this job, by name: `["a", "b"]`. Required hooks always run. See [`GET /v1/hooks`](#get-v1hooks) |

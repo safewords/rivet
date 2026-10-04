@@ -59,8 +59,8 @@ H.265 — pick with `--codec`.
 
 | Flag | Values / default | Description |
 |------|------------------|-------------|
-| `-o`, `--output <PATH>` | default `<input>.<codec>.<ext>` (`clip.av1.mp4`, `clip.prores.mov`, `clip.vp9.webm`) | Output file (single mode, one rung) or **directory** (multi-rung single mode, or HLS). |
-| `--mode <MODE>` | `single` *(default)*, `hls`, `audio` | Output shape: one self-contained MP4 per rung, a CMAF/HLS package, or the audio alone as one file — `.mp3`, or `.flac` / `.m4a` as `--audio-container` says (no video decoded; `-o` defaults to `<input-stem>.mp3`, `.flac` or `.m4a`). A `single` job whose input has no video (a bare MP3, an M4A) is written as `audio` by itself. Still images are [`rivet image`](#rivet-image). |
+| `-o`, `--output <PATH>` | default `<input>.<codec>.<ext>` (`clip.av1.mp4`, `clip.prores.mov`, `clip.vp9.webm`) | Output file (single mode, one rung) or **directory** (multi-rung single mode, or HLS). Never the input: see [output naming](#output-naming-never-the-input). |
+| `--mode <MODE>` | `single` *(default)*, `hls`, `audio` | Output shape: one self-contained MP4 per rung, a CMAF/HLS package, or the audio alone as one file — `.mp3`, or `.flac` / `.m4a` as `--audio-container` says (no video decoded; `-o` defaults to `<input-stem>.mp3`, `.flac` or `.m4a`, and to `<input-stem>.rivet.mp3` (…) when that is the input itself: `x.mp3` → `x.rivet.mp3`). A `single` job whose input has no video (a bare MP3, an M4A) is written as `audio` by itself. Still images are [`rivet image`](#rivet-image). |
 | `--rung <WxH[@RATE][:FIT…]>` | repeatable | A ladder rung, e.g. `--rung 1920x1080 --rung 1280x720`. The size is a maximum box the source is fitted into (`--fit`). Omit for a single rung at the source resolution. `WxH@RATE` (`1280x720@3M`) codes that rung to a bitrate — see `--video-bitrate`; `WxH@standard` gives it the rate it would have with none named anywhere, whatever `--video-bitrate` says. A rung's own fitting follows after `:` — a fit, `auto`/`fixed`, `upscale`/`no-upscale`: `--rung 1080x1920:cover:fixed`. |
 | `--fit <FIT>` | `contain` (default), `cover`, `pad`, `stretch` | How the source meets each rung's box: inside it keeping its shape; filling it and centre-cropping; inside it with black bars to exactly the box; or stretched to exactly the box (the pre-fitting behaviour). See [fitting](output-spec.md#fitting-the-source-into-a-rung). |
 | `--orientation <auto\|fixed>` | default `auto` | `auto`: a box turns to the source's orientation (1920x1080 on a portrait source is 1080x1920). `fixed`: boxes are used as written. |
@@ -371,11 +371,38 @@ moves each clip's cues onto the joined timeline and merges tracks by language.
   default `<input-stem>.av1.mp4`, whatever the codec). Multiple rungs (or
   `--ladder`) → `-o` is a directory (default `<input-stem>.av1/`) holding a
   `<label>.mp4` per rung.
-- **audio** — one file at `-o` (default `<input>.mp3`, or `.flac` / `.m4a` for
-  lossless audio, see `--audio-container`); no video.
+- **audio** — one file at `-o` (default `<input-stem>.mp3`, or `.flac` / `.m4a`
+  for lossless audio, see `--audio-container`; `<input-stem>.rivet.mp3` … when
+  that would be the input itself); no video.
 - **hls** — `-o` is the asset root (default `<input-stem>.hls/`): `master.m3u8`, an `audio/` rendition group,
   and `video/<height>p/{init.mp4, seg-*.m4s, playlist.m3u8}` per rung,
   segment-aligned across the ladder for clean ABR.
+
+### Output naming: never the input
+
+A job reads its whole input before it writes, so an output that named the
+input file would silently replace the source with the transcode. rivet never
+does that:
+
+- **Default names step aside.** Each default above is `<input-stem>.<…>` beside
+  the input; when that is the input itself — an `.mp3` made from `x.mp3` in
+  `--mode audio`, a `.flac` from a `.flac` — `.rivet` goes before the extension:
+  `x.rivet.mp3`, `x.rivet.flac` (again, should that be the input too).
+- **An output that resolves to an input is refused** before any work, with
+  `error: refusing to write … it is the input file …` and a non-zero exit, in
+  every mode: a single file (`transcode`, `--mode audio`, `splice` against each
+  of its clips), each `<label>.<ext>` of a multi-rung directory and each still
+  of [`rivet image`](#rivet-image) (and the directory itself being the input
+  file), an HLS directory that holds the input where the package writes
+  (`master.m3u8`, or anything in its subdirectories), a [batch](batch.md#output-rules)
+  job, and the HTTP API's `output.path` (a `400`). "Resolves to" is the file
+  system's answer, not the spelling: the same file through another case
+  (NTFS and APFS ignore case by default), a `..`, a symbolic link or a hard
+  link is the input.
+- **An existing file is replaced whole or not at all.** A finished file is
+  written to a temporary file in the target's directory and renamed over the
+  target, so a job that fails leaves an existing file at the target as it was,
+  and a hard link at the target is replaced rather than written through.
 
 ### Examples
 

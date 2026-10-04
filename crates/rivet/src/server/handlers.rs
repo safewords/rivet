@@ -109,16 +109,16 @@ pub(super) async fn transcode(
 
     // Two ways to submit: a structured JSON body (file path / inline base64,
     // optional server-side output path) or a streamed binary body + query spec.
-    let (media, spec_params, output_path, sync, hook_list) = if is_json {
+    let (media, input_path, spec_params, output_path, sync, hook_list) = if is_json {
         let req: TranscodeRequest = serde_json::from_slice(&body)
             .map_err(|e| ApiError::bad_request(anyhow::anyhow!("invalid JSON body: {e}")))?;
-        let media = read_input(&req.input)?;
+        let (media, input_path) = read_input(&req.input)?;
         let output_path = match &req.output {
             Some(o) => Some(resolve_path(&o.path, false)?),
             None => None,
         };
         let hook_list = req.hooks.clone();
-        (media, req.spec.into_params(), output_path, req.sync, hook_list)
+        (media, input_path, req.spec.into_params(), output_path, req.sync, hook_list)
     } else {
         if body.is_empty() {
             return Err(ApiError::bad_request(anyhow::anyhow!(
@@ -127,7 +127,7 @@ pub(super) async fn transcode(
         }
         let sync = params.sync.unwrap_or(false);
         let hook_list = hook_names(params.hooks.as_deref());
-        (body, params, None, sync, hook_list)
+        (body, None, params, None, sync, hook_list)
     };
 
     if media.is_empty() {
@@ -140,6 +140,20 @@ pub(super) async fn transcode(
     let spec = settings
         .into_spec_for(&info)
         .map_err(ApiError::bad_request)?;
+
+    // `output.path` never resolves to the input file: refused before the job.
+    if let (Some(input), Some(output)) = (&input_path, &output_path) {
+        let inputs = [input.as_path()];
+        let refused = if matches!(spec.mode, crate::spec::OutputMode::Hls { .. }) {
+            crate::output_guard::refuse_input_in_dir(output, &inputs, crate::output_guard::hls_package_writes_at)
+        } else if spec.rungs.len() > 1 {
+            // A directory of `<label>.<ext>` files, each checked as written.
+            crate::output_guard::refuse_input_in_dir(output, &inputs, |_| false)
+        } else {
+            crate::output_guard::refuse_input_as_output(output, &inputs)
+        };
+        refused.map_err(ApiError::bad_request)?;
+    }
 
     let id = Uuid::new_v4();
     let mode = if matches!(spec.mode, crate::spec::OutputMode::Hls { .. }) {
@@ -161,7 +175,7 @@ pub(super) async fn transcode(
     *handle.hooks.lock().unwrap() = session;
     state.jobs.write().unwrap().insert(id, Arc::clone(&handle));
 
-    let task = run_job_task(Arc::clone(&handle), media, spec, output_path);
+    let task = run_job_task(Arc::clone(&handle), media, spec, output_path, input_path);
 
     if sync {
         task.await; // run inline
@@ -182,14 +196,25 @@ pub(super) async fn transcode(
 /// Write one single-file rung's file to a server path: the path itself for a
 /// lone rung, or `<dir>/<label>.<ext>` (`mp4`, `mov`, `webm`) when there are
 /// several. Returns the path.
-fn write_single_file(bytes: &[u8], output: &std::path::Path, label: &str, multi: bool) -> Result<String, String> {
+/// Refuses a path that is the input file (`input`, when the request named
+/// one), and replaces an existing file only whole, once written.
+fn write_single_file(
+    bytes: &[u8],
+    output: &std::path::Path,
+    label: &str,
+    multi: bool,
+    input: Option<&std::path::Path>,
+) -> Result<String, String> {
     let dest = if multi {
         std::fs::create_dir_all(output).map_err(|e| format!("creating {}: {e}", output.display()))?;
         output.join(format!("{label}.{}", crate::job::single_file_extension(bytes)))
     } else {
         output.to_path_buf()
     };
-    std::fs::write(&dest, bytes).map_err(|e| format!("writing {}: {e}", dest.display()))?;
+    if let Some(input) = input {
+        crate::output_guard::refuse_input_as_output(&dest, &[input]).map_err(|e| format!("{e:#}"))?;
+    }
+    crate::output_guard::write_atomic(&dest, bytes).map_err(|e| format!("writing {}: {e}", dest.display()))?;
     Ok(dest.display().to_string())
 }
 
@@ -202,6 +227,8 @@ pub(super) async fn run_job_task(
     body: Bytes,
     spec: OutputSpec,
     output_path: Option<PathBuf>,
+    // The server file the media was read from, if any: never written over.
+    input_path: Option<PathBuf>,
 ) {
     handle.set_phase(Phase::Running);
     let is_hls = matches!(spec.mode, crate::spec::OutputMode::Hls { .. });
@@ -264,7 +291,7 @@ pub(super) async fn run_job_task(
                     let (data, written) = match r.artifact {
                         crate::job::RungArtifact::File(bytes) => {
                             if let Some(p) = &output_path {
-                                match write_single_file(&bytes, p, &r.label, multi) {
+                                match write_single_file(&bytes, p, &r.label, multi, input_path.as_deref()) {
                                     Ok(dest) => (None, Some(dest)),
                                     Err(e) => {
                                         write_err.get_or_insert(e);

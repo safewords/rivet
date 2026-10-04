@@ -61,6 +61,7 @@ pub mod ladder;
 pub mod manifest;
 pub mod multigpu;
 pub mod output_dir;
+pub mod output_guard;
 pub mod per_title;
 pub mod probe;
 pub mod progress;

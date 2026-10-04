@@ -2129,6 +2129,7 @@ dependencies = [
  "rivet-png",
  "rivet-tiff",
  "rivet-webp",
+ "same-file",
  "serde",
  "serde_json",
  "serde_yaml_ng",

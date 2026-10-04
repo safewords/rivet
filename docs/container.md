@@ -419,9 +419,22 @@ the TS reader does, since there is no index to seek by.
 ## MPEG-TS
 
 **What.** [`demux_ts`](../crates/container/src/ts/mod.rs#L240) (materialize-all) and
-the streaming init walk 188-byte (or 192-byte BDAV) TS packets, find the PAT
+the streaming init walk 188-byte TS packets, find the PAT
 (PID 0), walk a PMT, pick the first video elementary stream, and reassemble PES
 payloads into one sample per access unit. PTS is carried at the TS 90 kHz clock.
+
+**Packet framing: `.ts`, Blu-ray `.m2ts`, 204-byte.** Three framings are read,
+told apart by the `0x47` sync byte at the first two packets (and the third when
+the bytes reach it): plain 188-byte packets; Blu-ray / BDAV `.m2ts` 192-byte
+*source packets*, each a 4-byte `TP_extra_header` (2-bit
+copy_permission_indicator, 30-bit arrival_time_stamp) before the 188-byte packet,
+so the sync sits at 4, 196, 388 — the header is passed over, its value unread
+(a zeroed one is fine); and 204-byte packets, the 188 followed by 16 bytes of
+Reed-Solomon parity, also passed over. One function,
+[`ts::sniff_layout`](../crates/container/src/ts/mod.rs), answers for both
+`sniff_container` and the demuxer, so a file the reader takes is never refused
+as "unknown" at the sniff (which is what happened to every `.m2ts` while the
+sniffer looked on the 188-byte grid alone).
 
 **Why TS is special.** Unlike MP4/MOV/MKV/AVI, **MPEG-TS has no container-level
 track header** — there is no sample-entry box, no `BITMAPINFOHEADER`. Dimensions,
@@ -487,18 +500,34 @@ demuxer has to do work the other demuxers get for free:
   ([`ts/streaming.rs:386`](../crates/container/src/ts/streaming.rs#L386)).
 - Audio stream types: `0x0F` AAC-ADTS, `0x03` / `0x04` MPEG-1 / MPEG-2 audio
   (labelled `mp3` or `mp2` by the frame headers' layer), `0x81` AC-3 (ATSC
-  A/53), `0x87` / `0x84` E-AC-3 (ATSC / Blu-ray), `0x82` / `0x85` / `0x86` DTS
+  A/53), `0x87` / `0x84` E-AC-3 (ATSC / Blu-ray; `0xA1` Blu-ray secondary
+  audio too), `0x82` / `0x85` / `0x86` DTS
   (Blu-ray: DTS, DTS-HD High Resolution, Master Audio — the core decoded, the
-  extension carried), and `0x06` PES-private *when* the ES descriptors name the
+  extension carried), `0x80` Blu-ray LPCM (below), and `0x06` PES-private *when* the ES descriptors name the
   codec: a `registration_descriptor` tagged `"AC-3"` / `"EAC3"` (DVB / ETSI TS
   101 154), `"DTS1"`–`"DTS3"`, or `"Opus"`; or a DVB descriptor (ETSI EN 300
   468: AC-3 `0x6A`, enhanced AC-3 `0x7A`, DTS `0x7B`)
   ([`ts/pat_pmt.rs`](../crates/container/src/ts/pat_pmt.rs)). PES-private
   streams that name no audio codec (DVB subtitles, teletext, data) are not
   audio and are skipped. Audio a program names but rivet has no reader for —
-  `0x80` Blu-ray LPCM, `0x83` TrueHD, `0x11` LATM AAC, `0x1C`, AC-4 — is
+  `0x83` TrueHD (`truehd`), `0xA2` DTS Express (`dts_express`, no DTS core),
+  `0x11` LATM AAC, `0x1C`, AC-4 — is
   surfaced by name with no packets, as is a stream whose packets will not read
   (`unreadable_aac`, …); the stream rivet reads wins when a program has both.
+- **Blu-ray LPCM** (`0x80`, [`ts/bd_lpcm.rs`](../crates/container/src/ts/bd_lpcm.rs)):
+  one frame per PES packet (`private_stream_1`), a 4-byte header —
+  `audio_data_payload_size` (16 bits), `channel_assignment` (4),
+  `sampling_frequency` (4: 48, 96, 192 kHz), `bits_per_sample` (2: 16, 20, 24),
+  `start_flag`, reserved — then the samples big-endian, interleaved, in an even
+  number of channels (an odd layout carries one empty channel, dropped here).
+  Read into `pcm_s16le` (16-bit) or `pcm_s24le` (20- and 24-bit), one packet per
+  frame, and put in the WAVE order for the channel count that every PCM track
+  in rivet is read in: 3/2+LFE is stored L R C Ls Rs LFE and comes out L R C LFE
+  Ls Rs; 3/4+LFE is stored L R C Ls Lrs Rrs Rs LFE and comes out L R C LFE Lrs
+  Rrs Ls Rs. Mono, stereo, 3/0, 2/2, 3/2, 3/2+LFE and 3/4+LFE are read; 2/1, 3/1
+  and 3/4 without LFE — layouts whose channel count WAVE order would read as
+  another layout — are refused by name (`unreadable_pcm_bluray`, the reason in
+  the demux warning) rather than played from the wrong speakers.
 - **Opus** (the Opus-in-TS mapping, ETSI's draft TS "Opus Interactive Audio
   Codec Transport Multiplexing" v0.1.3: the `"Opus"` registration, DVB's
   extension descriptor `0x7F` with tag extension `0x80` carrying

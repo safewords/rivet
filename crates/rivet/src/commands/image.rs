@@ -91,6 +91,9 @@ pub(crate) fn run(args: ImageArgs) -> Result<()> {
     }
     let spec = settings.into_image_spec()?;
 
+    // The output directory cannot be the input file; each still is checked
+    // against the input as it is written below.
+    rivet::output_guard::refuse_input_in_dir(&args.output, &[&args.input], |_| false)?;
     let input = std::fs::read(&args.input).with_context(|| format!("reading {}", args.input.display()))?;
     let out = rivet::image::run_image_job(&bytes::Bytes::from(input), &spec)?;
     std::fs::create_dir_all(&args.output).with_context(|| format!("creating {}", args.output.display()))?;
@@ -103,7 +106,8 @@ pub(crate) fn run(args: ImageArgs) -> Result<()> {
     for a in &out.artifacts {
         let name = a.file_name(out.several_frames);
         let path = args.output.join(&name);
-        std::fs::write(&path, &a.bytes).with_context(|| format!("writing {}", path.display()))?;
+        rivet::output_guard::refuse_input_as_output(&path, &[&args.input])?;
+        rivet::output_guard::write_atomic(&path, &a.bytes).with_context(|| format!("writing {}", path.display()))?;
         match a.frame {
             Some((_, t)) => println!("{name}  {}x{}  {} bytes  at {t:.3}s", a.width, a.height, a.bytes.len()),
             None => println!("{name}  {}x{}  {} bytes", a.width, a.height, a.bytes.len()),

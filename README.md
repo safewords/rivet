@@ -834,7 +834,7 @@ supports AV1 plays.
 |-----------------------|:----------:|:---------:|
 | MP4 / MOV / 3GP       | ✅ (QuickTime sound descriptions v0–v2: ALAC, linear PCM `sowt` / `twos` / `raw ` / `in24` / `in32` / `fl32` / `fl64` / `lpcm`, ISO `ipcm` / `fpcm`; H.263 `s263`) | ✅ (single-file + CMAF) |
 | MKV / WebM            | ✅ (PCM `A_PCM/INT/LIT`, `/INT/BIG`, `/FLOAT/IEEE`, `A_MS/ACM`) | ✅ (WebM: VP8 / VP9 + Opus or Vorbis) |
-| MPEG-TS / M2TS        | ✅ (audio: AAC, MP2 / MP3, AC-3, E-AC-3, Opus, DTS; audio-only streams too) | — |
+| MPEG-TS / M2TS        | ✅ (188-, 192-byte Blu-ray / BDAV and 204-byte packets; audio: AAC, MP2 / MP3, AC-3, E-AC-3, Opus, DTS, Blu-ray LPCM; audio-only streams too) | — |
 | MPEG-PS (`.mpg` / `.vob`) | ✅ | — |
 | AVI (+OpenDML >1 GiB) | ✅ (VP8 `VP80`; audio-only files too) | — |
 | CMAF / HLS            | —          | ✅ (segments + master/media playlists) |

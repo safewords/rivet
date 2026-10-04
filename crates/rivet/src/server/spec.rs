@@ -442,18 +442,19 @@ impl SpecBody {
 // ---------------------------------------------------------------------------
 
 /// Read the media for a JSON request from its `path` or `base64` field.
-pub(super) fn read_input(src: &InputSource) -> Result<Bytes, ApiError> {
+/// The media, and the server file it was read from (none for inline base64).
+pub(super) fn read_input(src: &InputSource) -> Result<(Bytes, Option<std::path::PathBuf>), ApiError> {
     match (&src.path, &src.base64) {
         (Some(p), None) => {
             let path = resolve_path(p, true)?;
             let bytes = std::fs::read(&path)
                 .map_err(|e| ApiError::bad_request(anyhow::anyhow!("reading input {p}: {e}")))?;
-            Ok(Bytes::from(bytes))
+            Ok((Bytes::from(bytes), Some(path)))
         }
         (None, Some(b)) => {
             let bytes = base64_decode(b.trim())
                 .map_err(|e| ApiError::bad_request(anyhow::anyhow!("input.base64: {e}")))?;
-            Ok(Bytes::from(bytes))
+            Ok((Bytes::from(bytes), None))
         }
         (Some(_), Some(_)) => Err(ApiError::bad_request(anyhow::anyhow!(
             "input: set exactly one of `path` or `base64`"
