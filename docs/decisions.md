@@ -1656,3 +1656,39 @@ the size rivet wrote.
 (`scale_region`), [`encode/mod.rs`](../crates/codec/src/encode/mod.rs)
 (`codes_odd_sizes`), [`probe.rs`](../crates/rivet/src/probe.rs),
 [output-spec.md](output-spec.md#fitting-the-source-into-a-rung).
+
+---
+
+## Server
+
+### 44. `rivet serve` starts every accepted job at once; a job limit is the operator's choice
+**Decision.** By default `rivet serve` has **no concurrency limit**: every job
+it accepts starts immediately. Limiting is opt-in and the operator's call:
+`rivet serve --jobs N`, or `RIVET_SERVER_JOBS=N` (the flag wins). With a limit
+set, jobs beyond `N` wait `queued` and start in arrival order. Every job may
+use every hardware encoder and decoder its `encode` plan selects (all of them
+by default, through the multi-GPU ladder / chunk distribution) whatever the
+limit: the limit counts jobs and never assigns a job a card. The CPU
+thread budget stays: a job's share is the machine divided by the jobs running
+when it starts its pools (`thread_budget::per_job`, recomputed at each decode
+pump and encoder start), or by `N` when a limit is set and that is more. It
+only keeps the jobs together from oversubscribing the machine.
+
+**History (reverted).** Before PR #49 the server started every accepted job
+at once. PR #49 (2026-10-04) made it run one job at a time by default, and
+PR #54 (2026-10-04) made the default one job per usable hardware encode
+device (`codec::encode::hardware_encode_devices`, at least one). Neither
+default change was asked for; both were reverted on 2026-10-04, restoring the
+pre-#49 default. `RIVET_SERVER_JOBS` and the queue they introduced are kept as
+the opt-in limit; `hardware_encode_devices` is gone.
+
+**Why.** How many jobs a deployment runs together depends on its workload and
+hardware, which the operator knows and rivet does not; a default that silently
+queues work changes the server's behaviour under the operator's feet. A
+device-count default also implied one card per job, when a single job already
+spreads over every card.
+
+**Where.** [`server/mod.rs`](../crates/rivet/src/server/mod.rs) (`job_limit`,
+`AppState`), [`server/handlers.rs`](../crates/rivet/src/server/handlers.rs)
+(`run_job_task`), [`thread_budget.rs`](../crates/rivet/src/thread_budget.rs),
+[cli.md](cli.md#rivet-serve), [api.md](api.md#concepts).

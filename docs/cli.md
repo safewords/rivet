@@ -830,22 +830,32 @@ Single MP4 per connection. On **Windows** `rivet ipc` is unavailable — use
 ## `rivet serve`
 
 ```
-rivet serve [--addr <ADDR>]
+rivet serve [--addr <ADDR>] [--jobs <N>]
 ```
 
 Runs the HTTP transcode API (requires a `--features server` build). `--addr`
 defaults to `127.0.0.1:8080`. See the [HTTP API reference](api.md) for endpoints.
-The server runs as many jobs at once as the host has hardware encode devices
-this build can use (two Arc cards in a `--features qsv` build: two jobs), and
-one on a host without any; `RIVET_SERVER_JOBS=<n>` sets it. A job accepted
-while every slot is busy stays `queued` until one frees. With `n` slots each
-job gets a `1/n` share of the CPU — its software encoders and decoders,
-worker pools, and the decode pump's filters and colour conversions — even
-while it runs alone, so the jobs together never oversubscribe the machine.
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `--addr <ADDR>` | `127.0.0.1:8080` | Address to bind. |
+| `--jobs <N>` | unset: no limit | Run at most `N` jobs at once (`N` ≥ 1). A job accepted while `N` run stays `queued` until one ends; waiting jobs start in arrival order. Overrides `RIVET_SERVER_JOBS`. |
+
+By default there is **no limit**: every job the server accepts starts at once.
+A limit is the operator's choice, set with `--jobs` or `RIVET_SERVER_JOBS`.
+Whatever the limit, each job may use every GPU encoder and decoder its
+`encode` plan selects — all of them by default, spread over the multi-GPU
+ladder — the limit counts jobs and never gives a job one card. The CPU is
+shared so the jobs do not oversubscribe the machine: a job's software
+encoders and decoders, worker pools, and the decode pump's filters and
+colour conversions get the machine divided by the jobs running when it starts
+them; with `--jobs N`, divided by `N` when that is more, so the first of `N`
+jobs does not take every core before the others arrive.
 
 ```sh
 cargo build --release --features server,nvidia
-rivet serve --addr 0.0.0.0:8080
+rivet serve --addr 0.0.0.0:8080            # every accepted job starts at once
+rivet serve --addr 0.0.0.0:8080 --jobs 2   # at most two at once; the rest wait queued
 ```
 
 ---
@@ -858,7 +868,7 @@ rivet serve --addr 0.0.0.0:8080
 | `TRANSCODE_ENCODER_BACKEND` | Force an encoder backend on the serial single-file path: `nvenc` \| `amf` \| `qsv` \| `h26x` \| `av1` (`rav1e` is still accepted for `av1`) \| `prores` \| `vp8` \| `vp9` \| `mpeg2` \| `mpeg4`. |
 | `RIVET_SOFTWARE_SLOTS` | Number of software encoder slots in the software pool (derived from the host by default; clamped to `1..=` the available parallelism). |
 | `RIVET_FORCE_CHUNKED` | `1` runs the chunk-and-stitch engine on a one-GPU host, to exercise the chunked path (no speedup). |
-| `RIVET_SERVER_JOBS` | `rivet serve`: how many jobs run at once (default: the host's usable hardware encode devices, at least 1; the rest wait `queued`, in arrival order). Each job gets that fraction of the CPU. |
+| `RIVET_SERVER_JOBS` | `rivet serve`: run at most this many jobs at once (a whole number ≥ 1; the rest wait `queued`, in arrival order). Unset, or not such a number: no limit, every accepted job starts at once. `--jobs` overrides it. |
 | `RIVET_FILE_ROOT` | `rivet serve`: confine the JSON body's server-side `input.path` / `output.path` to this directory. |
 | `LIBVA_MESSAGING_LEVEL` | rivet sets it to `0` (libva errors only) unless it is already set; set it yourself (e.g. `2`) to see libva's driver messages. |
 | `DISABLE_NVDEC` | Skip NVDEC for every codec (fall through to the next decode tier). |

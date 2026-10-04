@@ -25,15 +25,18 @@
 //! job's status carries its hook report (`hooks`), and a job a hook rejected
 //! ends `rejected` with the rejection (a `?sync=true` request gets `422`).
 //!
-//! **Concurrency.** The server runs as many jobs at once as the host has
-//! hardware encode devices this build can use (one per card: two Arc cards,
-//! two jobs), and one on a host without any; [`SERVER_JOBS_ENV`] overrides
-//! it. A request accepted while every slot is busy stays `queued` until one
-//! frees, in arrival order. The CPU is shared the same way: with N slots,
-//! every job's thread budget — software encoders and decoders, worker
-//! pools, the decode pump's filters and colour conversions — is a 1/N share
-//! of the machine ([`crate::thread_budget`]), even while it runs alone, so
-//! the jobs together never ask for more threads than the machine has.
+//! **Concurrency.** By default the server starts every job it accepts at
+//! once: there is no limit on how many run together. A limit is the
+//! operator's choice — `rivet serve --jobs N`, or [`SERVER_JOBS_ENV`] — and
+//! with one set, a request accepted while N jobs run stays `queued` until one
+//! ends, in arrival order. Either way every job may use every hardware
+//! encoder and decoder its plan selects (all of them by default): the limit
+//! counts jobs, it never assigns a job a card. The CPU is shared among the
+//! jobs ([`crate::thread_budget`]): a job's thread budget — software encoders
+//! and decoders, worker pools, the decode pump's filters and colour
+//! conversions — is the machine divided by the jobs running when it starts
+//! them, or by N when a limit is set and that is more, so the jobs together
+//! do not oversubscribe the machine.
 //!
 //! The job registry is in-memory; completed single-file artifacts are held in
 //! RAM until the process exits (fine for a sidecar/worker, not a public CDN —
@@ -73,22 +76,18 @@ pub(super) const MAX_UPLOAD: usize = 4 * 1024 * 1024 * 1024;
 // State
 // ---------------------------------------------------------------------------
 
-/// Environment variable: how many jobs `rivet serve` runs at once (at least
-/// 1). Unset, it is the host's hardware encode devices, at least one. Jobs
-/// beyond it wait, `queued`, in arrival order.
+/// Environment variable: the most jobs `rivet serve` runs at once, a whole
+/// number of at least 1. Unset (or not such a number), there is no limit.
+/// `rivet serve --jobs` takes precedence over it. Jobs beyond the limit
+/// wait, `queued`, in arrival order.
 pub const SERVER_JOBS_ENV: &str = "RIVET_SERVER_JOBS";
 
-/// The number of jobs run at once: `value` (the [`SERVER_JOBS_ENV`] setting)
-/// as a whole number of at least one, else `encode_devices` (the host's
-/// usable hardware encode devices), at least one.
-pub(super) fn concurrent_jobs(value: Option<&str>, encode_devices: usize) -> usize {
-    value.and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n >= 1).unwrap_or(encode_devices.max(1))
-}
-
-/// The cards on this host a job can encode on: detected, openable by this
-/// process, and with their vendor's backend in this build.
-fn host_encode_devices() -> usize {
-    codec::encode::hardware_encode_devices(codec::gpu::detect_gpus_cached().iter().map(|d| d.vendor))
+/// The server's job limit: `flag` (`rivet serve --jobs`) when given, else
+/// `env` (the [`SERVER_JOBS_ENV`] setting) when it is a whole number of at
+/// least one, else `None` — no limit, every accepted job starts at once.
+pub(super) fn job_limit(flag: Option<usize>, env: Option<&str>) -> Option<usize> {
+    flag.filter(|&n| n >= 1)
+        .or_else(|| env.and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n >= 1))
 }
 
 #[derive(Clone)]
@@ -96,27 +95,40 @@ pub struct AppState {
     pub(super) jobs: Arc<RwLock<HashMap<Uuid, Arc<JobHandle>>>>,
     /// The hooks every job can run ([`crate::hooks`]).
     pub(super) hooks: crate::hooks::Hooks,
-    /// One permit per job that may run at once ([`SERVER_JOBS_ENV`]); a job
-    /// holds one from leaving `queued` to its end. Fair: waiting jobs start
-    /// in the order they were accepted.
-    pub(super) running: Arc<tokio::sync::Semaphore>,
+    /// With a job limit ([`job_limit`]), one permit per job that may run at
+    /// once; a job holds one from leaving `queued` to its end. Fair: waiting
+    /// jobs start in the order they were accepted. `None`: no limit.
+    pub(super) running: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl AppState {
-    fn new(hooks: crate::hooks::Hooks) -> Self {
-        let slots = concurrent_jobs(std::env::var(SERVER_JOBS_ENV).ok().as_deref(), host_encode_devices());
-        // Every job's share of the CPU is reckoned against the slots, so the
-        // jobs together fit the machine however many are running.
-        crate::thread_budget::reserve_jobs(slots);
-        tracing::info!(slots, "rivet serve: jobs at once");
-        Self::with_slots(hooks, slots)
+    /// `jobs`: the operator's `--jobs`, if given ([`SERVER_JOBS_ENV`] else).
+    fn new(hooks: crate::hooks::Hooks, jobs: Option<usize>) -> Self {
+        let env = std::env::var(SERVER_JOBS_ENV).ok();
+        if jobs.is_none()
+            && let Some(v) = env.as_deref()
+            && job_limit(None, Some(v)).is_none()
+        {
+            tracing::warn!(value = v, "{SERVER_JOBS_ENV} is not a whole number of at least 1; no job limit");
+        }
+        let limit = job_limit(jobs, env.as_deref());
+        // With a limit, every job's share of the CPU is reckoned against it,
+        // so the first of N jobs does not size its pools to the whole
+        // machine before the others start. Without one, each job's share is
+        // the machine divided by the jobs running when it asks.
+        crate::thread_budget::reserve_jobs(limit.unwrap_or(0));
+        match limit {
+            Some(n) => tracing::info!(jobs = n, "rivet serve: at most {n} jobs at once; the rest wait queued"),
+            None => tracing::info!("rivet serve: no job limit; every accepted job starts at once"),
+        }
+        Self::with_limit(hooks, limit)
     }
 
-    pub(super) fn with_slots(hooks: crate::hooks::Hooks, slots: usize) -> Self {
+    pub(super) fn with_limit(hooks: crate::hooks::Hooks, limit: Option<usize>) -> Self {
         Self {
             jobs: Arc::new(RwLock::new(HashMap::new())),
             hooks,
-            running: Arc::new(tokio::sync::Semaphore::new(slots.max(1))),
+            running: limit.map(|n| Arc::new(tokio::sync::Semaphore::new(n.max(1)))),
         }
     }
 }
@@ -356,7 +368,14 @@ pub fn build_router() -> Router {
 /// Build the axum router with `hooks` available to every job: the required
 /// ones run on all of them, the optional ones on the jobs that name them.
 pub fn build_router_with_hooks(hooks: crate::hooks::Hooks) -> Router {
-    let state = AppState::new(hooks);
+    build_router_with(hooks, None)
+}
+
+/// [`build_router_with_hooks`] with a job limit: `jobs` runs at most that
+/// many at once, the rest waiting `queued`; `None` leaves it to
+/// [`SERVER_JOBS_ENV`], and with that unset there is no limit.
+pub fn build_router_with(hooks: crate::hooks::Hooks, jobs: Option<usize>) -> Router {
+    let state = AppState::new(hooks, jobs);
     Router::new()
         .route("/", get(handlers::landing))
         .route("/openapi.json", get(handlers::openapi_json))
@@ -381,7 +400,14 @@ pub async fn serve(addr: SocketAddr) -> Result<()> {
 /// [`serve`] with `hooks` available to every job — how an integration that
 /// embeds the server attaches its own [`Hook`](crate::hooks::Hook)s.
 pub async fn serve_with_hooks(addr: SocketAddr, hooks: crate::hooks::Hooks) -> Result<()> {
-    let app = build_router_with_hooks(hooks);
+    serve_with(addr, hooks, None).await
+}
+
+/// [`serve_with_hooks`] with a job limit (`rivet serve --jobs`): see
+/// [`build_router_with`]. `None` leaves it to [`SERVER_JOBS_ENV`], and with
+/// that unset every accepted job starts at once.
+pub async fn serve_with(addr: SocketAddr, hooks: crate::hooks::Hooks, jobs: Option<usize>) -> Result<()> {
+    let app = build_router_with(hooks, jobs);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("binding {addr}"))?;

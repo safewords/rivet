@@ -462,31 +462,109 @@ async fn sync_transcode_one_rung_is_the_file_and_several_are_the_status() {
     }
 }
 
-/// Jobs at once: `RIVET_SERVER_JOBS` when it is a whole number of at least
-/// one, else one per hardware encode device, at least one.
+/// The job limit is the operator's: `--jobs` when given, else
+/// `RIVET_SERVER_JOBS` when it is a whole number of at least one, else none
+/// at all — never a default derived from the host.
 #[test]
-fn concurrent_jobs_default_to_the_encode_devices() {
-    use super::concurrent_jobs;
-    assert_eq!(concurrent_jobs(None, 0), 1, "no card: one job");
-    assert_eq!(concurrent_jobs(None, 1), 1);
-    assert_eq!(concurrent_jobs(None, 2), 2, "two Arc cards: two jobs");
-    assert_eq!(concurrent_jobs(Some("3"), 2), 3, "the setting wins");
-    assert_eq!(concurrent_jobs(Some(" 1 "), 4), 1);
-    assert_eq!(concurrent_jobs(Some("0"), 2), 2, "an unusable setting falls back");
-    assert_eq!(concurrent_jobs(Some("lots"), 0), 1);
+fn the_job_limit_is_unset_unless_the_operator_sets_it() {
+    use super::job_limit;
+    assert_eq!(job_limit(None, None), None, "by default every accepted job starts at once");
+    assert_eq!(job_limit(None, Some("3")), Some(3));
+    assert_eq!(job_limit(None, Some(" 2 ")), Some(2));
+    assert_eq!(job_limit(Some(4), Some("2")), Some(4), "--jobs wins over the environment");
+    assert_eq!(job_limit(Some(1), None), Some(1));
+    assert_eq!(job_limit(None, Some("0")), None, "not a limit: none");
+    assert_eq!(job_limit(None, Some("lots")), None);
+    assert_eq!(job_limit(None, Some("")), None);
+    assert!(super::AppState::with_limit(crate::hooks::Hooks::default(), None).running.is_none());
+    assert_eq!(
+        super::AppState::with_limit(crate::hooks::Hooks::default(), Some(2))
+            .running
+            .map(|s| s.available_permits()),
+        Some(2)
+    );
 }
 
-/// A job waits, `queued`, while the server's job slots are all taken, and
-/// runs once one is free: jobs are not all started at once, each sizing its
-/// pools to the whole machine.
+/// With no limit a job never waits `queued` for another: several started
+/// together all run, none holding a slot the others need.
+#[tokio::test]
+async fn without_a_limit_every_job_starts_at_once() {
+    let state = super::AppState::with_limit(crate::hooks::Hooks::default(), None);
+    let handles: Vec<_> =
+        (0..4).map(|_| std::sync::Arc::new(super::JobHandle::new(uuid::Uuid::new_v4(), "single"))).collect();
+    let tasks: Vec<_> = handles
+        .iter()
+        .map(|h| {
+            tokio::spawn(super::handlers::run_job_task(
+                std::sync::Arc::clone(h),
+                state.running.clone(),
+                axum::body::Bytes::from_static(b"not media"),
+                crate::spec::OutputSpec::default(),
+                None,
+                None,
+            ))
+        })
+        .collect();
+    for t in tasks {
+        tokio::time::timeout(std::time::Duration::from_secs(30), t).await.expect("no job waits").unwrap();
+    }
+    for h in &handles {
+        assert_eq!(h.status_json()["status"], "failed", "each ran (and failed on its bytes)");
+    }
+}
+
+/// A server job may use every card on the host: its plan, from a request
+/// that names none, is `all`, which selects every detected card — not one
+/// card per job slot — however many jobs the server runs at once.
+#[test]
+fn a_server_jobs_cards_are_all_the_hosts_cards() {
+    use codec::gpu::{GpuDevice, GpuVendor};
+    let card = |index: u32, vendor: GpuVendor| GpuDevice {
+        index,
+        vendor_index: index,
+        vendor,
+        name: format!("synth-{index}"),
+        generation: "Synth".into(),
+        pci_id: String::new(),
+        vram_mib: 0,
+        serial: None,
+        host_pci_address: String::new(),
+        vendor_id_hex: String::new(),
+    };
+    let host = [card(0, GpuVendor::Intel), card(1, GpuVendor::Intel), card(2, GpuVendor::Nvidia)];
+    for limit in [None, Some(1), Some(2), Some(3)] {
+        // The state the server would run with; the spec does not consult it.
+        let _state = super::AppState::with_limit(crate::hooks::Hooks::default(), limit);
+        for spec in [
+            TranscodeParams::default().to_settings().unwrap().into_spec(1280, 720).unwrap(),
+            serde_json::from_value::<SpecBody>(serde_json::json!({}))
+                .unwrap()
+                .into_params()
+                .to_settings()
+                .unwrap()
+                .into_spec(1280, 720)
+                .unwrap(),
+        ] {
+            assert_eq!(spec.encode_policy, crate::spec::EncodePolicy::AllGpus, "{limit:?}");
+            let cards: Vec<u32> =
+                crate::multigpu::cards_for_policy(&host, spec.encode_policy).iter().map(|c| c.index).collect();
+            assert_eq!(cards, [0, 1, 2], "every card, whatever the job limit ({limit:?})");
+            assert_eq!(crate::multigpu::serial_gpu_for_policy(spec.encode_policy), None, "not pinned to a card");
+        }
+    }
+}
+
+/// With a limit, a job waits, `queued`, while the server's job slots are
+/// all taken, and runs once one is free.
 #[tokio::test]
 async fn a_job_stays_queued_until_a_slot_is_free() {
-    let running = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+    let state = super::AppState::with_limit(crate::hooks::Hooks::default(), Some(1));
+    let running = state.running.clone().unwrap();
     let held = std::sync::Arc::clone(&running).acquire_owned().await.unwrap();
     let handle = std::sync::Arc::new(super::JobHandle::new(uuid::Uuid::new_v4(), "single"));
     let task = tokio::spawn(super::handlers::run_job_task(
         std::sync::Arc::clone(&handle),
-        std::sync::Arc::clone(&running),
+        state.running.clone(),
         axum::body::Bytes::from_static(b"not media"),
         crate::spec::OutputSpec::default(),
         None,

@@ -68,7 +68,7 @@ pub fn openapi_spec() -> Value {
             "description": "HTTP API for the rivet GPU video transcoder. POST media \
                             and an output spec; rivet transcodes to AV1, H.264 or H.265 \
                             (single-file MP4 or CMAF/HLS), or writes the audio alone \
-                            (.mp3, .flac, .m4a or .ogg), and reports per-rung progress.",
+                            (.mp3, .flac, .m4a or .ogg), and reports per-rung progress.                             Concurrency: by default every accepted job starts at once (no                             limit). An operator may limit it with `rivet serve --jobs N` or                             RIVET_SERVER_JOBS=N; jobs beyond N stay `queued` and start in                             arrival order. Each job may use every GPU its encode plan selects                             (all of them by default), whatever the limit.",
             "license": { "name": "Open Encoding Attribution License v1.0", "url": "https://github.com/safewords/rivet/blob/develop/LICENSE.md" }
         },
         "servers": [ { "url": "/", "description": "this server" } ],
@@ -172,7 +172,7 @@ qp("audio_quality", "string", "Vorbis quality, -1 (smallest) to 10 (best); defau
                         "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
                     } },
                     "responses": {
-                        "202": { "description": "job accepted",
+                        "202": { "description": "job accepted. It starts at once unless the server was given a job limit (`rivet serve --jobs N` / RIVET_SERVER_JOBS) and N jobs are running; then it stays `queued` until one ends (arrival order). A sync=true request waits the same way.",
                                  "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Accepted" } } } },
                         "200": { "description": "sync=true: the file (a single-file job with one rung, held in memory), else the job status JSON (several rungs, output.path or HLS)",
                                  "content": {
@@ -355,7 +355,8 @@ qp("audio_quality", "string", "Vorbis quality, -1 (smallest) to 10 (best); defau
                 "JobStatus": { "type": "object", "properties": {
                     "job_id": { "type": "string", "format": "uuid" },
                     "mode": { "type": "string" },
-                    "status": { "type": "string", "enum": ["queued", "running", "completed", "failed", "rejected"] },
+                    "status": { "type": "string", "enum": ["queued", "running", "completed", "failed", "rejected"],
+                                "description": "queued until the job starts: at once with no job limit (the default), or once fewer than N jobs run when the server has one (`--jobs N` / RIVET_SERVER_JOBS), in arrival order" },
                     "progress": { "type": "array", "items": { "$ref": "#/components/schemas/RungProgress" } },
                     "artifacts": { "type": "array", "items": { "$ref": "#/components/schemas/Artifact" } },
                     "master_playlist": { "type": "string", "nullable": true },

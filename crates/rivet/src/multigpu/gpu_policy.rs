@@ -51,8 +51,17 @@ fn host_cards() -> &'static [GpuDevice] {
 /// The host GPUs selected by an [`EncodePolicy`]: all of them for `AllGpus` /
 /// `PerRung`, the first / pinned index for `SingleGpu`, every device of one
 /// vendor for `Family`.
+///
+/// Nothing else narrows it: a job's cards follow from its plan alone, never
+/// from how many other jobs run (a `rivet serve` job limit counts jobs; it
+/// does not hand each one a card).
 fn select_gpus_for_policy(policy: EncodePolicy) -> Vec<GpuDevice> {
-    let gpus = host_cards().to_vec();
+    cards_for_policy(host_cards(), policy)
+}
+
+/// [`select_gpus_for_policy`] over `cards`, the host's in detection order.
+pub(crate) fn cards_for_policy(cards: &[GpuDevice], policy: EncodePolicy) -> Vec<GpuDevice> {
+    let gpus = cards.to_vec();
     match policy {
         EncodePolicy::AllGpus | EncodePolicy::PerRung => gpus,
         EncodePolicy::SingleGpu(None) => gpus.into_iter().take(1).collect(),

@@ -333,25 +333,6 @@ fn compiled_hardware_encodes(codec: VideoCodec) -> bool {
         || (cfg!(feature = "qsv") && hardware_encodes(EncoderBackend::Qsv, codec))
 }
 
-/// How many of the cards of `vendors` this build can encode on: those whose
-/// vendor's hardware backend (NVENC, AMF, QSV) is compiled in. Pass the
-/// vendors of [`gpu::detect_gpus_cached`] for the host's count — a card the
-/// process cannot open is not in that list, and a card whose backend this
-/// build lacks encodes nothing.
-pub fn hardware_encode_devices(vendors: impl IntoIterator<Item = gpu::GpuVendor>) -> usize {
-    vendors.into_iter().filter(|&v| hardware_backend_compiled(vendor_backend(v))).count()
-}
-
-/// Whether the hardware backend `backend` is compiled into this build.
-fn hardware_backend_compiled(backend: EncoderBackend) -> bool {
-    match backend {
-        EncoderBackend::Nvenc => cfg!(feature = "nvidia"),
-        EncoderBackend::Amf => cfg!(feature = "amd"),
-        EncoderBackend::Qsv => cfg!(feature = "qsv"),
-        _ => false,
-    }
-}
-
 /// The hardware backend of a GPU vendor.
 fn vendor_backend(vendor: gpu::GpuVendor) -> EncoderBackend {
     match vendor {
@@ -1256,19 +1237,6 @@ fn create_backend(
 mod gpu_selection_tests {
     use super::*;
     use crate::gpu::{GpuDevice, GpuVendor};
-
-    /// A card counts as an encode device only when its vendor's backend is
-    /// in the build.
-    #[test]
-    fn hardware_encode_devices_count_the_compiled_backends_cards() {
-        use GpuVendor::{Amd, Intel, Nvidia};
-        let host = [Intel, Intel, Nvidia, Amd];
-        let want = 2 * usize::from(cfg!(feature = "qsv"))
-            + usize::from(cfg!(feature = "nvidia"))
-            + usize::from(cfg!(feature = "amd"));
-        assert_eq!(hardware_encode_devices(host), want);
-        assert_eq!(hardware_encode_devices([]), 0);
-    }
 
     fn synth(index: u32, vendor: GpuVendor) -> GpuDevice {
         GpuDevice {

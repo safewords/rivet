@@ -175,7 +175,7 @@ pub(super) async fn transcode(
     *handle.hooks.lock().unwrap() = session;
     state.jobs.write().unwrap().insert(id, Arc::clone(&handle));
 
-    let task = run_job_task(Arc::clone(&handle), Arc::clone(&state.running), media, spec, output_path, input_path);
+    let task = run_job_task(Arc::clone(&handle), state.running.clone(), media, spec, output_path, input_path);
 
     if sync {
         task.await; // run inline
@@ -224,8 +224,9 @@ fn write_single_file(
 /// held in RAM.
 pub(super) async fn run_job_task(
     handle: Arc<JobHandle>,
-    // The server's job slots: the job stays `queued` until it holds one.
-    running: Arc<tokio::sync::Semaphore>,
+    // The server's job slots when it has a job limit: the job stays
+    // `queued` until it holds one. `None`: no limit, the job starts now.
+    running: Option<Arc<tokio::sync::Semaphore>>,
     body: Bytes,
     spec: OutputSpec,
     output_path: Option<PathBuf>,
@@ -234,10 +235,16 @@ pub(super) async fn run_job_task(
 ) {
     // Held to the end of the job. The semaphore is never closed, so the
     // acquire only waits.
-    let Ok(_slot) = running.acquire_owned().await else {
-        *handle.error.lock().unwrap() = Some("the server is shutting down".into());
-        handle.set_phase(Phase::Failed);
-        return;
+    let _slot = match running {
+        Some(running) => match running.acquire_owned().await {
+            Ok(slot) => Some(slot),
+            Err(_) => {
+                *handle.error.lock().unwrap() = Some("the server is shutting down".into());
+                handle.set_phase(Phase::Failed);
+                return;
+            }
+        },
+        None => None,
     };
     handle.set_phase(Phase::Running);
     let is_hls = matches!(spec.mode, crate::spec::OutputMode::Hls { .. });
