@@ -75,6 +75,37 @@ jobs:
         if: always()
         run: if command -v ci-cache-stats >/dev/null; then ci-cache-stats; fi
 
+  # Formatting and lints for the whole workspace, the codec submodules
+  # included (each codec repository gates the same in its own CI). Clippy
+  # covers every feature that builds without hardware or a CUDA toolkit:
+  # the GPU backends are dlopened at run time, so qsv / nvidia / amd compile
+  # anywhere; dpir-cuda / dpir-cudnn need nvcc and are left out.
+  lint:
+    name: rustfmt and clippy
+    runs-on: safewords-runners
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Submodules (in parallel)
+        run: .github/ci/submodules.sh
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: Compile cache
+        run: if command -v ci-cache-setup >/dev/null; then ci-cache-setup; else echo "no compile cache on this runner"; fi
+      - name: clippy
+        run: >-
+          cargo clippy --workspace --all-targets --locked
+          --features rivet-transcoder/server,rivet-transcoder/batch,rivet-transcoder/image,rivet-transcoder/thumbnail,rivet-transcoder/ipc,rivet-transcoder/qsv,rivet-transcoder/nvidia,rivet-transcoder/amd,rivet-transcoder/av1-sw-fallback,rivet-transcoder/rav1e-fallback,rivet-transcoder/rav1d-fallback,rivet-transcoder/h26x-fallback,rivet-transcoder/dpir
+          -- -D warnings
+      - name: Compile cache hits
+        if: always()
+        run: if command -v ci-cache-stats >/dev/null; then ci-cache-stats; fi
+
   # ---- Intel GPU (QSV) --------------------------------------------------
   # Real hardware: only for trusted refs (pushes, manual dispatches), never
   # for pull requests. Every card runs one job at a time: a runner holds its
