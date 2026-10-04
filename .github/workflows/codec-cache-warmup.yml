@@ -1,0 +1,91 @@
+name: codec cache warm-up
+
+# Called by each codec repository's CI on a push to its develop:
+#
+#   rivet-cache:
+#     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+#     permissions: {contents: read, id-token: write}
+#     uses: safewords/rivet-transcoder/.github/workflows/codec-cache-warmup.yml@develop
+#     with: {crates: rivet-av1, submodule: crates/av1}
+#
+# It builds the pushed commit exactly as rivet's CI will once rivet's
+# submodule is bumped to it, so that the shared compile cache (sccache on
+# the cluster's Garage, safewords/helm-charts ci-cache) already holds it:
+# rivet's develop, checked out at the path rivet's CI builds in, with this
+# commit as the codec's submodule, and every CI group that builds the crate
+# (.github/ci/tests.sh --affected-by) built with --no-run, then the MSRV
+# check, on the same toolchains and with the same settings (tests.sh and
+# msrv.sh hold them).
+# sccache's keys include absolute paths, the compiler arguments and every
+# CARGO_* variable, so anything less exact would miss.
+#
+# A push to develop is a trusted ref, so the cache's broker gives this job
+# the read-write key (the caller grants `id-token: write`). It never fails
+# the caller's CI: a warm-up that cannot build (a rivet lock file that needs
+# the new commit's dependencies, say) only means a cold build later.
+
+on:
+  workflow_call:
+    inputs:
+      crates:
+        description: >-
+          The codec's package names as rivet builds them, space-separated
+          (rivet-av1; rivet-gif rivet-bmp rivet-tiff for imagecodecs).
+        required: true
+        type: string
+      submodule:
+        description: Its submodule path in rivet (crates/av1).
+        required: true
+        type: string
+      rivet-ref:
+        description: The rivet branch to build against.
+        type: string
+        default: develop
+
+env:
+  # Where rivet's CI checks rivet out (GITHUB_WORKSPACE of a rivet-transcoder job).
+  RIVET_DIR: /home/runner/_work/rivet-transcoder/rivet-transcoder
+  SUBMODULE: ${{ inputs.submodule }}
+  RIVET_REF: ${{ inputs.rivet-ref }}
+
+jobs:
+  # One job, one runner (a runner holds a whole ci node): every affected group
+  # one after another, then the MSRV check.
+  warm:
+    name: warm rivet's cache with ${{ inputs.crates }}
+    runs-on: safewords-runners
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: rivet ${{ inputs.rivet-ref }} at rivet CI's path, with this commit as ${{ inputs.submodule }}
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 --branch "$RIVET_REF" https://github.com/safewords/rivet-transcoder.git "$RIVET_DIR"
+          cd "$RIVET_DIR"
+          .github/ci/submodules.sh
+          git -C "$SUBMODULE" fetch --quiet --depth 1 origin "$GITHUB_SHA"
+          git -C "$SUBMODULE" checkout --quiet --detach FETCH_HEAD
+          git -C "$SUBMODULE" submodule update --quiet --init --recursive --depth 1
+          echo "rivet $(git rev-parse --short HEAD), $SUBMODULE at $(git -C "$SUBMODULE" rev-parse --short HEAD)"
+      # The same toolchain actions as rivet's CI (they also set CARGO_HOME and
+      # CARGO_INCREMENTAL, which sccache's keys include).
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile cache
+        run: if command -v ci-cache-setup >/dev/null; then ci-cache-setup; else echo "no compile cache on this runner"; fi
+      - name: Build the groups that build ${{ inputs.crates }}, as rivet's CI does
+        working-directory: ${{ env.RIVET_DIR }}
+        env:
+          CRATES: ${{ inputs.crates }}
+        run: |
+          groups=$(for c in $CRATES; do .github/ci/tests.sh --affected-by "$c"; done | sort -u | xargs)
+          echo "groups: $groups"
+          .github/ci/tests.sh $groups --no-run
+      - uses: dtolnay/rust-toolchain@1.99
+      - name: The MSRV check, as rivet's CI does
+        working-directory: ${{ env.RIVET_DIR }}
+        run: .github/ci/msrv.sh
+      - name: Compile cache hits
+        if: always()
+        run: if command -v ci-cache-stats >/dev/null; then ci-cache-stats; fi

@@ -20,147 +20,60 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The Linux tests: the groups of .github/ci/tests.sh (shared with the
+  # codec repositories' cache warm-up, which builds the same things with
+  # --no-run), folded into three jobs balanced by measured time. A runner
+  # holds a whole ci node (one per node, five in all, shared by the org), so
+  # each job uses every core of its machine and the three run side by side.
+  # MSRV rides with the shortest.
+  #
+  # The compile cache: `ci-cache-setup` (in the runner image) points cargo at
+  # sccache on the cluster's Garage (safewords/helm-charts ci-cache). Every
+  # job reads it; only a trusted ref (a push or dispatch on develop or main)
+  # writes it, decided by the cache's broker from the job's OIDC token, which
+  # is what `id-token: write` is for. On a runner without the cache the
+  # script says so and the job builds uncached.
   test:
-    name: build + lib tests (linux)
+    name: ${{ matrix.name }} (linux)
     runs-on: safewords-runners
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: audio, images, transcoder lib
+            groups: audio images transcoder-lib
+            deps: faad libdca-utils flac mkvtoolnix alacconvert
+          - name: codec integration, end to end, MSRV
+            groups: codec-tests transcoder-e2e
+            deps: flac mkvtoolnix mediainfo alacconvert
+            msrv: true
+          - name: codec lib, video, AV1
+            groups: codec-lib video av1
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install native build deps
-        # Every audio, video and still-image codec is the workspace's own Rust
-        # (crates/opus, mp3, vorbis, aac, ac3, dts, lossless, h26x, av1, vp8,
-        # vp9, mpeg2, mpeg4, prores, png, jpeg, imagecodecs): nothing to build
-        # or load for them, and no assembler (NASM) for any build.
-        # flac, mkvtoolnix: Xiph's reference FLAC tool and MKVToolNix, black
-        # boxes the lossless oracle tests compare against and mux with (they
-        # fail rather than skip without them: RIVET_REQUIRE_LOSSLESS_ORACLES
-        # below; Apple's ALAC reference is built in the next step).
-        # faad: faad2's AAC decoder, a black box the AAC codec's encoder is
-        # checked against (AAC_REQUIRE_FAAD below). libdca-utils: libdca's
-        # `dcadec`, the same for the DTS encoder (DTS_REQUIRE_DCADEC).
-        # mediainfo: MediaArea's MediaInfo, an independent reader of rivet's
-        # MP4s (RIVET_REQUIRE_MEDIAINFO). No FFmpeg, in any form.
-        # gcc/g++/make ship on the runner already.
-        # MKVToolNix comes from its author's own repository: the distribution's
-        # (82) does not read FLAC in MP4, which the lossless oracle needs.
-        run: |
-          sudo install -d /etc/apt/keyrings
-          sudo curl -fsSLo /etc/apt/keyrings/gpg-pub-moritzbunkus.gpg https://mkvtoolnix.download/gpg-pub-moritzbunkus.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/gpg-pub-moritzbunkus.gpg] https://mkvtoolnix.download/ubuntu/ $(lsb_release -cs) main"             | sudo tee /etc/apt/sources.list.d/mkvtoolnix.list
-          sudo apt-get update && sudo apt-get install -y flac mkvtoolnix faad libdca-utils mediainfo
-          mkvmerge --version
-
-      - name: Build Apple's alacconvert (the ALAC reference, a black box)
-        # Apple's open-source ALAC release, pinned, built without reading it.
-        run: echo "ALACCONVERT=$(crates/lossless/tools/build-alacconvert.sh "$RUNNER_TEMP/alac")" >> "$GITHUB_ENV"
-
+      - name: Submodules (in parallel)
+        run: .github/ci/submodules.sh
+      - name: Black-box tools for these groups
+        if: matrix.deps
+        run: .github/ci/deps.sh ${{ matrix.deps }}
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build (workspace, default features)
-        run: cargo build --workspace --locked
-
-      - name: Lib tests
-        run: |
-          cargo test -p rivet-codec      --lib --features serde --locked
-          # rivet-codec's integration tests: the software encoders and decoders
-          # end to end (odd sizes, AV1 / H.26x round trips, the native codecs in
-          # their containers). The GPU ones build to nothing without their features.
-          cargo test -p rivet-codec      --release --features serde --locked --tests
-          # The GPU backends' pure unit tests (parameter layouts, property
-          # sequences): dlopen FFI, so they build and run with no card.
-          cargo test -p rivet-codec      --lib --features serde,qsv,nvidia,amd --locked
-          # The pipeline kernels (scaler, colour, tonemap, SDR->HDR, denoise,
-          # resampler) once more with every SIMD switch off: the tests above
-          # compare each vector level with the scalar reference explicitly;
-          # this runs everything that dispatches on the scalar paths too.
-          RIVET_PIPE_MAX_SIMD=none RIVET_DENOISE_MAX_SIMD=none RIVET_TONEMAP_SCALAR=1             cargo test -p rivet-codec --lib --release --locked -- simd colorspace tonemap filter audio::resample
-          cargo test -p rivet-container  --locked
-          # Still images included: every format through rivet's own codecs,
-          # AVIF through rivet's own AV1 encoder and decoder (always in the
-          # chain), stills from a clip made by rivet's own H.264 encoder.
-          cargo test -p rivet-transcoder --lib --features server,batch,ipc,thumbnail,image --locked
-          cargo test -p rivet-h26x       --release --locked
-          # The AAC codec (crates/aac): the encoder, the decoder, their shared
-          # tables, and both against faad2's decoder (a black box; installed
-          # above) — required here, not skipped. The ISO/IEC 14496-26
-          # conformance streams run in the crate's own CI.
-          AAC_REQUIRE_FAAD=1 cargo test -p rivet-aac --release --locked
-          # The AC-3 / E-AC-3 decoder (crates/ac3): unit tests and the bundled
-          # 5.1 vector (the full sweep needs RIVET_AC3_VECTORS, not set here).
-          cargo test -p rivet-ac3 --release --locked
-          # The DTS codec (crates/dts): round trips through its encoder, and the
-          # encoder's streams against libdca's decoder (a black box) —
-          # required here.
-          DTS_REQUIRE_DCADEC=1 cargo test -p rivet-dts --release --locked
-          # Opus, MPEG audio / MP3 and Vorbis (crates/opus, crates/mp3,
-          # crates/vorbis), both ways: each crate's committed vectors, round
-          # trips and spec tests. The downloaded conformance suites (the Opus
-          # test vectors, ISO's MPEG audio sequences, Xiph's Vorbis vectors)
-          # run in each crate's own CI.
-          cargo test -p rivet-opus -p rivet-mp3 -p rivet-vorbis --release --locked
-          # FLAC and ALAC (crates/lossless), both ways, against the flac CLI and
-          # Apple's alacconvert — required here.
-          RIVET_REQUIRE_LOSSLESS_ORACLES=1 cargo test -p rivet-lossless --release --locked
-          # The clean-room video codecs (crates/prores, vp8, vp9, mpeg2, mpeg4):
-          # each crate's committed vectors, round trips and spec tests. The
-          # downloaded conformance suites run in each crate's own CI.
-          cargo test -p rivet-prores -p rivet-vp8 -p rivet-vp9 -p rivet-mpeg2 -p rivet-mpeg4 --release --locked
-          # AV1 (crates/av1): the committed AOM vectors bit-exact, the encoder
-          # against its own reconstruction, the malformed-input property
-          # tests. The full AOM set and the Argon suite run in its own CI.
-          cargo test -p rivet-av1 --release --locked
-          # The still-image codecs: WebP (crates/webp), PNG (crates/png; PngSuite and the DEFLATE
-          # round trips, committed) and JPEG (crates/jpeg; its committed
-          # corpus), and GIF, BMP and TIFF (crates/imagecodecs, a workspace of
-          # its own with its own lock file).
-          cargo test -p rivet-png -p rivet-jpeg -p rivet-webp --release --locked
-          cargo test --manifest-path crates/imagecodecs/Cargo.toml --workspace --release --locked
-
-      - name: Lossless audio against the reference encoders and decoders
-        # FLAC / ALAC bit-exact both ways against the flac CLI and Apple's
-        # alacconvert, through rivet's MP4 and Matroska code (mkvmerge).
-        run: RIVET_REQUIRE_LOSSLESS_ORACLES=1 cargo test -p rivet-codec --release --locked --test lossless_oracle
-
-      - name: End-to-end jobs on synthetic sources
-        # Inputs made by rivet's own encoders (tests/common/synth.rs): fitted
-        # geometry, DTS input, an HLS bitrate ladder, every audio codec in
-        # every file it goes in (read back and decoded by rivet); and
-        # MediaInfo reading rivet's MP4s and MKVToolNix rivet's WebMs
-        # (required here); every video codec's output through the job
-        # engine, demuxed and decoded by rivet with PSNR against the source
-        # (software AV1 at 8 and 10 bits, VP9 profile 2 and VP9 / AV1
-        # bitrate rungs among them); the AV1 PSNR / SSIM gate on the
-        # software encoder. And the rest of the crate's integration tests
-        # that need no GPU: the AV1 encode / mux / decode chain on a pattern
-        # (e2e, fidelity_pattern, fidelity_sanity), the binary never writing
-        # over its input and writing each HLS file whole (output_overwrite),
-        # the HTTP API (server_api). Only cbr_rates is left out: it is the
-        # Intel GPU job's (QSV rate control) and skips without the card.
-        env:
-          RIVET_REQUIRE_MEDIAINFO: "1"
-          RIVET_REQUIRE_MKVTOOLNIX: "1"
-        run: >-
-          cargo test -p rivet-transcoder --release --locked --features h26x-fallback,av1-sw-fallback,image,server,batch
-          --test fit_e2e --test dts_audio --test hls_rates --test fidelity_mediainfo --test audio_codecs_e2e
-          --test new_codecs_e2e --test fidelity_psnr_ssim --test e2e --test fidelity_pattern
-          --test fidelity_sanity --test output_overwrite --test server_api
-
-  msrv:
-    name: MSRV (1.99)
-    # The workspace's rust-version: every crate, the submodules included,
-    # builds at it. The test job above runs on stable, which moves.
-    runs-on: safewords-runners
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@1.99
-      - uses: Swatinem/rust-cache@v2
-      - name: Check every crate and target at 1.99
-        run: cargo check --workspace --all-targets --locked --features rivet-transcoder/server,rivet-transcoder/batch,rivet-transcoder/image
+      - name: Compile cache
+        run: if command -v ci-cache-setup >/dev/null; then ci-cache-setup; else echo "no compile cache on this runner"; fi
+      - name: Tests (${{ matrix.groups }})
+        run: .github/ci/tests.sh ${{ matrix.groups }}
+      # The workspace's rust-version: every crate, the submodules included,
+      # builds at it. The tests run on stable, which moves.
+      - if: matrix.msrv
+        uses: dtolnay/rust-toolchain@1.99
+      - name: MSRV (1.99) — check every crate and target
+        if: matrix.msrv
+        run: .github/ci/msrv.sh
+      - name: Compile cache hits
+        if: always()
+        run: if command -v ci-cache-stats >/dev/null; then ci-cache-stats; fi
 
   # ---- Intel GPU (QSV) --------------------------------------------------
   # Real hardware: only for trusted refs (pushes, manual dispatches), never
@@ -186,14 +99,16 @@ jobs:
     name: build the QSV binaries for the GPU jobs
     if: github.event_name != 'pull_request'
     runs-on: safewords-runners
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: gpu-build
+      - name: Compile cache
+        run: if command -v ci-cache-setup >/dev/null; then ci-cache-setup; else echo "no compile cache on this runner"; fi
       - name: Build the CLI, the tools and the hardware tests with QSV
         run: |
           cargo build --release -p rivet-transcoder --features qsv --locked \
@@ -214,6 +129,9 @@ jobs:
           PY
           tar -C dist -czf gpu-binaries.tgz .
           ls -l dist dist/tests
+      - name: Compile cache hits
+        if: always()
+        run: if command -v ci-cache-stats >/dev/null; then ci-cache-stats; fi
       - uses: actions/upload-artifact@v4
         with:
           name: gpu-binaries
