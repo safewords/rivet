@@ -568,6 +568,11 @@ enum Command {
         /// Address to bind, e.g. `0.0.0.0:8080`.
         #[arg(long, default_value = "127.0.0.1:8080")]
         addr: String,
+        /// Run at most N jobs at once; the rest wait `queued`, in arrival
+        /// order. Unset (and `RIVET_SERVER_JOBS` unset): no limit, every
+        /// accepted job starts at once.
+        #[arg(long, value_name = "N")]
+        jobs: Option<std::num::NonZeroUsize>,
     },
 }
 
@@ -773,7 +778,7 @@ fn run() -> Result<()> {
             stop_on_error,
         } => commands::batch::run(&manifest, dry_run, stop_on_error),
         #[cfg(feature = "server")]
-        Command::Serve { addr } => commands::serve::run(addr),
+        Command::Serve { addr, jobs } => commands::serve::run(addr, jobs.map(std::num::NonZeroUsize::get)),
     }
 }
 

@@ -12,11 +12,14 @@
 //! The encoders' output does not depend on their thread count, so this
 //! changes only how the cores are shared.
 //!
-//! A process set up to run several jobs at once — `rivet serve` with several
-//! job slots — says so with [`reserve_jobs`]: the share is then reckoned
-//! against at least that many jobs, so the first of N concurrent jobs does
-//! not size its pools to the whole machine before the others arrive (they
-//! would then oversubscribe it until it ended).
+//! The share is recomputed each time a job (or a decode pump) asks for it,
+//! so it follows the jobs as they start and end. `rivet serve` sets no limit
+//! on its jobs by default, and each then gets the machine divided by the
+//! jobs running when it asks. A server the operator limited to N jobs at
+//! once (`rivet serve --jobs N`) says so with [`reserve_jobs`]: the share is
+//! then reckoned against at least N jobs, so the first of N concurrent jobs
+//! does not size its pools to the whole machine before the others arrive
+//! (they would then oversubscribe it until it ended).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -25,8 +28,8 @@ static RUNNING: AtomicUsize = AtomicUsize::new(0);
 static RESERVED: AtomicUsize = AtomicUsize::new(0);
 
 /// Reckon every job's share against at least `jobs` jobs from now on: the
-/// number this process may run at once. Set once, at startup, by the
-/// server.
+/// number this process may run at once (0: no such number; the jobs running
+/// now alone). Set once, at startup, by the server.
 pub fn reserve_jobs(jobs: usize) {
     RESERVED.store(jobs, Ordering::SeqCst);
 }
@@ -80,7 +83,7 @@ mod tests {
 
     #[test]
     fn reserved_jobs_hold_each_share_to_one_nth() {
-        // A server with two slots: one job running alone still gets half.
+        // A server limited to two jobs: one running alone still gets half.
         assert_eq!(share(32, sharing_jobs(1, 2)), 16);
         assert_eq!(share(32, sharing_jobs(2, 2)), 16);
         // More running than reserved (jobs outside the server): those count.
@@ -91,6 +94,22 @@ mod tests {
         // N slots together never ask for more than the machine.
         for slots in 1..=40 {
             assert!(slots * share(32, sharing_jobs(slots, slots)) <= 32.max(slots));
+        }
+    }
+
+    #[test]
+    fn without_a_limit_the_share_follows_the_running_jobs() {
+        // `rivet serve` with no job limit reserves nothing: each job's share
+        // is the machine over the jobs running when it asks, recomputed as
+        // they start and end.
+        let reserved = 0;
+        assert_eq!(share(32, sharing_jobs(1, reserved)), 32, "a job alone has the machine");
+        assert_eq!(share(32, sharing_jobs(4, reserved)), 8, "four at once: a quarter each");
+        assert_eq!(share(32, sharing_jobs(2, reserved)), 16, "two of them ended: half each");
+        assert_eq!(share(32, sharing_jobs(64, reserved)), 1, "never below one");
+        // However many run, those asking together fit the machine.
+        for running in 1..=32 {
+            assert!(running * share(32, sharing_jobs(running, reserved)) <= 32);
         }
     }
 

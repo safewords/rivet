@@ -48,7 +48,7 @@ mod ladder;
 mod single_file;
 
 #[cfg(test)]
-pub(crate) use gpu_policy::host_verdicts;
+pub(crate) use gpu_policy::{cards_for_policy, host_verdicts};
 pub use gpu_policy::{
     CardVerdict, HostCards, SOFTWARE_SLOTS_ENV, SoftwarePoolPlan, detect_gpu_pool, gpu_pool_for_job, gpu_pool_for_policy, gpu_pool_for_serial, gpu_pool_for_serial_job, software_only,
     host_software_pool_plan, policy_gpu_indices, serial_gpu_for_policy, serial_target, software_pool_plan,

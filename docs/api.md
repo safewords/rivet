@@ -47,6 +47,16 @@ locally. An airgapped deployment can vendor the JS.)
   allowed (the server binds localhost by default — treat it as trusted-local).
 - The output spec — JSON `spec`, query params, the CLI flags, and the IPC
   `key=value` header — are all the same canonical knob set, so they map 1:1.
+- **Concurrency.** By default the server starts every job it accepts at
+  once: there is no limit. Limiting is the operator's choice:
+  `rivet serve --jobs N` (or `RIVET_SERVER_JOBS=N`; the flag wins) runs at
+  most `N` at once, and a job accepted while `N` run stays `queued` until one
+  ends, in arrival order. Either way each job may use every GPU encoder and
+  decoder its `encode` plan selects (all of them by default) — the limit
+  counts jobs, it does not give each job a card. The CPU is shared so the
+  jobs do not oversubscribe it: a job's software encoders, decoders and
+  thread pools get the machine divided by the jobs running when it starts
+  them (by `N`, when a limit is set and that is more).
 
 ---
 
@@ -240,10 +250,11 @@ was written to `output.path`, which `output_path` then names. `renditions` has
 one entry per requested rung, in request order: the box asked for, the size
 produced, and the rung it merged into when it came out the same as another.
 
-`status` is `queued` → `running` → `completed` | `failed` | `rejected`. A job
-stays `queued` while the server's job slots are taken (one per usable
-hardware encode device by default, at least one; `RIVET_SERVER_JOBS` sets
-it); a `?sync=true` request waits the same way. On
+`status` is `queued` → `running` → `completed` | `failed` | `rejected`. With
+no job limit (the default) a job is `queued` only until it starts, at once.
+When the operator set one (`rivet serve --jobs N` or `RIVET_SERVER_JOBS`), a
+job stays `queued` while `N` others run, and starts in arrival order; a
+`?sync=true` request waits the same way. On
 failure, `error` carries the message (e.g. "no AV1 encoder available on this
 host"). `rejected` means a [hook](hooks.md) stopped the job. `error` names the
 hook, the stage and the reason, and a `?sync=true` request gets `422`.
