@@ -52,12 +52,6 @@ use std::ptr;
 
 use super::tuning::{self, QsvRateControl};
 use super::{AUTO_FROM_TARGET, EncodedPacket, Encoder, EncoderConfig};
-// `ColorMetadata` is read via `config.color_metadata` on the non-test
-// side (no bare-type mention) and through `use super::*` inside the
-// test module; pull it in only under cfg(test) to keep release builds
-// warning-clean.
-#[cfg(test)]
-use crate::frame::ColorMetadata;
 use crate::frame::{PixelFormat, VideoFrame};
 // Shared mfx struct layouts live in one place (`qsv_ffi`) so encode + decode
 // can't drift apart on layout again.

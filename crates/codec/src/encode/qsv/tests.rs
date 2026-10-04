@@ -11,7 +11,7 @@ use super::surface::*;                             // RING_SIZE
 use super::align_up;
 use crate::encode::tuning::{self, QualityTarget, QsvRateControl, SpeedTier};
 use crate::frame::{ColorMetadata, PixelFormat, TransferFn};
-use crate::qsv_ffi::{MfxExtBuffer, MfxFrameInfo, MfxInfoMfx};
+use crate::qsv_ffi::{MfxExtBuffer, MfxFrameInfo};
 
 /// ICQQuality must land in `qpp_or_kbps_or_icq` (slot 1 of the
 /// `mfxInfoMFX` rate-control union) per vendor/intel/mfxstructs.h:83.
