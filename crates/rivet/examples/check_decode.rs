@@ -66,19 +66,25 @@ fn canonical_codec(codec: &str) -> String {
 /// Every frame of `path`, decoded in software, with the codec it carried.
 fn decode_all(path: &Path) -> Result<(String, Vec<VideoFrame>)> {
     let bytes = read_output(path)?;
-    let demuxed = rivet::container::demux::demux(&bytes).with_context(|| format!("demuxing {}", path.display()))?;
-    let codec = canonical_codec(&demuxed.codec);
+    // The streaming demuxer: the reader the pipeline itself uses, and the one
+    // that walks fragmented MP4 (`moof` / `trun`), which HLS segments are.
+    let mut demuxer = rivet::container::streaming::demux_streaming(&bytes)
+        .with_context(|| format!("demuxing {}", path.display()))?;
+    let header = demuxer.header().clone();
+    let codec = canonical_codec(&header.codec);
     let mut decoder: Box<dyn Decoder> = match codec.as_str() {
-        "h264" | "h265" => Box::new(H26xDecoder::new(demuxed.info.clone())?),
-        "av1" => Box::new(Av1Decoder::new(demuxed.info.clone())?),
-        "vp9" => Box::new(Vp9Decoder::new(demuxed.info.clone())?),
+        "h264" | "h265" => Box::new(H26xDecoder::new(header.info.clone())?),
+        "av1" => Box::new(Av1Decoder::new(header.info.clone())?),
+        "vp9" => Box::new(Vp9Decoder::new(header.info.clone())?),
         other => bail!("{}: no software decoder here for '{other}'", path.display()),
     };
     let mut frames = Vec::new();
-    for (i, sample) in demuxed.samples.iter().enumerate() {
+    let mut packets = 0usize;
+    while let Some(sample) = demuxer.next_video_sample()? {
         decoder
-            .push_sample(sample)
-            .with_context(|| format!("{}: packet {i} of {}", path.display(), demuxed.samples.len()))?;
+            .push_sample(&sample.data)
+            .with_context(|| format!("{}: packet {packets}", path.display()))?;
+        packets += 1;
         while let Some(f) = decoder.decode_next()? {
             frames.push(f);
         }
@@ -87,7 +93,7 @@ fn decode_all(path: &Path) -> Result<(String, Vec<VideoFrame>)> {
     while let Some(f) = decoder.decode_next()? {
         frames.push(f);
     }
-    ensure!(!frames.is_empty(), "{}: no frame decoded from {} packets", path.display(), demuxed.samples.len());
+    ensure!(!frames.is_empty(), "{}: no frame decoded from {packets} packets", path.display());
     Ok((codec, frames))
 }
 

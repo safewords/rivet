@@ -9,7 +9,7 @@ on:
 
 # Pushes and pull requests from branches in this repository run on the
 # project's self-hosted runners (`rivet-linux`, and `rivet-intel-gpu` for the
-# hardware job). Pull requests from forks always run on GitHub-hosted
+# hardware job, which holds every Intel card of the host it lands on). Pull requests from forks always run on GitHub-hosted
 # runners: self-hosted machines never execute unreviewed outside code.
 
 env:
@@ -168,6 +168,9 @@ jobs:
     # Real hardware: only for trusted refs, never for pull requests.
     if: github.event_name != 'pull_request'
     runs-on: rivet-intel-gpu
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -241,58 +244,50 @@ jobs:
             grep BANDWIDTH "cbr-$codec/master.m3u8"
           done
 
-  intel-gpu-x2:
-    name: encode across two Intel Arc cards (QSV)
-    # Real hardware: only for trusted refs, never for pull requests. The
-    # runner holds both of the GPU node's cards (an Arc A380 and an Arc A750),
-    # so it waits while a `rivet-intel-gpu` runner holds one of them.
-    if: github.event_name != 'pull_request'
-    runs-on: rivet-intel-gpu-x2
-    env:
-      NO_COLOR: "1"
-      RIVET: ./target/release/rivet
-      CHECK: ./target/release/examples/check_decode
-      USAGE: python3 .github/scripts/drm_usage.py
-      ASSERT: python3 .github/scripts/multi_gpu_check.py
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # ---- Every card on this host --------------------------------------
+      # The runner holds all of its node's Intel cards (devbox: an Arc A380
+      # and an Arc A750; vulpes-zerda: an Arc A310). Everything below reads
+      # the count from `rivet devices --json` and runs on all of them; the
+      # multi-card checks say "skipped" on a one-card host. drm_usage.py
+      # records, from the i915 driver's per-client engine time, which cards
+      # a command really used; check_decode reads every output back through
+      # rivet's own software decoders.
 
-      - name: Build the CLI with QSV, and the source and checking tools
-        # Release: this job times encodes against each other, and the
-        # software decoders that check every output are slow in debug.
+      - name: Build the release CLI, the source maker and the decode checker
         run: >-
           cargo build --release -p rivet-transcoder --features qsv --locked
           --bin rivet --example synth_clip --example check_decode
 
-      - name: Both cards are visible, and rivet sees them as two Intel GPUs
+      - name: Count the cards
+        id: cards
+        env:
+          NO_COLOR: "1"
         run: |
           ls -l /dev/dri
           for b in /sys/bus/pci/devices/*; do
             case "$(cat "$b/class")" in 0x03*) echo "$(basename "$b") vendor=$(cat "$b/vendor") device=$(cat "$b/device") subsystem=$(cat "$b/subsystem_vendor"):$(cat "$b/subsystem_device")";; esac
           done
-          $RIVET devices
-          $RIVET devices --json > devices.json
-          $ASSERT devices devices.json cards.json
-
-      - name: Sources
-        # Made by rivet's own H.264 encoder: a 720p clip for the per-card
-        # encodes, and a longer, noisier 1080p one for the ladder timings.
-        run: |
+          ./target/release/rivet devices
+          ./target/release/rivet devices --json > devices.json
+          python3 .github/scripts/multi_gpu_check.py devices devices.json cards.json | tee -a "$GITHUB_OUTPUT"
+          grep '^gpu ' <(python3 .github/scripts/multi_gpu_check.py devices devices.json cards.json) >> "$GITHUB_STEP_SUMMARY"
           ./target/release/examples/synth_clip src720.mp4 --size 1280x720 --fps 30 --seconds 10
           ./target/release/examples/synth_clip src1080.mp4 --size 1920x1080 --fps 30 --seconds 30 --noise 6 --bitrate 20000000
 
       - name: Each card, pinned, encodes AV1, H.264, H.265 and VP9
         # `--encode gpu:N --decode gpu:N`: the whole job on card N. The
-        # kernel's per-client engine time (drm_usage.py) must show card N's
-        # video engines busy and the other card untouched; every output must
-        # decode in rivet's own software decoders, frame for frame, close to
-        # the source.
+        # kernel must see card N's video engines busy and no other card
+        # touched; every output must decode, frame for frame, close to the
+        # source.
+        env: &all-cards
+          NO_COLOR: "1"
+          CARDS: ${{ steps.cards.outputs.cards }}
+          RIVET: ./target/release/rivet
+          CHECK: ./target/release/examples/check_decode
+          USAGE: python3 .github/scripts/drm_usage.py
+          ASSERT: python3 .github/scripts/multi_gpu_check.py
         run: |
-          for gpu in 0 1; do
+          for gpu in $(python3 -c "import json; print(' '.join(sorted(json.load(open('cards.json')), key=int)))"); do
             for codec in av1 h264 h265 vp9; do
               ext=mp4; [ "$codec" = vp9 ] && ext=webm
               out="pin-$codec-gpu$gpu.$ext"
@@ -304,107 +299,115 @@ jobs:
             done
           done
 
-      - name: A ladder spreads across both cards
-        # The same three-rung AV1 HLS ladder on card 0, on card 1, and on
-        # both (`--encode family:intel`, the default decode plan). On both,
-        # rivet's ladder workers must report chunks done on each card and the
-        # kernel must see both cards' video engines busy. Every rendition
-        # decodes in software, the full-size one close to the source.
+      - name: A ladder spreads across every card
+        # The same three-rung AV1 HLS ladder on each card alone and on all of
+        # them (`--encode family:intel`, the default decode plan). On all,
+        # the ladder workers must log chunks done on every card and the
+        # kernel must see every card's video engines busy. Every rendition
+        # decodes, the full-size one close to the source.
         #
-        # The times are printed, not asserted: on this host the two cards are
-        # far apart (the A380 sits on a PCIe 3.0 x2 chipset link, the A750 on
-        # the CPU's 4.0 x16, so the A380 is two to three times slower on
-        # 1080p), and the default decode plan splits the source evenly across
-        # them, so the A380's half of the decode gates the job.
+        # The times are printed, not asserted: devbox's two cards are far
+        # apart (the A380 is on a PCIe 3.0 x2 chipset link, the A750 on the
+        # CPU's 4.0 x16, so the A380 is 2-3.5x slower at 1080p), and the
+        # default decode plan splits the source evenly across the cards, so
+        # the slow card's share of the decode gates the job.
+        env: *all-cards
         run: |
+          if [ "$CARDS" -lt 2 ]; then echo "skipped: $CARDS card on this host" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
           ladder="--mode hls --codec av1 --rung 1920x1080 --rung 1280x720 --rung 854x480"
-          for plan in gpu:0 gpu:1 family:intel; do
+          plans="$(python3 -c "import json; print(' '.join('gpu:'+i for i in sorted(json.load(open('cards.json')), key=int)))") family:intel"
+          for plan in $plans; do
             tag="${plan/:/-}"
-            $USAGE "usage-ladder-$tag.json" -- $RIVET transcode src1080.mp4 -o "ladder-$tag" $ladder --encode "$plan"               2> "ladder-$tag.log" || { tail -50 "ladder-$tag.log"; exit 1; }
-          done
-          $ASSERT pinned usage-ladder-gpu-0.json cards.json 0
-          $ASSERT pinned usage-ladder-gpu-1.json cards.json 1
-          $ASSERT both usage-ladder-family-intel.json cards.json
-          $ASSERT chunks ladder-family-intel.log
-          wall() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['wall_s'])" "$1"; }
-          echo "ladder wall time: card 0 $(wall usage-ladder-gpu-0.json)s, card 1 $(wall usage-ladder-gpu-1.json)s, both $(wall usage-ladder-family-intel.json)s"
-          for tag in gpu-0 gpu-1 family-intel; do
+            $USAGE "usage-ladder-$tag.json" -- $RIVET transcode src1080.mp4 -o "ladder-$tag" $ladder --encode "$plan" \
+              2> "ladder-$tag.log" || { tail -50 "ladder-$tag.log"; exit 1; }
+            case "$plan" in gpu:*) $ASSERT pinned "usage-ladder-$tag.json" cards.json "${plan#gpu:}";; esac
+            echo "ladder on $plan: $(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['wall_s'])" "usage-ladder-$tag.json")s" | tee -a "$GITHUB_STEP_SUMMARY"
             for p in $(find "ladder-$tag/video" -name '*.m3u8' | sort); do
               $CHECK "$p" --codec av1 --frames 900
             done
           done
+          $ASSERT all usage-ladder-family-intel.json cards.json
+          $ASSERT chunks ladder-family-intel.log cards.json
           full=$(awk '/RESOLUTION=1920x1080/{getline; print; exit}' ladder-family-intel/master.m3u8)
           test -n "$full"
           $CHECK "ladder-family-intel/$full" --ref src1080.mp4 --codec av1 --frames 900 --size 1920x1080 --min-psnr 30
 
-      - name: When the encode is the bottleneck, two cards beat the faster one alone
+      - name: When the encode is the bottleneck, all the cards beat the fastest one alone
         # The scheduler's claim, measured where it applies: the encoders at
-        # `--video-speed archive` and the decode on the faster card, so the
-        # encode is the limit. The ladder on both cards must take at most
-        # 0.85x the time of the faster card alone (measured: about 0.7x).
+        # `--video-speed archive` and the decode on the fastest card, so the
+        # encode is the limit. The ladder on every card must take at most
+        # 0.85x the fastest card's time alone (devbox: about 0.7x).
+        env: *all-cards
         run: |
+          if [ "$CARDS" -lt 2 ]; then echo "skipped: $CARDS card on this host" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
           wall() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['wall_s'])" "$1"; }
-          fast=$(python3 -c "print(0 if $(wall usage-ladder-gpu-0.json) < $(wall usage-ladder-gpu-1.json) else 1)")
-          echo "the faster card is $fast"
+          fast=$(python3 -c "import json; c=json.load(open('cards.json')); print(min(c, key=lambda i: json.load(open(f'usage-ladder-gpu-{i}.json'))['wall_s']))")
+          echo "the fastest card is $fast"
           for codec in av1 h265; do
             ladder="--mode hls --codec $codec --rung 1920x1080 --rung 1280x720 --rung 854x480 --video-speed archive --decode gpu:$fast"
             for plan in "gpu:$fast" family:intel; do
               tag="$codec-${plan/:/-}"
-              $USAGE "usage-busy-$tag.json" -- $RIVET transcode src1080.mp4 -o "busy-$tag" $ladder --encode "$plan"                 2> "busy-$tag.log" || { tail -50 "busy-$tag.log"; exit 1; }
+              $USAGE "usage-busy-$tag.json" -- $RIVET transcode src1080.mp4 -o "busy-$tag" $ladder --encode "$plan" \
+                2> "busy-$tag.log" || { tail -50 "busy-$tag.log"; exit 1; }
             done
             $ASSERT pinned "usage-busy-$codec-gpu-$fast.json" cards.json "$fast"
-            $ASSERT both "usage-busy-$codec-family-intel.json" cards.json
-            $ASSERT chunks "busy-$codec-family-intel.log"
-            $ASSERT faster "$codec archive ladder on both cards vs card $fast alone"               "$(wall "usage-busy-$codec-family-intel.json")" "$(wall "usage-busy-$codec-gpu-$fast.json")" 0.85
+            $ASSERT all "usage-busy-$codec-family-intel.json" cards.json
+            $ASSERT chunks "busy-$codec-family-intel.log" cards.json
+            $ASSERT faster "$codec archive ladder on all cards vs card $fast alone" \
+              "$(wall "usage-busy-$codec-family-intel.json")" "$(wall "usage-busy-$codec-gpu-$fast.json")" 0.85 | tee -a "$GITHUB_STEP_SUMMARY"
             for p in $(find "busy-$codec-family-intel/video" -name '*.m3u8' | sort); do
               $CHECK "$p" --codec "$codec" --frames 900
             done
           done
 
-      - name: Single-file ladders stitched from both cards' chunks
-        # Single-file output on two cards is chunk-and-stitch: each rung's MP4
-        # is GOP-sized chunks from both cards, joined in order. Every frame
-        # must decode, for each codec.
+      - name: Single-file ladders stitched from every card's chunks
+        # Single-file output on several cards is chunk-and-stitch: each
+        # rung's MP4 is GOP-sized chunks from all the cards, joined in order.
+        # Every frame must decode, for each codec.
+        env: *all-cards
         run: |
+          if [ "$CARDS" -lt 2 ]; then echo "skipped: $CARDS card on this host" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
           for codec in av1 h264 h265; do
             $USAGE "usage-stitch-$codec.json" -- $RIVET transcode src1080.mp4 -o "stitch-$codec" --codec "$codec" \
               --rung 1920x1080 --rung 1280x720 --encode family:intel 2> "stitch-$codec.log" \
               || { tail -50 "stitch-$codec.log"; exit 1; }
-            $ASSERT both "usage-stitch-$codec.json" cards.json
-            $ASSERT chunks "stitch-$codec.log"
+            $ASSERT all "usage-stitch-$codec.json" cards.json
+            $ASSERT chunks "stitch-$codec.log" cards.json
             ls -l "stitch-$codec"
             test "$(ls "stitch-$codec"/*.mp4 | wc -l)" = 2
             for f in "stitch-$codec"/*.mp4; do $CHECK "$f" --codec "$codec" --frames 900; done
           done
 
-      - name: Two jobs at once, one per card
-        # Two independent jobs, pinned to different cards, run side by side:
-        # each must stay on its own card, both outputs must decode, and
-        # neither may be slowed by the other (each at most 1.15x its time
-        # alone): the cards are independent.
+      - name: One job per card, all at once
+        # Independent jobs, each pinned to its own card, run side by side:
+        # each must stay on its card, every output must decode, and none may
+        # be slowed by the others (at most 1.15x its time alone): the cards
+        # are independent.
+        env: *all-cards
         run: |
-          job() { $USAGE "usage-$2.json" -- $RIVET transcode src1080.mp4 -o "$2.mp4" --codec h265 --rung 1920x1080                     --encode "gpu:$1" --decode "gpu:$1" 2> "$2.log"; }
-          job 0 alone-0 || { tail -50 alone-0.log; exit 1; }
-          job 1 alone-1 || { tail -50 alone-1.log; exit 1; }
-          job 0 together-0 & a=$!
-          job 1 together-1 & b=$!
-          wait $a || { tail -50 together-0.log; exit 1; }
-          wait $b || { tail -50 together-1.log; exit 1; }
-          for t in alone-0 together-0; do $ASSERT pinned "usage-$t.json" cards.json 0; done
-          for t in alone-1 together-1; do $ASSERT pinned "usage-$t.json" cards.json 1; done
-          for t in alone-0 alone-1 together-0 together-1; do
-            $CHECK "$t.mp4" --ref src1080.mp4 --codec h265 --frames 900 --size 1920x1080 --min-psnr 30
-          done
+          if [ "$CARDS" -lt 2 ]; then echo "skipped: $CARDS card on this host" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          gpus=$(python3 -c "import json; print(' '.join(sorted(json.load(open('cards.json')), key=int)))")
+          job() { $USAGE "usage-$2.json" -- $RIVET transcode src1080.mp4 -o "$2.mp4" --codec h265 --rung 1920x1080 \
+                    --encode "gpu:$1" --decode "gpu:$1" 2> "$2.log"; }
+          for n in $gpus; do job "$n" "alone-$n" || { tail -50 "alone-$n.log"; exit 1; }; done
+          pids=""
+          for n in $gpus; do job "$n" "together-$n" & pids="$pids $!"; done
+          for pid in $pids; do wait "$pid" || { tail -50 together-*.log; exit 1; }; done
           wall() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['wall_s'])" "$1"; }
-          for n in 0 1; do
-            $ASSERT faster "card $n alongside the other vs alone" "$(wall usage-together-$n.json)" "$(wall usage-alone-$n.json)" 1.15
+          for n in $gpus; do
+            $ASSERT pinned "usage-alone-$n.json" cards.json "$n"
+            $ASSERT pinned "usage-together-$n.json" cards.json "$n"
+            for t in "alone-$n" "together-$n"; do
+              $CHECK "$t.mp4" --ref src1080.mp4 --codec h265 --frames 900 --size 1920x1080 --min-psnr 30
+            done
+            $ASSERT faster "card $n alongside the others vs alone" "$(wall "usage-together-$n.json")" "$(wall "usage-alone-$n.json")" 1.15 | tee -a "$GITHUB_STEP_SUMMARY"
           done
 
       - name: Keep the logs and the engine-time records
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: intel-gpu-x2-logs
+          name: intel-gpu-logs
           path: |
             *.log
             usage-*.json

@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""Assertions for the two-card Intel GPU job (ci.yml, `intel-gpu-x2`).
+"""Assertions for the Intel GPU job's all-cards steps (ci.yml, `intel-gpu`).
+The runner holds every card of its host, however many that is.
 
     multi_gpu_check.py devices DEVICES.json CARDS.json
-        `rivet devices --json` lists exactly two Intel cards, at different PCI
-        addresses; writes {"0": "<pci>", "1": "<pci>"} (rivet's index to the
-        card) to CARDS.json.
+        `rivet devices --json` lists at least one Intel card, every one at its
+        own PCI address and able to encode AV1, H.264 and H.265; writes
+        {"<index>": "<pci>", ...} (rivet's index to the card) to CARDS.json
+        and prints the count as `cards=N` (for $GITHUB_OUTPUT).
     multi_gpu_check.py pinned USAGE.json CARDS.json N
         drm_usage.py saw the video engines of card N busy, and nothing at all
-        on the other card: a job pinned to N ran on N.
-    multi_gpu_check.py both USAGE.json CARDS.json
-        drm_usage.py saw the video engines of both cards busy.
-    multi_gpu_check.py chunks LOG
-        rivet's log: the ladder workers' `rung chunk done` lines name both
-        cards (gpu_index 0 and 1).
+        on any other card: a job pinned to N ran on N.
+    multi_gpu_check.py all USAGE.json CARDS.json
+        drm_usage.py saw the video engines of every card busy.
+    multi_gpu_check.py chunks LOG CARDS.json
+        rivet's log: the ladder workers' `rung chunk done` lines name every
+        card.
     multi_gpu_check.py faster LABEL SECONDS BASELINE_SECONDS MAX_RATIO
         SECONDS <= BASELINE_SECONDS * MAX_RATIO.
 """
@@ -46,31 +48,32 @@ def devices(devices_json, cards_json):
     intel = [g for g in gpus if g.get("vendor", "").lower() == "intel"]
     for g in intel:
         print(f"gpu {g['index']}: {g['name']} ({g.get('generation')}), {g.get('vram_mib')} MiB, PCI {g['pci']}, encode {g.get('encode')}")
-    if len(intel) != 2:
-        fail(f"expected 2 Intel cards, rivet sees {len(intel)}: {gpus}")
+    if not intel:
+        fail(f"rivet sees no Intel card: {gpus}")
     addrs = {pci(g["pci"]) for g in intel}
-    if len(addrs) != 2:
-        fail(f"the two cards share a PCI address: {addrs}")
+    if len(addrs) != len(intel):
+        fail(f"cards share a PCI address: {[g['pci'] for g in intel]}")
     for g in intel:
         if not all(g.get("encode", {}).get(c) for c in ("av1", "h264", "h265")):
             fail(f"gpu {g['index']} cannot encode all of AV1, H.264, H.265: {g.get('encode')}")
     with open(cards_json, "w") as f:
         json.dump({str(g["index"]): pci(g["pci"]) for g in intel}, f)
+    print(f"cards={len(intel)}")
 
 
 def pinned(usage_json, cards_json, n):
     usage, cards = load(usage_json), load(cards_json)
     seen = {pci(k): v for k, v in usage["cards"].items()}
     mine = cards[n]
-    other = next(addr for idx, addr in cards.items() if idx != n)
     if video_ns(seen.get(mine, {})) <= 0:
         fail(f"{usage['cmd']}: card {n} ({mine}) did no video work; the kernel saw {seen}")
-    if any(ns > 0 for ns in seen.get(other, {}).values()):
-        fail(f"{usage['cmd']}: pinned to card {n}, but the other card ({other}) was used: {seen[other]}")
+    for idx, other in cards.items():
+        if idx != n and any(ns > 0 for ns in seen.get(other, {}).values()):
+            fail(f"{usage['cmd']}: pinned to card {n}, but card {idx} ({other}) was used: {seen[other]}")
     print(f"card {n} ({mine}) only: video {video_ns(seen[mine]) / 1e9:.2f}s in {usage['wall_s']}s")
 
 
-def both(usage_json, cards_json):
+def every(usage_json, cards_json):
     usage, cards = load(usage_json), load(cards_json)
     seen = {pci(k): v for k, v in usage["cards"].items()}
     for idx, addr in sorted(cards.items()):
@@ -80,7 +83,7 @@ def both(usage_json, cards_json):
             fail(f"{usage['cmd']}: card {idx} ({addr}) did no video work; the kernel saw {seen}")
 
 
-def chunks(log):
+def chunks(log, cards_json):
     ansi = re.compile(r"\x1b\[[0-9;]*m")
     counts = {}
     with open(log, errors="replace") as f:
@@ -92,8 +95,9 @@ def chunks(log):
             key = m.group(1) if m else "none"
             counts[key] = counts.get(key, 0) + 1
     print(f"chunks per card: {counts}")
-    if not ("0" in counts and "1" in counts):
-        fail(f"{log}: the ladder's chunks did not land on both cards: {counts}")
+    missing = [idx for idx in sorted(load(cards_json)) if idx not in counts]
+    if missing:
+        fail(f"{log}: no chunk was encoded on card(s) {missing}: {counts}")
 
 
 def faster(label, seconds, baseline, ratio):
@@ -103,7 +107,7 @@ def faster(label, seconds, baseline, ratio):
         fail(f"{label}: {seconds:.1f}s is not under {ratio} x {baseline:.1f}s")
 
 
-COMMANDS = {"devices": devices, "pinned": pinned, "both": both, "chunks": chunks, "faster": faster}
+COMMANDS = {"devices": devices, "pinned": pinned, "all": every, "chunks": chunks, "faster": faster}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
