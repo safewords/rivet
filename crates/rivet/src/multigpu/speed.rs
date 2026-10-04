@@ -251,13 +251,20 @@ impl SpeedBoard {
     ) -> bool {
         let units = units.max(1e-9);
         let my_finish = now + units / self.rate(d);
+        // Until some device has been timed, rates are relative weights, not
+        // work per second, and cannot be set against the clock: a unit in
+        // hand then counts as all still to do.
+        let timed = self.devices.iter().any(|o| o.rate.or(o.prior.measured).is_some());
         let mut free_at: Vec<(f64, f64)> = Vec::new();
         for (o, dev) in self.devices.iter().enumerate() {
             if o == d || !dev.alive || !eligible(o) {
                 continue;
             }
             let rate = self.rate(o);
-            let in_hand = dev.busy.map_or(0.0, |(start, u)| (start + u / rate - now).max(0.0));
+            let in_hand = dev.busy.map_or(0.0, |(start, u)| {
+                let elapsed = if timed { now - start } else { 0.0 };
+                (u / rate - elapsed).max(0.0)
+            });
             free_at.push((now + in_hand, rate));
         }
         if free_at.is_empty() {
@@ -551,6 +558,21 @@ mod tests {
         // or has stopped asking.
         board.retire(1);
         assert!(board.should_take(0, 1.0, 1.0, 0.0, |_| true));
+    }
+
+    /// Before anything is timed, rates are weights: a unit in hand counts in
+    /// full however long ago it started, rather than being measured against
+    /// the clock in units it is not in.
+    #[test]
+    fn untimed_weights_are_not_set_against_the_clock() {
+        let mut board = SpeedBoard::new(priors(&[0.43, 1.0]));
+        board.start(1, 2.0, 0.0);
+        // The fast card has two units in hand; one more after them would
+        // finish at 3, the slow card's at 1/0.43 = 2.3: worth taking.
+        assert!(board.should_take(0, 1.0, 1.0, 5.0, |_| true));
+        // With only half a unit in hand, it is not.
+        board.start(1, 0.5, 0.0);
+        assert!(!board.should_take(0, 1.0, 1.0, 5.0, |_| true));
     }
 
     /// The fast device busy for a long while yet makes the slow one worth

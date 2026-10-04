@@ -54,6 +54,10 @@ def run(rivet, args, log):
         return wall
 
 
+def fmt(t):
+    return "failed" if t != t else f"{t:.2f} s"
+
+
 def best_of(rivet, args, log, repeat):
     return min(run(rivet, args, log) for _ in range(repeat))
 
@@ -87,14 +91,22 @@ def main():
         for plan, plan_args in plans:
             for build, binary in builds:
                 tag = f"{job}-{plan}-{build}".replace(" ", "-").replace(",", "")
-                times[(job, plan, build)] = best_of(binary, job_args + plan_args, f"timing-{tag}.log", a.repeat)
+                try:
+                    times[(job, plan, build)] = best_of(binary, job_args + plan_args, f"timing-{tag}.log", a.repeat)
+                except SystemExit as e:
+                    # The "before" build is only a comparison: its failure is
+                    # reported, not fatal.
+                    if build != "before":
+                        raise
+                    print(f"before build failed: {e}")
+                    times[(job, plan, build)] = float("nan")
                 print(f"{job:6} {plan:26} {build:6} {times[(job, plan, build)]:6.2f} s", flush=True)
 
     head = "| job | plan | " + " | ".join(b for b, _ in builds) + " |"
     lines = [head, "|" + "---|" * (2 + len(builds))]
     for job, _ in jobs:
         for plan, _ in plans:
-            lines.append(f"| {job} | {plan} | " + " | ".join(f"{times[(job, plan, b)]:.2f} s" for b, _ in builds) + " |")
+            lines.append(f"| {job} | {plan} | " + " | ".join(fmt(times[(job, plan, b)]) for b, _ in builds) + " |")
     table = "\n".join(lines)
     print(table)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
