@@ -182,13 +182,18 @@ jobs:
 
   # ---- Intel GPU (QSV) --------------------------------------------------
   # Real hardware: only for trusted refs (pushes, manual dispatches), never
-  # for pull requests. A `rivet-intel-gpu` runner holds EVERY Intel card of
-  # the GPU node it lands on (devbox: an Arc A380 and an Arc A750;
-  # vulpes-zerda: an Arc A310), one runner per node, so the GPU jobs below
-  # spread over the GPU nodes and each one reads its host's card count from
-  # `rivet devices --json`. Multi-card checks say "skipped" on a one-card
-  # host. Timing assertions live only in gpu-scheduling; with one runner per
-  # node nothing else of ours shares the cards while it runs.
+  # for pull requests. Every card runs one job at a time: a runner holds its
+  # cards exclusively (the device plugin's gpu.intel.com/i915; see the
+  # safewords/runners README). Three Arc cards on two machines (devbox: an
+  # A380 and an A750; vulpes-zerda: an A310):
+  # - `rivet-intel-gpu` runners hold one card each, up to three at once, so
+  #   the per-codec jobs run three at a time, one per card, on whichever
+  #   machines the autoscaler powers on for them;
+  # - `rivet-intel-gpu-x2` holds both of devbox's cards for gpu-scheduling,
+  #   which runs after the per-codec jobs (so the cards are free) and one at
+  #   a time. Its timing assertions are the only ones in the GPU jobs.
+  # Each job reads its card count from `rivet devices --json`; the
+  # multi-card checks say "skipped" when a job holds one card.
   #
   # The binaries are built once, on a CPU runner (same base image as the GPU
   # runners, so the same glibc; the Intel runtime is dlopened at run time),
@@ -248,20 +253,22 @@ jobs:
           for b in /sys/bus/pci/devices/*; do
             case "$(cat "$b/class")" in 0x03*) echo "$(basename "$b") vendor=$(cat "$b/vendor") device=$(cat "$b/device") subsystem=$(cat "$b/subsystem_vendor"):$(cat "$b/subsystem_device")";; esac
           done
-          # The cards rivet must see: every Intel display device on the PCI bus.
-          want=$(for b in /sys/bus/pci/devices/*; do case "$(cat "$b/class") $(cat "$b/vendor")" in "0x03"*" 0x8086") echo x;; esac; done | wc -l)
+          # The cards rivet must see: the ones this runner holds, whose render
+          # nodes are in /dev/dri (sysfs lists the host's other cards too).
+          want=$(ls /dev/dri | grep -c '^renderD')
           bin/rivet devices
           bin/rivet devices --json > devices.json
           python3 .github/scripts/multi_gpu_check.py devices devices.json cards.json | tee cards.txt
-          grep -q "^cards=$want\$" cards.txt || { echo "rivet sees $(grep cards= cards.txt), the PCI bus has $want Intel display devices"; exit 1; }
-          { echo "Host $(hostname): $want Intel card(s)"; grep '^gpu ' cards.txt; } >> "$GITHUB_STEP_SUMMARY"
+          grep -q "^cards=$want\$" cards.txt || { echo "rivet sees $(grep cards= cards.txt), /dev/dri has $want render node(s)"; exit 1; }
+          { echo "Runner $(hostname): $want Intel card(s)"; grep '^gpu ' cards.txt; } >> "$GITHUB_STEP_SUMMARY"
 
   gpu-codec:
-    # One job per codec, so they run in parallel across the GPU nodes and a
-    # failure names its codec. QSV wires AV1, H.264, H.265 and VP9, encode
-    # and decode, and nothing else (qsv_dec / encode::qsv); MPEG-2, VP8,
-    # MPEG-4 Part 2, ProRes and JPEG are software-only in rivet.
-    name: ${{ matrix.codec }} on every Intel card (QSV)
+    # One job per codec, each on its own card (up to three at once across
+    # the GPU machines), so a failure names its codec. QSV wires AV1, H.264,
+    # H.265 and VP9, encode and decode, and nothing else (qsv_dec /
+    # encode::qsv); MPEG-2, VP8, MPEG-4 Part 2, ProRes and JPEG are
+    # software-only in rivet.
+    name: ${{ matrix.codec }} on an Intel card (QSV)
     needs: gpu-build
     runs-on: rivet-intel-gpu
     strategy:
@@ -293,7 +300,10 @@ jobs:
           $ASSERT devices devices.json cards.json | tee devices.txt
           grep '^cards=' devices.txt >> "$GITHUB_OUTPUT"
           echo "gpus=$(python3 -c "import json; print(' '.join(sorted(json.load(open('cards.json')), key=int)))")" >> "$GITHUB_OUTPUT"
-          echo "$CODEC on $(hostname): $(grep -c . <<<"$(python3 -c "import json; print('\n'.join(json.load(open('cards.json'))))")") card(s)" >> "$GITHUB_STEP_SUMMARY"
+          # The card this job holds, by PCI address, with when it started:
+          # the record that no two jobs ran on one card at once.
+          grep '^gpu ' devices.txt | sed "s/^/$CODEC holds /" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$CODEC: started $(date -u +%FT%TZ) on runner $(hostname)" | tee -a "$GITHUB_STEP_SUMMARY"
           # A clean 720p clip, a noisy 720p clip (wants more than any rate
           # we hold it to), and a noisy 1080p clip for the ladders. Made by
           # rivet's own H.264 encoder.
@@ -415,9 +425,22 @@ jobs:
     # the encode-bound case timed, and one job per card at once. The only
     # GPU job with timing assertions. Every per-card time is written to the
     # step summary and to scheduling.json (in the logs artifact).
-    name: multi-GPU scheduling (every Intel card of a host)
-    needs: gpu-build
-    runs-on: rivet-intel-gpu
+    name: multi-GPU scheduling (both of devbox's Intel cards)
+    # Its runner needs both of devbox's cards free at once, so it runs after
+    # this run's per-codec jobs have let go of them (whatever they concluded:
+    # a codec failure must not hide the scheduling results), and one at a
+    # time across runs. The group is on this job, not the workflow: a
+    # workflow-level group would also queue every run's per-codec jobs behind
+    # the previous run, and GitHub cancels a queued member that a newer one
+    # replaces, so a burst of pushes would lose whole runs instead of only
+    # their scheduling job. A one-card job from another run can still hold a
+    # devbox card for a while; the pod then waits for it.
+    needs: [gpu-build, gpu-devices, gpu-codec]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.gpu-build.result == 'success' }}
+    concurrency:
+      group: rivet-intel-gpu-x2
+      cancel-in-progress: false
+    runs-on: rivet-intel-gpu-x2
     env:
       NO_COLOR: "1"
       RIVET: bin/rivet
@@ -440,6 +463,10 @@ jobs:
           $ASSERT devices devices.json cards.json | tee devices.txt
           grep '^cards=' devices.txt >> "$GITHUB_OUTPUT"
           echo "gpus=$(python3 -c "import json; print(' '.join(sorted(json.load(open('cards.json')), key=int)))")" >> "$GITHUB_OUTPUT"
+          grep '^gpu ' devices.txt | sed "s/^/scheduling holds /" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "scheduling: started $(date -u +%FT%TZ) on runner $(hostname)" | tee -a "$GITHUB_STEP_SUMMARY"
+          # This runner holds both of devbox's cards; fewer is a runner fault.
+          grep -q '^cards=2$' devices.txt || { echo "expected 2 cards on the x2 runner: $(grep cards= devices.txt)"; exit 1; }
           bin/synth_clip src1080.mp4 --size 1920x1080 --fps 30 --seconds 30 --noise 6 --bitrate 20000000
 
       - name: A ladder spreads across every card
