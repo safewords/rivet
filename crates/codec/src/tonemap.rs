@@ -1506,6 +1506,7 @@ mod tests {
         }
     }
 
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[test]
     fn simd_exp_log_pow_match_libm_to_a_few_ulp() {
         if !avx2_available() {

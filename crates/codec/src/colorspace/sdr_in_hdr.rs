@@ -334,6 +334,7 @@ impl SdrToHdr {
             (16.0 * s, 219.0 * s, 224.0 * s)
         };
         let (cb_at, cr_at) = (w * h, w * h + cw * ch);
+        #[cfg(target_arch = "x86_64")]
         let rows = Rows { data, bytes, w, cw, cb_at, cr_at, black, y_span, mid, c_span };
 
         let mut y_code = vec![0u16; w * h];
@@ -502,7 +503,7 @@ unsafe fn lerp_avx2(table: &[f32], x: std::arch::x86_64::__m256) -> std::arch::x
 
 /// What the row kernels read: the frame's samples (`bytes` per sample),
 /// its width, chroma width and plane offsets, and the source's range.
-#[allow(dead_code)]
+#[cfg(target_arch = "x86_64")]
 struct Rows<'a> {
     data: &'a [u8],
     bytes: usize,

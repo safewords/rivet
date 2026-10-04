@@ -27,6 +27,9 @@
 //! the output is rounded once. A frame whose samples are all equal comes out
 //! unchanged (every difference is 0).
 
+// The vector bodies are only reached through `tiered!`'s x86 arms.
+#![cfg_attr(not(any(target_arch = "x86", target_arch = "x86_64")), allow(dead_code))]
+
 use anyhow::Result;
 
 use super::super::{assemble, planes_8bit};

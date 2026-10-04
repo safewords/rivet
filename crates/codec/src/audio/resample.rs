@@ -36,6 +36,16 @@
 //! Exactly as many samples come out as the input's length at the output
 //! rate, rounded up (`ceil(n · out / in)`): the samples whose time falls
 //! inside the input. With equal rates the samples pass through untouched.
+//!
+//! # Determinism
+//!
+//! Each output sample is a dot product of the history with a kernel phase,
+//! summed in one fixed order ([`dot`]): sixteen running partial sums, tap
+//! `i` into sum `i % 16`, folded pairwise at the end, the remainder added
+//! after — a plain IEEE multiply and add each, no fused multiply-add. The
+//! AVX2 and NEON forms keep exactly those sixteen sums in their lanes, and
+//! the scalar form spells them out, so the output is the same bytes on
+//! every CPU and at every SIMD level (`RIVET_PIPE_MAX_SIMD`).
 
 use crate::audio::{AudioError, AudioFrame};
 
@@ -175,6 +185,117 @@ pub struct AlignedResampler {
     samples_in: u64,
     samples_out: u64,
     scratch: Vec<f32>,
+    /// The SIMD level the dot products run at (every level writes the
+    /// same samples; see the module notes).
+    level: crate::simd::Level,
+}
+
+/// The dot product of `x` and `t` (equal lengths) in the fixed order the
+/// module notes describe, at `level`.
+#[inline]
+fn dot(level: crate::simd::Level, x: &[f32], t: &[f32]) -> f32 {
+    debug_assert_eq!(x.len(), t.len());
+    #[cfg(target_arch = "x86_64")]
+    if level >= crate::simd::Level::Avx2 {
+        // SAFETY: the level is Avx2 or above only on a CPU with AVX2
+        // (`Level::host`); the kernel reads `x` and `t` within their
+        // (equal) lengths.
+        return unsafe { dot_avx2(x, t) };
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let _ = level;
+        // SAFETY: NEON is baseline on AArch64; reads stay within the
+        // slices' (equal) lengths.
+        return unsafe { dot_neon(x, t) };
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = level;
+        dot_scalar(x, t)
+    }
+}
+
+/// [`dot`] spelled out: sixteen partial sums, folded as the vector forms
+/// fold their lanes — `(a[j] + a[j + 8])`, then `(s[j] + s[j + 4])`, then
+/// `(u[0] + u[2]) + (u[1] + u[3])` — and the remainder added in order.
+fn dot_scalar(x: &[f32], t: &[f32]) -> f32 {
+    let n = x.len().min(t.len());
+    let wide = n - n % 16;
+    let mut a = [0f32; 16];
+    for (xs, ts) in x[..wide].chunks_exact(16).zip(t[..wide].chunks_exact(16)) {
+        for j in 0..16 {
+            a[j] += xs[j] * ts[j];
+        }
+    }
+    let s: [f32; 8] = std::array::from_fn(|j| a[j] + a[j + 8]);
+    let u: [f32; 4] = std::array::from_fn(|j| s[j] + s[j + 4]);
+    let mut sum = (u[0] + u[2]) + (u[1] + u[3]);
+    for i in wide..n {
+        sum += x[i] * t[i];
+    }
+    sum
+}
+
+/// # Safety
+/// AVX2; `x` and `t` have equal lengths.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn dot_avx2(x: &[f32], t: &[f32]) -> f32 {
+    use std::arch::x86_64::*;
+    unsafe {
+        let n = x.len().min(t.len());
+        let wide = n - n % 16;
+        let (xp, tp) = (x.as_ptr(), t.as_ptr());
+        // Lanes 0-7 and 8-15 of the sixteen sums.
+        let (mut a, mut b) = (_mm256_setzero_ps(), _mm256_setzero_ps());
+        let mut i = 0;
+        while i < wide {
+            a = _mm256_add_ps(a, _mm256_mul_ps(_mm256_loadu_ps(xp.add(i)), _mm256_loadu_ps(tp.add(i))));
+            b = _mm256_add_ps(b, _mm256_mul_ps(_mm256_loadu_ps(xp.add(i + 8)), _mm256_loadu_ps(tp.add(i + 8))));
+            i += 16;
+        }
+        let s = _mm256_add_ps(a, b);
+        let u = _mm_add_ps(_mm256_castps256_ps128(s), _mm256_extractf128_ps::<1>(s));
+        // (u0 + u2), (u1 + u3), then their sum.
+        let v = _mm_add_ps(u, _mm_movehl_ps(u, u));
+        let mut sum = _mm_cvtss_f32(_mm_add_ss(v, _mm_shuffle_ps::<0b01>(v, v)));
+        for i in wide..n {
+            sum += x[i] * t[i];
+        }
+        sum
+    }
+}
+
+/// # Safety
+/// `x` and `t` have equal lengths (NEON is baseline on AArch64).
+#[cfg(target_arch = "aarch64")]
+unsafe fn dot_neon(x: &[f32], t: &[f32]) -> f32 {
+    use std::arch::aarch64::*;
+    unsafe {
+        let n = x.len().min(t.len());
+        let wide = n - n % 16;
+        let (xp, tp) = (x.as_ptr(), t.as_ptr());
+        // The sixteen sums, four a register: lanes 0-3, 4-7, 8-11, 12-15.
+        let mut a = [vdupq_n_f32(0.0); 4];
+        let mut i = 0;
+        while i < wide {
+            for (k, acc) in a.iter_mut().enumerate() {
+                *acc = vaddq_f32(*acc, vmulq_f32(vld1q_f32(xp.add(i + 4 * k)), vld1q_f32(tp.add(i + 4 * k))));
+            }
+            i += 16;
+        }
+        // s[j] = a[j] + a[j + 8]: lanes 0-3 and 4-7 of s.
+        let (s0, s1) = (vaddq_f32(a[0], a[2]), vaddq_f32(a[1], a[3]));
+        // u[j] = s[j] + s[j + 4].
+        let u = vaddq_f32(s0, s1);
+        let (u0, u1, u2, u3) = (vgetq_lane_f32::<0>(u), vgetq_lane_f32::<1>(u), vgetq_lane_f32::<2>(u), vgetq_lane_f32::<3>(u));
+        let mut sum = (u0 + u2) + (u1 + u3);
+        for i in wide..n {
+            sum += x[i] * t[i];
+        }
+        sum
+    }
 }
 
 impl AlignedResampler {
@@ -199,6 +320,7 @@ impl AlignedResampler {
             samples_in: 0,
             samples_out: 0,
             scratch: Vec::new(),
+            level: crate::simd::Level::get(),
         })
     }
 
@@ -278,8 +400,7 @@ impl AlignedResampler {
             }
             let at = (first - self.base) as usize;
             for h in &self.hist {
-                let x = &h[at..at + taps.len()];
-                out.push(x.iter().zip(taps).map(|(&x, &t)| x * t).sum());
+                out.push(dot(self.level, &h[at..at + taps.len()], taps));
             }
             k += 1;
         }
@@ -332,6 +453,30 @@ mod tests {
         (96_000, 44_100),
         (48_000, 32_000),
     ];
+
+    /// The dot product writes the same bits at every level the host has, as
+    /// the scalar spelling: every length from 0 to 70 (all remainders),
+    /// random and cancelling values.
+    #[test]
+    fn every_level_sums_in_the_same_order() {
+        let mut seed = 9u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+        let levels = [crate::simd::Level::Scalar, crate::simd::Level::Avx2, crate::simd::Level::Avx512].into_iter().filter(|&l| l <= crate::simd::Level::host());
+        let levels: Vec<_> = levels.collect();
+        for n in 0..=70 {
+            for scale in [1.0f32, 1e-3, 1e6] {
+                let x: Vec<f32> = (0..n).map(|_| next() * scale).collect();
+                let t: Vec<f32> = (0..n).map(|_| next()).collect();
+                let want = dot_scalar(&x, &t);
+                for &level in &levels {
+                    assert_eq!(dot(level, &x, &t).to_bits(), want.to_bits(), "{level:?} n={n} scale={scale}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn rejects_bad_arguments() {
