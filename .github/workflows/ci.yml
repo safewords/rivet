@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 # Pushes and pull requests from branches in this repository run on the
-# project's self-hosted runners (`rivet-linux`, and `rivet-intel-gpu` for the
+# project's self-hosted runners (`rivet-linux`, and `safewords-runners-gpu` for the
 # hardware jobs, each holding every Intel card of the host it lands on). Pull requests from forks always run on GitHub-hosted
 # runners: self-hosted machines never execute unreviewed outside code.
 
@@ -186,10 +186,10 @@ jobs:
   # cards exclusively (the device plugin's gpu.intel.com/i915; see the
   # safewords/runners README). Three Arc cards on two machines (devbox: an
   # A380 and an A750; vulpes-zerda: an A310):
-  # - `rivet-intel-gpu` runners hold one card each, up to three at once, so
+  # - `safewords-runners-gpu` runners hold one card each, up to three at once, so
   #   the per-codec jobs run three at a time, one per card, on whichever
   #   machines the autoscaler powers on for them;
-  # - `rivet-intel-gpu-x2` holds both of devbox's cards for gpu-scheduling,
+  # - `safewords-runners-gpu-x2` holds both of devbox's cards for gpu-scheduling,
   #   which runs after the per-codec jobs (so the cards are free) and one at
   #   a time. Its timing assertions are the only ones in the GPU jobs.
   # Each job reads its card count from `rivet devices --json`; the
@@ -240,7 +240,7 @@ jobs:
   gpu-devices:
     name: rivet devices on a GPU node
     needs: gpu-build
-    runs-on: rivet-intel-gpu
+    runs-on: safewords-runners-gpu
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -270,7 +270,7 @@ jobs:
     # software-only in rivet.
     name: ${{ matrix.codec }} on an Intel card (QSV)
     needs: gpu-build
-    runs-on: rivet-intel-gpu
+    runs-on: safewords-runners-gpu
     strategy:
       fail-fast: false
       matrix:
@@ -438,9 +438,9 @@ jobs:
     needs: [gpu-build, gpu-devices, gpu-codec]
     if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.gpu-build.result == 'success' }}
     concurrency:
-      group: rivet-intel-gpu-x2
+      group: safewords-runners-gpu-x2
       cancel-in-progress: false
-    runs-on: rivet-intel-gpu-x2
+    runs-on: safewords-runners-gpu-x2
     env:
       NO_COLOR: "1"
       RIVET: bin/rivet
