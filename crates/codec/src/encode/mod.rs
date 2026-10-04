@@ -168,7 +168,8 @@ pub struct EncoderConfig {
     /// Thread budget for this encoder instance. `0` means "use all cores".
     /// When the pipeline runs N variants in parallel it should set this to
     /// `num_cpus / N` to avoid oversubscribing the software encoders' worker
-    /// pools (the h26x encoders; the software AV1 encoder is one thread).
+    /// pools (the h26x, AV1, VP8, VP9, MPEG-2, MPEG-4 Part 2 and ProRes
+    /// software encoders all code on this many threads).
     pub threads: usize,
     /// Input pixel format. Drives the encoder's bit-depth dispatch
     /// (the software AV1 encoder + NVENC/AMF/QSV, roadmap #5).

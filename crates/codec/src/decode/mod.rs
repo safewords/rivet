@@ -396,6 +396,20 @@ pub fn decode_capabilities() -> Vec<DecodeSupport> {
 /// codec set and is what the production fleet has been tuned against) —
 /// then the software tiers: rivet's own decoders (see the module docs). Fails only when no compiled tier
 /// takes the codec.
+/// The threads one of the workspace's own threaded software decoders (VP8,
+/// VP9, MPEG-2, ProRes) decodes on: `env` when it holds a positive count,
+/// else the runtime's available parallelism, which respects a container CPU
+/// quota. The pipeline decodes a source once for the whole ladder, so one
+/// decoder owning the cores is the intended shape (as `h26x_sw`); the output
+/// does not depend on the count.
+pub(crate) fn sw_decode_threads(env: &str) -> usize {
+    std::env::var(env)
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+}
+
 pub fn create_decoder(codec: &str, info: StreamInfo) -> Result<Box<dyn Decoder>> {
     create_decoder_on(codec, info, None)
 }

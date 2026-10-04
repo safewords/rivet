@@ -33,7 +33,7 @@ use std::collections::VecDeque;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 
-use super::native::{check_frame, frame_rate_ratio, refuse_any_rate};
+use super::native::{check_frame, frame_rate_ratio, refuse_any_rate, threads};
 use super::{AUTO_FROM_TARGET, EncodedPacket, Encoder, EncoderConfig};
 use crate::frame::{ColorMetadata, PixelFormat, ProresProfile, TransferFn, VideoCodec, VideoFrame};
 
@@ -104,6 +104,7 @@ impl ProresEncoder {
         let profile = profile(p);
         let mut cfg = prores::Config::new(profile);
         cfg.alpha = prores::AlphaType::None;
+        cfg.threads = threads(&config);
         Ok(Self {
             inner: prores::Encoder::new(cfg),
             width: config.width,
@@ -277,6 +278,17 @@ mod tests {
             }
         }
         out
+    }
+
+    /// The rung's thread budget reaches the encoder; zero is the machine's.
+    #[test]
+    fn the_rung_thread_budget_reaches_the_encoder() {
+        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::ProRes(ProresProfile::ALL[0]), ..Default::default() };
+        let all = std::thread::available_parallelism().map_or(1, |n| n.get());
+        for (asked, want) in [(3, 3), (0, all)] {
+            let enc = ProresEncoder::new(EncoderConfig { threads: asked, ..base.clone() }).unwrap();
+            assert_eq!(enc.inner.config().threads, want, "threads {asked}");
+        }
     }
 
     #[test]

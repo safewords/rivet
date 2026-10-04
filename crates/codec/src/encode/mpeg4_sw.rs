@@ -45,7 +45,7 @@ use std::collections::VecDeque;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 
-use super::native::{ReferenceFirst, average_rate, check_frame, frame_rate_ratio, quantizer, tier};
+use super::native::{ReferenceFirst, average_rate, check_frame, frame_rate_ratio, quantizer, threads, tier};
 use super::tuning::SpeedTier;
 use super::{EncodedPacket, Encoder, EncoderConfig};
 use crate::frame::{ColorMetadata, PixelFormat, TransferFn, VideoCodec, VideoFrame};
@@ -115,6 +115,7 @@ impl Mpeg4Encoder {
         };
         cfg.four_mv = speed == SpeedTier::Archive;
         cfg.video_signal = Some(video_signal(&config.color_metadata));
+        cfg.threads = threads(&config);
         let inner = mpeg4::Encoder::new(cfg.clone()).context("the MPEG-4 Part 2 encoder rejected the configuration")?;
         Ok(Self { inner, cfg, order: ReferenceFirst::default(), ready: VecDeque::new() })
     }
@@ -225,6 +226,17 @@ mod tests {
             packets.push(p);
         }
         (enc, packets)
+    }
+
+    /// The rung's thread budget reaches the encoder; zero is the machine's.
+    #[test]
+    fn the_rung_thread_budget_reaches_the_encoder() {
+        let base = EncoderConfig { width: 64, height: 48, frame_rate: 25.0, codec: VideoCodec::Mpeg4, ..Default::default() };
+        let all = std::thread::available_parallelism().map_or(1, |n| n.get());
+        for (asked, want) in [(3, 3), (0, all)] {
+            let enc = Mpeg4Encoder::new(EncoderConfig { threads: asked, ..base.clone() }).unwrap();
+            assert_eq!(enc.cfg.threads, want, "threads {asked}");
+        }
     }
 
     /// Simple Profile: one VOP per frame, in order, the first an I-VOP behind
