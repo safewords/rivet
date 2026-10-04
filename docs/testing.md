@@ -206,6 +206,26 @@ None at the moment. Add rows as `| Test | Since | What happens |`.
   (PNG DEFLATE levels on a 2048x2048 picture). Quote the figure with the
   machine and the stream.
 
+## NEON on ARM hardware
+
+CI runs on x86-64 Linux only (safewords-runners), so the NEON (aarch64) paths
+are not tested there: rivet-codec's pipeline kernels (the resampler, scaler,
+colour conversions, tonemap, denoisers) and the codec crates' kernels. They
+are verified by hand on ARM hardware (an aarch64 Linux machine, or Apple
+silicon) after a change to them and before a release:
+
+```sh
+cargo test -p rivet-h26x --release --locked
+H26X_NO_SIMD=1 cargo test -p rivet-h26x --release --locked
+cargo test -p rivet-codec --lib --release --locked -- simd colorspace tonemap filter audio::resample
+RIVET_PIPE_MAX_SIMD=none RIVET_DENOISE_MAX_SIMD=none RIVET_TONEMAP_SCALAR=1 \
+  cargo test -p rivet-codec --lib --release --locked -- simd colorspace tonemap filter audio::resample
+```
+
+The kernel tests compare each NEON kernel with its scalar version; the
+second and fourth runs repeat everything on the scalar paths. Each codec
+crate's README ("NEON on ARM hardware") gives its own pair.
+
 ## Not in the gate, and why
 
 | Feature | Reason |

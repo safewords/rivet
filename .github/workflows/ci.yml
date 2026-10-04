@@ -12,9 +12,9 @@ on:
 # for the hardware jobs, each card held by one job at a time); nothing runs on
 # GitHub-hosted runners. Pull requests from forks run there too, but only once
 # a maintainer approves the run (the repository requires approval for every
-# outside contributor), and never the GPU jobs. arm64 is covered on the same
-# x86-64 runners: cross-compiled for aarch64-unknown-linux-gnu and run under
-# QEMU's user-mode emulator.
+# outside contributor), and never the GPU jobs. There are no arm64 jobs: the
+# NEON kernels are checked by hand on ARM hardware (docs/testing.md, "NEON on
+# ARM hardware").
 
 env:
   CARGO_TERM_COLOR: always
@@ -161,46 +161,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check every crate and target at 1.99
         run: cargo check --workspace --all-targets --locked --features rivet-transcoder/server,rivet-transcoder/batch,rivet-transcoder/image
-
-  h26x-arm64:
-    name: h26x + pipeline kernel tests (linux arm64 under QEMU, NEON kernels)
-    # Cross-compiled for aarch64 on an x86-64 runner; cargo runs each test
-    # binary under qemu-aarch64 (user mode), which implements NEON, so the
-    # kernels are checked against the scalar reference as on arm64 hardware.
-    runs-on: safewords-runners
-    env:
-      CARGO_BUILD_TARGET: aarch64-unknown-linux-gnu
-      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER: qemu-aarch64 -L /usr/aarch64-linux-gnu
-      CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
-      - name: aarch64 cross toolchain and QEMU
-        # The runner image has these; the install is a fallback for an image
-        # that predates them.
-        run: |
-          if ! command -v qemu-aarch64 >/dev/null || ! command -v aarch64-linux-gnu-gcc >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
-          fi
-      - uses: Swatinem/rust-cache@v2
-
-      - name: h26x tests
-        # The NEON kernels are checked bit-exact against the scalar reference
-        # here; the x86 job covers AVX2 the same way. h26x is pure Rust, so
-        # no native build deps.
-        run: cargo test -p rivet-h26x --release --locked
-
-      - name: pipeline kernel tests
-        # rivet-codec's per-pixel / per-sample kernels on AArch64: the NEON
-        # resampler against its scalar spelling, and the portable paths of
-        # the scaler, colour conversions, tonemap and denoisers. Pure Rust.
-        run: cargo test -p rivet-codec --lib --release --locked -- simd colorspace tonemap filter audio::resample
 
   # ---- Intel GPU (QSV) --------------------------------------------------
   # Real hardware: only for trusted refs (pushes, manual dispatches), never
