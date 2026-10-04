@@ -234,9 +234,9 @@ pub async fn run_multigpu_single_file(
     drop(finalizer_tx);
 
     // Decode, scale, encode ------------------------------------------------
-    let ranges = ladder::plan_ranges(&params, shape, capacity);
-    let (pumps, receivers) = ladder::spawn_pumps(&params, &ranges, n);
-    let scalers = ladder::spawn_scalers(rungs, &ranges, shape, receivers, &ladder);
+    let plan = ladder::plan_decode(&params, shape, capacity);
+    let pumps = ladder::spawn_decode(&params, plan, rungs, shape, &ladder);
+    let scalers = tokio::task::JoinSet::new();
 
     let ctx = WorkerCtx {
         codec: params.codec,
@@ -266,7 +266,7 @@ pub async fn run_multigpu_single_file(
             })
         },
     );
-    let (workers, _) = match ladder::spawn_workers(&params, &ctx, rungs, &ladder, encode).await {
+    let (workers, _) = match ladder::spawn_workers(&params, &ctx, rungs, shape, &ladder, encode).await {
         Ok(w) => w,
         Err(e) => {
             // Stop the pumps and scalers already running in blocking threads;

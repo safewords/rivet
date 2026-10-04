@@ -1,8 +1,8 @@
 //! The ladder core shared by the HLS and single-file paths.
 //!
 //! ```text
-//!   decode pump per range ──► per-rung scaler ──► SegmentChunkQueue (per rung)
-//!   (one card each)            (one per range × rung)        │
+//!   decode worker per card ──► per-rung scaler ──► SegmentChunkQueue (per rung)
+//!   (pulls ranges by speed)    (one per range × rung)        │
 //!                                                            ▼
 //!                                       ladder worker (one per GPU, serves EVERY rung)
 //! ```
@@ -34,11 +34,22 @@
 //! is one decoder, and the giveaway that it is the limiter is rungs of very
 //! different encode cost advancing in lockstep on the same segment number.
 //! [`plan_decode_ranges`](crate::decode_pump::plan_decode_ranges) cuts the
-//! source at keyframes that fall on chunk boundaries; one pump per range,
-//! pinned to its own card, feeds every rung's scaler, and the numbering stays
-//! continuous across the join ([`DecodePolicy`](crate::spec::DecodePolicy)). A source that cannot be split
-//! safely is decoded whole, which is exactly the behaviour before ranges
-//! existed.
+//! source at keyframes that fall on chunk boundaries — several ranges per
+//! card — and each card's decode worker pulls the next range when it is free
+//! and runs a pump over it into every rung's scaler; the numbering stays
+//! continuous across the joins ([`DecodePolicy`](crate::spec::DecodePolicy)).
+//! A source that cannot be split safely is decoded whole, on the card
+//! expected to be fastest.
+//!
+//! **Cards of different speeds share the work by speed.** Pulling already
+//! gives a fast card more ranges and more chunks; what pulling alone gets
+//! wrong is the end, where the last units go to whoever asks first. Both the
+//! decode workers and the ladder workers ask a finish-time gate before they
+//! take a unit ([`SpeedBoard::should_take`]): a card that would finish the
+//! unit after the others had finished *everything* left steps aside, so the
+//! tail of the job runs on the fast cards. Speeds are measured as the job runs
+//! (and kept for the process); before the first measurement a card's memory
+//! and PCIe link stand in ([`speed`](super::speed)).
 //!
 //! One encoder per GPU is still exactly true: `capacity` workers, each holding
 //! its lease for its lifetime, each running one encode at a time. That
@@ -49,13 +60,13 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use tokio::sync::{Notify, mpsc, watch};
 use tokio::task::JoinSet;
 
-use codec::frame::VideoFrame;
 
 use crate::decode_pump::DecodeRange;
+use super::speed::{self, DeviceKey, SpeedBoard};
 use crate::encoder_worker::{EncoderSessionPool, EncoderWorkerConfig, RungCodecInvariant};
 use crate::frame_queue::{SegmentChunk, SegmentChunkQueue};
 use crate::gpu_pool::GpuLease;
@@ -330,47 +341,115 @@ pub(super) fn preflight_encoder(params: &MultiGpuParams<'_>, width: u32, height:
     Ok(())
 }
 
-/// The decode ranges for this job under the spec's [`DecodePolicy`](crate::spec::DecodePolicy).
+/// How many decode ranges the default plan cuts per decoding card.
+///
+/// One range per card is an equal split, and an equal split is gated by the
+/// slowest card: on devbox the A380's half of the decode took as long as the
+/// A750 needed for the whole ladder. Cut finer, each card pulls the next
+/// range when it is free and a fast card decodes more of the source. Finer
+/// still costs a decoder construction and a demux pass to the range start per
+/// range; four per card leaves the slow card's last range a small fraction of
+/// the job, and the finish-time gate keeps it off the tail entirely.
+pub(super) const RANGES_PER_CARD: usize = 4;
+
+/// The decode for this job: the ranges the source is cut into, and the
+/// devices that decode them. Each device runs one decode worker that pulls
+/// the next range when it is free (see [`spawn_decode`]).
+#[derive(Debug, Clone)]
+pub(super) struct DecodePlan {
+    pub ranges: Vec<DecodeRange>,
+    /// One entry per decode worker: the GPU it decodes on, `None` for the
+    /// software decoder (or an unpinned hardware one).
+    pub devices: Vec<Option<u32>>,
+}
+
+/// The decode plan for this job under the spec's [`DecodePolicy`](crate::spec::DecodePolicy).
 ///
 /// Only an un-spliced, untrimmed single input is split: a range is addressed
 /// by demuxed sample index and its numbering assumes the source starts at
 /// chunk 0, neither of which survives a trim window or a concat. Those decode
 /// whole, as they always did — and so does anything `plan_decode_ranges`
 /// cannot cut safely.
-pub(super) fn plan_ranges(params: &MultiGpuParams<'_>, shape: LadderShape, capacity: usize) -> Vec<DecodeRange> {
-    // `Auto` means one range per card. Software slots are not cards: they
-    // share the cores a split decode would also run on, and the software
-    // encoders are far slower than the software decoder, so splitting the
-    // decode buys nothing and costs a decoder instance per range. One range,
-    // unless the policy names a count (`ranges:N`) outright.
-    let cards = if params.gpu_pool.is_software() { 1 } else { capacity };
-    let want = params.decode.ranges_for(cards);
+///
+/// A whole-source decode runs on the pinned card if the policy pins one, else
+/// on the decode-capable card expected to be fastest
+/// ([`speed::fastest_of`]) — not the first one detected, which on devbox is
+/// the slow A380.
+pub(super) fn plan_decode(params: &MultiGpuParams<'_>, shape: LadderShape, capacity: usize) -> DecodePlan {
+    let decode_gpus = params.decode_capable_gpus();
+    let role = decode_role(&params.header.codec);
+    // The slots a split decode runs on: each decode-capable card once. With
+    // none, software decoders — on the CPU, several at once is real
+    // parallelism — one per encode slot, as many as the split had before.
+    // Software encode slots share the cores a split decode would also run
+    // on, and the software encoders are far slower than the software
+    // decoder, so a software pool splits nothing unless the policy names a
+    // count (`ranges:N`) outright.
+    let slots: Vec<Option<u32>> = if params.gpu_pool.is_software() {
+        vec![None]
+    } else if decode_gpus.is_empty() {
+        vec![None; capacity.max(1)]
+    } else {
+        decode_gpus.iter().copied().map(Some).collect()
+    };
+    let want = match params.decode {
+        crate::spec::DecodePolicy::Auto if slots.len() > 1 => slots.len() * RANGES_PER_CARD,
+        crate::spec::DecodePolicy::Auto => 1,
+        other => other.ranges_for(slots.len()),
+    };
+    let whole = |why: Option<&str>| {
+        if let Some(why) = why {
+            tracing::info!("decode ranges: {why}; decoding whole");
+        }
+        let device = match params.decode.gpu_index() {
+            Some(pinned) => Some(pinned),
+            None if decode_gpus.len() > 1 => {
+                let keys: Vec<DeviceKey> = decode_gpus.iter().map(|&g| DeviceKey::Gpu(g)).collect();
+                let pick = speed::fastest_of(&role, &keys).map(|i| decode_gpus[i]);
+                tracing::info!(
+                    candidates = ?decode_gpus,
+                    chosen = ?pick,
+                    "whole-source decode on the decode-capable card expected to be fastest"
+                );
+                pick
+            }
+            None => decode_gpus.first().copied(),
+        };
+        DecodePlan { ranges: vec![DecodeRange::whole_source()], devices: vec![device] }
+    };
     // A temporal filter (hqdn3d) makes each frame depend on the ones before
     // it, and a range starts with no history: split, the frames at every
     // range start would differ from a whole decode. One stream, one pump.
     // A frame-rate cap drops frames, so a sample's index no longer counts the
     // output frames before it and a range's first segment cannot be placed.
     if want > 1 && crate::decode_pump::decimation(params.header.info.frame_rate, Some(params.frame_rate)).is_some() {
-        tracing::info!("decode ranges: the output frame rate is capped below the source's; decoding whole");
-        return vec![DecodeRange::whole_source()];
+        return whole(Some("the output frame rate is capped below the source's"));
     }
     if want > 1 && params.filters.is_stateful() {
-        tracing::info!(
-            "decode ranges: the filter chain is temporal (frame history); decoding whole rather than in {want} ranges"
-        );
-        return vec![DecodeRange::whole_source()];
+        return whole(Some("the filter chain is temporal (frame history)"));
     }
-    if want > 1 && params.spliced_clips.is_empty() {
-        if let Some(ranges) = crate::decode_pump::plan_decode_ranges(
-            &params.input,
-            &params.header.codec,
-            shape.frames_per_chunk,
-            want,
-        ) {
-            return ranges;
+    if want <= 1 || !params.spliced_clips.is_empty() {
+        return whole(None);
+    }
+    let Some(ranges) = crate::decode_pump::plan_decode_ranges(
+        &params.input,
+        &params.header.codec,
+        shape.frames_per_chunk,
+        want,
+        shape.overlap as u64,
+    ) else {
+        return whole(None);
+    };
+    // `ranges:N` keeps its meaning — N pumps at once, round-robin over the
+    // cards, several on one card when N exceeds them; the default runs one
+    // worker per card and lets each pull ranges.
+    let devices: Vec<Option<u32>> = match params.decode {
+        crate::spec::DecodePolicy::Ranges(n) => {
+            (0..n.min(ranges.len()).max(1)).map(|i| params.range_decode_gpu_for(i, &decode_gpus)).collect()
         }
-    }
-    vec![DecodeRange::whole_source()]
+        _ => slots.into_iter().take(ranges.len()).collect(),
+    };
+    DecodePlan { ranges, devices }
 }
 
 /// The thread budget of each of `pumps` decode pumps running at once: this
@@ -390,75 +469,93 @@ fn pump_share(job_threads: usize, pumps: usize) -> usize {
     (job_threads / pumps).max(1)
 }
 
-/// One pump per range, each on its own decode-capable card, each fanning out
-/// to one channel per rung. Returns the pump tasks and
-/// `receivers[range][rung]`.
-///
-/// With a single range the pump follows the decode policy (an explicit pin,
-/// else the first decode-capable policy GPU): it feeds rungs whose encoders
-/// sit on different cards, so there is no "right" one, and decoded frames land
-/// in system memory anyway — a cross-adapter handoff is a memcpy. With several
-/// ranges the choice does matter, because the point is to have the cards
-/// decoding different stretches of the source at the same time — and it has
-/// to be a card that can decode this codec, which the policy's list does not
-/// promise (see `decode_capable_gpus`).
-pub(super) fn spawn_pumps(
-    params: &MultiGpuParams<'_>,
-    ranges: &[DecodeRange],
-    n_rungs: usize,
-) -> (JoinSet<Result<u64>>, Vec<Vec<Option<mpsc::Receiver<VideoFrame>>>>) {
-    let multi_range = ranges.len() > 1;
-    let decode_gpus = params.decode_capable_gpus();
-    let mut pump_tasks: JoinSet<Result<u64>> = JoinSet::new();
-    let mut receivers: Vec<Vec<Option<mpsc::Receiver<VideoFrame>>>> = Vec::with_capacity(ranges.len());
-
-    for (range_idx, range) in ranges.iter().enumerate() {
-        let mut senders = Vec::with_capacity(n_rungs);
-        let mut rxs = Vec::with_capacity(n_rungs);
-        for _ in 0..n_rungs {
-            let (tx, rx) = mpsc::channel(FANOUT_CHANNEL_CAPACITY);
-            senders.push(tx);
-            rxs.push(Some(rx));
-        }
-        receivers.push(rxs);
-
-        let mut clips = params.clip_sources_for(params.range_decode_gpu_for(range_idx, &decode_gpus));
-        if multi_range {
-            for clip in clips.iter_mut() {
-                clip.cfg.sample_range = range.sample_range();
-            }
-        }
-        let rt = tokio::runtime::Handle::current();
-        // Several pumps at once share the machine: each one's filters (the
-        // denoisers split frames over threads) get its share of it.
-        let filter_threads = filter_threads_per_pump(ranges.len());
-        pump_tasks.spawn(async move {
-            tokio::task::spawn_blocking(move || {
-                codec::filter::with_thread_budget(filter_threads, || {
-                    crate::decode_pump::run_spliced_decode_pump_blocking(clips, senders, rt)
-                })
-            })
-            .await
-            .map_err(|e| anyhow!("decode pump (range {range_idx}) join error: {e}"))
-            .and_then(|r| r)
-        });
-    }
-
-    if multi_range {
-        tracing::info!(
-            rungs = n_rungs,
-            ranges = ranges.len(),
-            boundaries = ?ranges.iter().map(|r| r.start_sample).collect::<Vec<_>>(),
-            "range-parallel decode engaged — every card decodes its own stretch of the source",
-        );
-    } else {
-        tracing::info!(rungs = n_rungs, "shared decode pump engaged (one decode for the whole ladder)");
-    }
-    (pump_tasks, receivers)
+/// The speed record's role for decoding `codec`.
+fn decode_role(codec: &str) -> String {
+    format!("decode:{}", codec.to_ascii_lowercase())
 }
 
-/// One scaler per (range × rung), numbering chunks from the range's first
-/// frame so a rung's chunks stay contiguous however the source was split.
+/// What the decode workers share: the ranges, the next one to hand out, and
+/// the devices' speeds.
+struct RangeDispatch {
+    ranges: Vec<DecodeRange>,
+    /// The frames each range contributes, for the speed record and the gate.
+    frames: Vec<u64>,
+    state: Mutex<(usize, SpeedBoard)>,
+    epoch: std::time::Instant,
+    role: String,
+    keys: Vec<DeviceKey>,
+}
+
+enum NextRange {
+    Take(usize),
+    Wait,
+    Done,
+}
+
+impl RangeDispatch {
+    fn now(&self) -> f64 {
+        self.epoch.elapsed().as_secs_f64()
+    }
+
+    /// The next range for worker `w`, if it should take one now.
+    fn next_for(&self, w: usize) -> NextRange {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let (next, board) = &mut *state;
+        if *next >= self.ranges.len() {
+            board.retire(w);
+            return NextRange::Done;
+        }
+        let units = self.frames[*next].max(1) as f64;
+        let remaining: f64 = self.frames[*next..].iter().map(|&f| f.max(1) as f64).sum();
+        let now = self.now();
+        if !board.should_take(w, units, remaining, now, |_| true) {
+            return NextRange::Wait;
+        }
+        board.start(w, units, now);
+        *next += 1;
+        NextRange::Take(*next - 1)
+    }
+
+    fn finished(&self, w: usize, range_idx: usize, elapsed: f64) {
+        let units = self.frames[range_idx].max(1) as f64;
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(rate) = state.1.finish(w, units, elapsed) {
+            speed::record_rate(&self.role, self.keys[w], rate);
+        }
+    }
+
+    fn retire(&self, w: usize) {
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).1.retire(w);
+    }
+}
+
+/// The decode: one worker per device of the plan, each pulling the next
+/// range when it is free and running it — a decode pump on its device,
+/// fanning out to one scaler per rung, numbering that range's chunks from its
+/// first frame — until none is left. Returns the worker tasks; each reports
+/// the frames it decoded.
+///
+/// # Who decodes what
+///
+/// The ranges are handed out in source order, so chunks reach the encoders
+/// roughly in order, and a range goes to whichever worker asks first —
+/// unless the finish-time gate ([`SpeedBoard::should_take`]) says the other
+/// workers would be done with every remaining range before this one could
+/// finish the next: then it waits, and near the end the slow card simply
+/// stops taking ranges. The plan's boundaries are fixed before anything is
+/// decoded, and each range carries its own chunk numbering and lead-in, so
+/// which card decoded which range changes nothing in the output — not a
+/// frame, not a timestamp, not a chunk.
+///
+/// # Memory
+///
+/// A worker runs one range at a time and waits for that range's scalers to
+/// hand their last chunk to the queues before it takes another, so what is in
+/// flight is bounded exactly as before: per worker, a pump's channels and one
+/// chunk in the making per rung; the queues hold the rest, inside their byte
+/// budget.
+///
+/// # Ending
 ///
 /// A rung's queue is fed by every range's scaler and closed by whichever
 /// finishes last — closing on the first exit would drain the workers while
@@ -466,54 +563,209 @@ pub(super) fn spawn_pumps(
 /// range's end. Only the last range's scaler may mark a chunk final: a middle
 /// range also finishes on a short chunk — its boundary — and marking that
 /// final would end the stream mid-video.
-pub(super) fn spawn_scalers<T: Send + 'static>(
+pub(super) fn spawn_decode<T: Send + 'static>(
+    params: &MultiGpuParams<'_>,
+    plan: DecodePlan,
     rungs: &[Rung],
-    ranges: &[DecodeRange],
     shape: LadderShape,
-    mut receivers: Vec<Vec<Option<mpsc::Receiver<VideoFrame>>>>,
     ladder: &Ladder<T>,
-) -> JoinSet<(usize, Result<usize>)> {
-    let mut scaler_tasks: JoinSet<(usize, Result<usize>)> = JoinSet::new();
+) -> JoinSet<Result<u64>> {
+    let DecodePlan { ranges, devices } = plan;
+    let multi_range = ranges.len() > 1;
+    let total_frames = params.total_input_frames;
+    let frames: Vec<u64> = ranges
+        .iter()
+        .enumerate()
+        .map(|(i, r)| r.frames(ranges.get(i + 1).map(|n| n.start_frame), total_frames))
+        .collect();
+    let keys: Vec<DeviceKey> = devices.iter().map(|&d| DeviceKey::of_gpu(d)).collect();
+    let role = decode_role(&params.header.codec);
+    let dispatch = Arc::new(RangeDispatch {
+        state: Mutex::new((0, SpeedBoard::new(speed::priors_for(&role, &keys)))),
+        ranges: ranges.clone(),
+        frames,
+        epoch: std::time::Instant::now(),
+        role,
+        keys,
+    });
     let rung_producers: Vec<Arc<AtomicUsize>> =
         (0..rungs.len()).map(|_| Arc::new(AtomicUsize::new(ranges.len()))).collect();
-    let last_range_idx = ranges.len() - 1;
-    for (range_idx, range) in ranges.iter().enumerate() {
-        // `plan_decode_ranges` guarantees the boundary is a multiple of
-        // `frames_per_chunk`, so this division is exact.
-        let first_segment_idx = (range.start_frame / u64::from(shape.frames_per_chunk)) as usize;
-        for (idx, rung) in rungs.iter().enumerate() {
-            let rx = receivers[range_idx][idx].take().expect("scaler rx slot");
-            let cfg = crate::rung_scaler::RungScalerConfig {
-                rung_idx: idx,
-                target_width: rung.width,
-                target_height: rung.height,
-                placement: rung.placement,
-                frames_per_chunk: shape.frames_per_chunk,
-                overlap: shape.overlap,
-                first_segment_idx,
-                is_final_range: range_idx == last_range_idx,
-            };
-            let queue = Arc::clone(&ladder.queues[idx]);
-            let rt = tokio::runtime::Handle::current();
-            let active_h = Arc::clone(&ladder.active_workers);
-            let rung_done_h = Arc::clone(&ladder.rung_done);
-            let producers = Arc::clone(&rung_producers[idx]);
-            active_h[idx].fetch_add(1, Ordering::AcqRel);
-            scaler_tasks.spawn(async move {
-                let result = tokio::task::spawn_blocking(move || {
-                    crate::rung_scaler::run_rung_scaler_blocking_shared(cfg, rx, queue, rt, producers)
-                })
-                .await
-                .map_err(|e| anyhow!("scaler join error: {e}"))
-                .and_then(|r| r);
-                if active_h[idx].fetch_sub(1, Ordering::AcqRel) == 1 {
-                    rung_done_h[idx].notify_one();
-                }
-                (idx, result)
-            });
+    let scaler_template: Vec<crate::rung_scaler::RungScalerConfig> = rungs
+        .iter()
+        .enumerate()
+        .map(|(idx, rung)| crate::rung_scaler::RungScalerConfig {
+            rung_idx: idx,
+            target_width: rung.width,
+            target_height: rung.height,
+            placement: rung.placement,
+            frames_per_chunk: shape.frames_per_chunk,
+            overlap: shape.overlap,
+            first_segment_idx: 0,
+            is_final_range: false,
+            lead_in: 0,
+        })
+        .collect();
+
+    let mut tasks: JoinSet<Result<u64>> = JoinSet::new();
+    let workers = devices.len();
+    for (w, device) in devices.iter().copied().enumerate() {
+        let clips = params.clip_sources_for(device);
+        let dispatch = Arc::clone(&dispatch);
+        let producers = rung_producers.clone();
+        let scalers = scaler_template.clone();
+        let queues = ladder.queues.clone();
+        let active = Arc::clone(&ladder.active_workers);
+        let rung_done = Arc::clone(&ladder.rung_done);
+        let abort = Arc::clone(&ladder.abort);
+        let rt = tokio::runtime::Handle::current();
+        tasks.spawn(async move {
+            tokio::task::spawn_blocking(move || {
+                let mut decoded = 0u64;
+                let outcome = loop {
+                    if abort.is_aborted() {
+                        break Ok(decoded);
+                    }
+                    let range_idx = match dispatch.next_for(w) {
+                        NextRange::Done => break Ok(decoded),
+                        NextRange::Wait => {
+                            std::thread::sleep(DECODE_WAIT_POLL);
+                            continue;
+                        }
+                        NextRange::Take(i) => i,
+                    };
+                    let range = dispatch.ranges[range_idx];
+                    let started = std::time::Instant::now();
+                    let job = RangeJob {
+                        range_idx,
+                        range,
+                        is_final: range_idx + 1 == dispatch.ranges.len(),
+                        multi_range,
+                        frames_per_chunk: shape.frames_per_chunk,
+                        concurrent: workers,
+                    };
+                    match run_range(&job, &clips, &scalers, &queues, &producers, &active, &rung_done, &rt) {
+                        Ok(n) => decoded += n,
+                        Err(e) => break Err(e.context(format!("decode range {range_idx} on {device:?}"))),
+                    }
+                    let elapsed = started.elapsed().as_secs_f64();
+                    dispatch.finished(w, range_idx, elapsed);
+                    if multi_range {
+                        tracing::info!(
+                            range = range_idx,
+                            gpu_index = ?device,
+                            frames = dispatch.frames[range_idx],
+                            seconds = format!("{elapsed:.2}"),
+                            "decode range done"
+                        );
+                    }
+                };
+                dispatch.retire(w);
+                outcome
+            })
+            .await
+            .map_err(|e| anyhow!("decode worker {w} join error: {e}"))
+            .and_then(|r| r)
+        });
+    }
+
+    if multi_range {
+        tracing::info!(
+            rungs = rungs.len(),
+            ranges = ranges.len(),
+            decoders = ?devices,
+            boundaries = ?ranges.iter().map(|r| r.start_sample).collect::<Vec<_>>(),
+            "range-parallel decode engaged — each card pulls the next stretch of the source when it is free",
+        );
+    } else {
+        tracing::info!(rungs = rungs.len(), decoder = ?devices.first().copied().flatten(), "shared decode pump engaged (one decode for the whole ladder)");
+    }
+    tasks
+}
+
+/// How long a decode worker waits when the gate tells it another card would
+/// finish the next range sooner.
+const DECODE_WAIT_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// One range for one worker.
+struct RangeJob {
+    range_idx: usize,
+    range: DecodeRange,
+    is_final: bool,
+    multi_range: bool,
+    frames_per_chunk: u32,
+    /// Decode workers running at once, which share the machine's threads.
+    concurrent: usize,
+}
+
+/// Decode one range: its scalers (one per rung, each on a blocking thread),
+/// then the pump on this thread, then wait for the scalers to hand over
+/// their last chunk. The first error wins: the pump's, else a scaler's.
+#[allow(clippy::too_many_arguments)]
+fn run_range(
+    job: &RangeJob,
+    clips: &[crate::decode_pump::ClipSource],
+    scalers: &[crate::rung_scaler::RungScalerConfig],
+    queues: &[Arc<SegmentChunkQueue>],
+    producers: &[Arc<AtomicUsize>],
+    active: &Arc<Vec<AtomicUsize>>,
+    rung_done: &Arc<Vec<Notify>>,
+    rt: &tokio::runtime::Handle,
+) -> Result<u64> {
+    // `plan_decode_ranges` guarantees the boundary is a multiple of
+    // `frames_per_chunk`, so this division is exact.
+    let first_segment_idx = (job.range.start_frame / u64::from(job.frames_per_chunk)) as usize;
+    let mut senders = Vec::with_capacity(scalers.len());
+    let mut handles = Vec::with_capacity(scalers.len());
+    for (idx, template) in scalers.iter().enumerate() {
+        let (tx, rx) = mpsc::channel(FANOUT_CHANNEL_CAPACITY);
+        senders.push(tx);
+        let cfg = crate::rung_scaler::RungScalerConfig {
+            first_segment_idx,
+            is_final_range: job.is_final,
+            lead_in: job.range.lead_in as usize,
+            ..template.clone()
+        };
+        let queue = Arc::clone(&queues[idx]);
+        let producers = Arc::clone(&producers[idx]);
+        let active = Arc::clone(active);
+        let rung_done = Arc::clone(rung_done);
+        let rt_scaler = rt.clone();
+        // Counted before the scaler exists, so the rung's finalizer cannot
+        // see it idle while its queue is still being fed.
+        active[idx].fetch_add(1, Ordering::AcqRel);
+        handles.push(rt.spawn_blocking(move || {
+            let result = crate::rung_scaler::run_rung_scaler_blocking_shared(cfg, rx, queue, rt_scaler, producers);
+            if active[idx].fetch_sub(1, Ordering::AcqRel) == 1 {
+                rung_done[idx].notify_one();
+            }
+            result.with_context(|| format!("scaler for rung {idx}"))
+        }));
+    }
+    let mut clips = clips.to_vec();
+    if job.multi_range {
+        for clip in clips.iter_mut() {
+            clip.cfg.sample_range = job.range.sample_range();
         }
     }
-    scaler_tasks
+    // Several pumps at once share the machine: each one's filters (the
+    // denoisers split frames over threads) get its share of it.
+    let pumped = codec::filter::with_thread_budget(filter_threads_per_pump(job.concurrent), || {
+        crate::decode_pump::run_spliced_decode_pump_blocking(clips, senders, rt.clone())
+    });
+    let mut scaler_error = None;
+    for handle in handles {
+        let joined = rt.block_on(handle).map_err(|e| anyhow!("scaler join error: {e}")).and_then(|r| r);
+        if let Err(e) = joined
+            && scaler_error.is_none()
+        {
+            scaler_error = Some(e);
+        }
+    }
+    let frames = pumped.with_context(|| format!("decode pump (range {})", job.range_idx))?;
+    if let Some(e) = scaler_error {
+        return Err(e);
+    }
+    Ok(frames)
 }
 
 /// The per-rung worker config for one card: the rung's own knobs, the job's
@@ -612,6 +864,119 @@ where
     }
 }
 
+/// The encode side's finish-time gate: which worker should take the next
+/// chunk, given how fast each has shown itself to be and how much of the
+/// ladder is left.
+///
+/// Work is measured in pixels encoded (frames × width × height), so a 1080p
+/// chunk weighs what it costs against a 360p one and the rate of a card is one
+/// number across every rung it serves. What is left is every rung's frames
+/// not yet taken by a worker, chunks not decoded yet included — the gate is
+/// about the tail of the whole job, not of what happens to be queued.
+pub(super) struct EncodeGate {
+    board: Mutex<SpeedBoard>,
+    epoch: std::time::Instant,
+    role: String,
+    keys: Vec<DeviceKey>,
+    /// Frames of each rung no worker has taken yet.
+    remaining: Vec<AtomicU64>,
+    /// Pixels per frame of each rung.
+    pixels: Vec<f64>,
+    frames_per_chunk: u64,
+    /// Which rungs each worker may still take: its schedule, less the rungs
+    /// it has refused on the codec invariant.
+    serves: Mutex<Vec<Vec<bool>>>,
+}
+
+impl EncodeGate {
+    pub(super) fn new(
+        codec: codec::frame::VideoCodec,
+        keys: Vec<DeviceKey>,
+        rungs: &[Rung],
+        serves: &[Vec<usize>],
+        total_frames: u64,
+        frames_per_chunk: u32,
+    ) -> Self {
+        let role = format!("encode:{codec:?}").to_ascii_lowercase();
+        let board = SpeedBoard::new(speed::priors_for(&role, &keys));
+        tracing::info!(
+            devices = ?keys,
+            expected_rates = ?(0..board.len()).map(|d| format!("{:.2}", board.rate(d))).collect::<Vec<_>>(),
+            "encode scheduling: the slower devices step aside at the tail of the job"
+        );
+        Self {
+            board: Mutex::new(board),
+            epoch: std::time::Instant::now(),
+            role,
+            keys,
+            remaining: rungs.iter().map(|_| AtomicU64::new(total_frames)).collect(),
+            pixels: rungs.iter().map(|r| f64::from(r.width) * f64::from(r.height)).collect(),
+            frames_per_chunk: u64::from(frames_per_chunk.max(1)),
+            serves: Mutex::new(
+                serves.iter().map(|s| (0..rungs.len()).map(|r| s.contains(&r)).collect()).collect(),
+            ),
+        }
+    }
+
+    fn now(&self) -> f64 {
+        self.epoch.elapsed().as_secs_f64()
+    }
+
+    /// Should worker `slot` take a chunk of `rung` now? With the total frame
+    /// count unknown (`0`) there is no tail to see, and the answer is yes.
+    fn should_take(&self, slot: usize, rung: usize) -> bool {
+        let left = self.remaining[rung].load(Ordering::Acquire);
+        let units = self.frames_per_chunk.min(left).max(1) as f64 * self.pixels[rung];
+        let remaining: f64 = self
+            .remaining
+            .iter()
+            .zip(&self.pixels)
+            .map(|(r, px)| r.load(Ordering::Acquire) as f64 * px)
+            .sum();
+        if remaining <= 0.0 {
+            return true;
+        }
+        let serves = self.serves.lock().unwrap_or_else(|p| p.into_inner());
+        let board = self.board.lock().unwrap_or_else(|p| p.into_inner());
+        board.should_take(slot, units, remaining.max(units), self.now(), |o| serves[o][rung])
+    }
+
+    /// Worker `slot` took `chunk` of `rung`; returns its weight in work units.
+    fn took(&self, slot: usize, rung: usize, chunk: &SegmentChunk) -> f64 {
+        let left = &self.remaining[rung];
+        let mut now = left.load(Ordering::Acquire);
+        while let Err(seen) =
+            left.compare_exchange_weak(now, now.saturating_sub(chunk.keep as u64), Ordering::AcqRel, Ordering::Acquire)
+        {
+            now = seen;
+        }
+        let units = chunk.frames.len().max(1) as f64 * self.pixels[rung];
+        self.board.lock().unwrap_or_else(|p| p.into_inner()).start(slot, units, self.now());
+        units
+    }
+
+    fn done(&self, slot: usize, units: f64, elapsed: f64) {
+        if let Some(rate) = self.board.lock().unwrap_or_else(|p| p.into_inner()).finish(slot, units, elapsed) {
+            speed::record_rate(&self.role, self.keys[slot], rate);
+            // Whatever the codec: what a serial job asks for when it picks a
+            // card (`serial_target`).
+            speed::record_rate(speed::ANY_ENCODE_ROLE, self.keys[slot], rate);
+        }
+    }
+
+    /// Worker `slot` handed `keep` frames of `rung` back without encoding
+    /// them, and will not take that rung again.
+    fn refused(&self, slot: usize, rung: usize, keep: usize) {
+        self.remaining[rung].fetch_add(keep as u64, Ordering::AcqRel);
+        self.board.lock().unwrap_or_else(|p| p.into_inner()).abandon(slot);
+        self.serves.lock().unwrap_or_else(|p| p.into_inner())[slot][rung] = false;
+    }
+
+    fn retire(&self, slot: usize) {
+        self.board.lock().unwrap_or_else(|p| p.into_inner()).retire(slot);
+    }
+}
+
 /// Claim a lease per GPU and start the workers. Returns the worker tasks and
 /// how many started. Fails only when the pool hands out nothing at all —
 /// which [`preflight_encoder`] refuses first, before anything is spawned;
@@ -620,6 +985,7 @@ pub(super) async fn spawn_workers<T: Send + 'static>(
     params: &MultiGpuParams<'_>,
     ctx: &WorkerCtx,
     rungs: &[Rung],
+    shape: LadderShape,
     ladder: &Arc<Ladder<T>>,
     encode: Arc<dyn EncodeUnit<T>>,
 ) -> Result<(JoinSet<(usize, Result<()>)>, usize)> {
@@ -653,8 +1019,28 @@ pub(super) async fn spawn_workers<T: Send + 'static>(
     for (idx, count) in ladder.serving_workers.iter().enumerate() {
         count.store(serves_by_slot.iter().filter(|s| s.contains(&idx)).count(), Ordering::Release);
     }
+    let gate = (workers > 1).then(|| {
+        Arc::new(EncodeGate::new(
+            params.codec,
+            leases.iter().map(|l| DeviceKey::of_gpu(l.gpu_index())).collect(),
+            rungs,
+            &serves_by_slot,
+            params.total_input_frames,
+            shape.frames_per_chunk,
+        ))
+    });
     for ((slot, lease), serves) in leases.into_iter().enumerate().zip(serves_by_slot) {
-        spawn_ladder_worker(ctx, slot, rungs, serves, lease, Arc::clone(ladder), Arc::clone(&encode), &mut worker_tasks);
+        spawn_ladder_worker(
+            ctx,
+            slot,
+            rungs,
+            serves,
+            lease,
+            Arc::clone(ladder),
+            Arc::clone(&encode),
+            gate.clone(),
+            &mut worker_tasks,
+        );
     }
     if software > 0 {
         tracing::info!(
@@ -727,6 +1113,7 @@ fn spawn_ladder_worker<T: Send + 'static>(
     lease: GpuLease,
     ladder: Arc<Ladder<T>>,
     encode: Arc<dyn EncodeUnit<T>>,
+    gate: Option<Arc<EncodeGate>>,
     worker_tasks: &mut JoinSet<(usize, Result<()>)>,
 ) {
     let gpu_index = lease.gpu_index();
@@ -792,6 +1179,16 @@ fn spawn_ladder_worker<T: Send + 'static>(
                     continue;
                 };
 
+                // Near the end of the job, a slower card leaves the chunk to
+                // a faster one that would be done with everything left before
+                // this card could finish this one (see `EncodeGate`).
+                if let Some(gate) = &gate
+                    && !gate.should_take(slot, rung_idx)
+                {
+                    std::thread::sleep(IDLE_POLL);
+                    continue;
+                }
+
                 // Counted *before* the pop and held across the encode, so this
                 // rung's finalizer cannot decide the rung is finished while a
                 // chunk of it is on its way to a card. Counted after the pop,
@@ -807,6 +1204,9 @@ fn spawn_ladder_worker<T: Send + 'static>(
                     continue;
                 };
                 let segment_idx = chunk.segment_idx;
+                let keep = chunk.keep;
+                let units = gate.as_ref().map(|g| g.took(slot, rung_idx, &chunk));
+                let started = std::time::Instant::now();
                 let outcome = encode.encode(
                     &configs[rung_idx],
                     chunk,
@@ -818,6 +1218,9 @@ fn spawn_ladder_worker<T: Send + 'static>(
                 );
                 match outcome {
                     Ok(UnitOutcome::Done(contribution)) => {
+                        if let (Some(gate), Some(units)) = (&gate, units) {
+                            gate.done(slot, units, started.elapsed().as_secs_f64());
+                        }
                         // Which card did which chunk of which rung — the line
                         // that answers "what is actually happening" on a fleet.
                         tracing::info!(rung_idx, gpu_index = ?gpu_index, lease = %lease_label, chunk = segment_idx, "rung chunk done");
@@ -842,6 +1245,9 @@ fn spawn_ladder_worker<T: Send + 'static>(
                         );
                         ladder.queues[rung_idx].push_front(chunk);
                         refused.insert(rung_idx);
+                        if let Some(gate) = &gate {
+                            gate.refused(slot, rung_idx, keep);
+                        }
                         let last_server = ladder.serving_workers[rung_idx].fetch_sub(1, Ordering::AcqRel) == 1;
                         ladder.worker_done_with(rung_idx);
                         if last_server {
@@ -859,6 +1265,9 @@ fn spawn_ladder_worker<T: Send + 'static>(
                         return Err(e);
                     }
                 }
+            }
+            if let Some(gate) = &gate {
+                gate.retire(slot);
             }
             // The evidence for the session pool: on a run that used to build
             // one encoder per chunk, `built + reused` is the chunk count and
@@ -1029,7 +1438,7 @@ mod tests {
         assert_eq!(pump_share(16, 3), 5, "a job's half of 32 cores among three pumps");
         assert_eq!(pump_share(4, 16), 1);
     }
-    use codec::frame::{ColorSpace, PixelFormat};
+    use codec::frame::{ColorSpace, PixelFormat, VideoFrame};
     use std::time::Duration;
 
     fn frame(idx: u64) -> VideoFrame {
@@ -1042,6 +1451,8 @@ mod tests {
     fn chunk(idx: usize) -> SegmentChunk {
         SegmentChunk { segment_idx: idx, frames: vec![frame(0), frame(1)], lead_in: 0, keep: 2, is_final: false }
     }
+
+    const SHAPE: LadderShape = LadderShape { frames_per_chunk: 2, overlap: 0 };
 
     fn two_rungs() -> Vec<Rung> {
         vec![Rung::new(64, 64), Rung::new(32, 32)]
@@ -1225,7 +1636,7 @@ mod tests {
             count.store(1, Ordering::Release);
         }
         let mut workers: JoinSet<(usize, Result<()>)> = JoinSet::new();
-        spawn_ladder_worker(&ctx(), 0, &two_rungs(), vec![0, 1], lease, Arc::clone(ladder), unit, &mut workers);
+        spawn_ladder_worker(&ctx(), 0, &two_rungs(), vec![0, 1], lease, Arc::clone(ladder), unit, None, &mut workers);
         ladder.release_setup_guard();
         let (ftx, finalizer_rx) = mpsc::channel::<(usize, Result<Option<()>>)>(2);
         drop(ftx);
@@ -1313,7 +1724,7 @@ mod tests {
                 let params =
                     params_with_pool(&rungs, Arc::new(GpuPool::new(&[])), EncodePolicy::SingleGpu(Some(9)), VideoCodec::H265);
                 let ladder: Arc<Ladder<()>> = Arc::new(Ladder::new(&rungs, 2));
-                let err = spawn_workers(&params, &ctx(), &rungs, &ladder, unit(|_| Ok(UnitOutcome::Done(()))))
+                let err = spawn_workers(&params, &ctx(), &rungs, SHAPE, &ladder, unit(|_| Ok(UnitOutcome::Done(()))))
                     .await
                     .expect_err("nothing to lease");
                 let msg = format!("{err:#}");
@@ -1342,7 +1753,7 @@ mod tests {
                     let params = params_with_pool(&rungs, Arc::new(GpuPool::software(2, 1)), policy, VideoCodec::H264);
                     let ladder: Arc<Ladder<()>> = Arc::new(Ladder::new(&rungs, 2));
                     let (mut workers, started) =
-                        spawn_workers(&params, &ctx(), &rungs, &ladder, unit(|_| Ok(UnitOutcome::Done(())))).await.unwrap();
+                        spawn_workers(&params, &ctx(), &rungs, SHAPE, &ladder, unit(|_| Ok(UnitOutcome::Done(())))).await.unwrap();
                     assert_eq!(started, 2, "{policy:?}");
                     let counts: Vec<usize> = ladder.serving_workers.iter().map(|c| c.load(Ordering::Acquire)).collect();
                     assert_eq!(counts, expect, "{policy:?}");
@@ -1351,5 +1762,150 @@ mod tests {
                 }
             },
         );
+    }
+
+    // ---- the decode: many ranges, several workers, one output ----
+
+    /// An H.264 MP4 of `frames` test-pattern pictures, an IDR every `gop`.
+    fn synth_source(frames: u64, gop: u32) -> Bytes {
+        use crate::synth;
+        let cfg = synth::H264 { gop, ..synth::H264::new(64, 48, 25) };
+        let coded = synth::encode_h264(&cfg, (0..frames).map(|t| synth::test_pattern(64, 48, t, h26x::ChromaFormat::Yuv420)));
+        Bytes::from(synth::mp4(&coded, 64, 48, 25, None, None))
+    }
+
+    /// What a run handed the encoders, by chunk: `(segment, lead-in, keep,
+    /// final, [(pts, pixels)])`, in segment order.
+    type Handed = Vec<(usize, usize, usize, bool, Vec<(u64, Bytes)>)>;
+
+    /// Run the decode of `plan` and collect every chunk every rung's queue
+    /// receives. `None` when this build has no H.264 decoder to run.
+    fn decode_through_ladder(input: &Bytes, plan: DecodePlan, shape: LadderShape) -> Option<Vec<Handed>> {
+        let header = container::streaming::demux_streaming(input).ok()?.header().clone();
+        let input = input.clone();
+        within(Duration::from_secs(60), "a ranged decode through the ladder did not finish", move || async move {
+            let rungs = two_rungs();
+            let mut params =
+                params_with_pool(&rungs, Arc::new(GpuPool::software(1, 1)), EncodePolicy::AllGpus, VideoCodec::H264);
+            params.input = input;
+            params.total_input_frames = header.info.total_frames;
+            params.header = header;
+            params.frame_rate = 25.0;
+            let ladder: Ladder<()> = Ladder::new(&rungs, shape.frames_per_chunk);
+            let mut decode = spawn_decode(&params, plan, &rungs, shape, &ladder);
+            let queues = ladder.queues.clone();
+            let consumer = tokio::spawn(async move {
+                let mut handed: Vec<Handed> = vec![Vec::new(); queues.len()];
+                loop {
+                    let mut idle = true;
+                    for (r, q) in queues.iter().enumerate() {
+                        while let Some(c) = q.try_pop() {
+                            idle = false;
+                            let frames = c.frames.iter().map(|f| (f.pts, f.data.clone())).collect();
+                            handed[r].push((c.segment_idx, c.lead_in, c.keep, c.is_final, frames));
+                        }
+                    }
+                    if idle && queues.iter().all(|q| q.is_closed() && q.depth() == 0) {
+                        break;
+                    }
+                    if idle {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                }
+                for h in &mut handed {
+                    h.sort_by_key(|c| c.0);
+                }
+                handed
+            });
+            while let Some(done) = decode.join_next().await {
+                if let Err(e) = done.expect("decode worker join") {
+                    eprintln!("SKIP: no H.264 decoder in this build ({e:#})");
+                    ladder.abort.abort();
+                    let _ = consumer.await;
+                    return None;
+                }
+            }
+            Some(consumer.await.expect("consumer"))
+        })
+    }
+
+    /// Equal, or a readable account of the first difference.
+    #[allow(clippy::type_complexity)]
+    fn assert_same(split: &[Handed], whole: &[Handed]) {
+        let shape = |h: &[Handed]| -> Vec<Vec<(usize, usize, usize, bool, Vec<u64>)>> {
+            h.iter()
+                .map(|r| r.iter().map(|c| (c.0, c.1, c.2, c.3, c.4.iter().map(|f| f.0).collect())).collect())
+                .collect()
+        };
+        assert_eq!(shape(split), shape(whole), "chunks (segment, lead-in, keep, final, pts) differ");
+        for (r, (a, b)) in split.iter().zip(whole).enumerate() {
+            for (ca, cb) in a.iter().zip(b) {
+                for (i, (fa, fb)) in ca.4.iter().zip(&cb.4).enumerate() {
+                    assert!(fa.1 == fb.1, "rung {r} chunk {} frame {i} (pts {}): pixels differ", ca.0, fa.0);
+                }
+            }
+        }
+    }
+
+    fn whole_plan() -> DecodePlan {
+        DecodePlan { ranges: vec![DecodeRange::whole_source()], devices: vec![None] }
+    }
+
+    /// Cut fine and pulled by three workers at once, the source reaches the
+    /// encoders as exactly the chunks one whole-source decode makes — same
+    /// segments, same frames, same timestamps, same final flag — for HLS's
+    /// segment-sized chunks with no lead-in.
+    #[test]
+    fn many_ranges_on_several_workers_hand_over_the_whole_decode() {
+        let input = synth_source(120, 10);
+        let shape = LadderShape { frames_per_chunk: 10, overlap: 0 };
+        let ranges = crate::decode_pump::plan_decode_ranges(&input, "h264", 10, 8, 0).expect("splits");
+        assert!(ranges.len() >= 6, "{ranges:?}");
+        let Some(whole) = decode_through_ladder(&input, whole_plan(), shape) else { return };
+        let split = decode_through_ladder(&input, DecodePlan { ranges, devices: vec![None; 3] }, shape).expect("ran whole");
+        assert_eq!(whole[0].len(), 12);
+        assert_same(&split, &whole);
+    }
+
+    /// With a chunk lead-in (single-file chunk-and-stitch), every range
+    /// after the first decodes from a keyframe a GOP early and hands its first
+    /// chunk the same lead-in a whole decode gives it: the output does not
+    /// depend on where the source was cut.
+    #[test]
+    fn ranges_carry_the_lead_in_a_whole_decode_gives_their_first_chunk() {
+        let input = synth_source(160, 10);
+        let shape = LadderShape { frames_per_chunk: 20, overlap: 10 };
+        let ranges = crate::decode_pump::plan_decode_ranges(&input, "h264", 20, 8, 10).expect("splits");
+        assert!(ranges.len() >= 4, "{ranges:?}");
+        for r in &ranges[1..] {
+            assert_eq!(r.lead_in, 10, "{r:?}");
+            assert_eq!(r.decode_from_sample, r.start_sample - 10, "{r:?}");
+        }
+        let Some(whole) = decode_through_ladder(&input, whole_plan(), shape) else { return };
+        let split = decode_through_ladder(&input, DecodePlan { ranges, devices: vec![None; 2] }, shape).expect("ran whole");
+        assert!(whole[0][1..].iter().all(|c| c.1 == 10), "a whole decode leads every chunk after the first in");
+        assert_same(&split, &whole);
+    }
+
+    /// The default plan on a multi-card host cuts several ranges per card;
+    /// a pinned or whole decode is one range on one card.
+    #[test]
+    fn the_default_plan_cuts_several_ranges_per_card() {
+        let input = synth_source(400, 10);
+        let rungs = two_rungs();
+        let mut params = params_with_pool(&rungs, Arc::new(GpuPool::software(2, 1)), EncodePolicy::AllGpus, VideoCodec::H264);
+        params.input = input;
+        params.total_input_frames = 400;
+        let shape = LadderShape { frames_per_chunk: 10, overlap: 0 };
+        params.decode = crate::spec::DecodePolicy::Ranges(3);
+        let plan = plan_decode(&params, shape, 2);
+        assert_eq!(plan.ranges.len(), 3, "{plan:?}");
+        assert_eq!(plan.devices.len(), 3);
+        params.decode = crate::spec::DecodePolicy::Whole;
+        let plan = plan_decode(&params, shape, 2);
+        assert_eq!(plan.ranges, vec![DecodeRange::whole_source()]);
+        assert_eq!(plan.devices.len(), 1);
+        params.decode = crate::spec::DecodePolicy::SpecificGpu(5);
+        assert_eq!(plan_decode(&params, shape, 2).devices, vec![Some(5)]);
     }
 }

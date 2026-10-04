@@ -9,12 +9,14 @@
 mod amd;
 mod bar;
 mod intel;
+mod link;
 mod nvidia;
 mod sysfs;
 mod types;
 mod utilization;
 
 pub use bar::{BarReport, BarVerdict, bar_report};
+pub use link::{PcieLink, PcieReport, pcie_report};
 pub use types::{GpuDevice, GpuUtilization, GpuVendor};
 pub use utilization::GpuUtilizationReader;
 

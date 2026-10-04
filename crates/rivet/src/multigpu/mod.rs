@@ -30,7 +30,7 @@
 //!   stream the caller muxes. Same range-split decode, same ladder workers.
 //! - Both are **selectable**, not hard-wired, and each question has exactly
 //!   one knob: [`DecodePolicy`](crate::spec::DecodePolicy) is the whole decode
-//!   plan (split one range per capable card / whole / a pinned card / the
+//!   plan (split into ranges the capable cards pull / whole / a pinned card / the
 //!   fastest card / N ranges), [`EncodePolicy`](crate::spec::EncodePolicy) is
 //!   the whole encode plan (every card ladder-scheduled / every card pinned per
 //!   rung / one vendor family / a single card, serial),
@@ -46,6 +46,7 @@ mod gpu_policy;
 mod hls;
 mod ladder;
 mod single_file;
+pub(crate) mod speed;
 
 #[cfg(test)]
 pub(crate) use gpu_policy::{cards_for_policy, host_verdicts};

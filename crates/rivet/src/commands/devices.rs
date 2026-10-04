@@ -38,6 +38,9 @@ pub(crate) fn run(json: bool) {
                 println!("                   {cost}");
             }
         }
+        if let Some(link) = codec::gpu::pcie_report(d) {
+            println!("      PCIe link  : {}", link.bottleneck.describe());
+        }
         println!("      encode     : {}", encode_verdicts(d));
         // Live load is read via NVML — meaningful on NVIDIA only.
         if matches!(d.vendor, codec::gpu::GpuVendor::Nvidia) {
@@ -119,9 +122,10 @@ pub(crate) fn devices_json(devices: &[codec::gpu::GpuDevice]) -> String {
                 String::new()
             };
             let bar = codec::gpu::bar_report(d).map_or_else(|| "null".to_string(), |b| bar_json(&b));
+            let pcie = codec::gpu::pcie_report(d).map_or_else(|| "null".to_string(), |r| pcie_json(&r));
             format!(
                 "{{\"index\":{},\"vendor\":\"{}\",\"name\":\"{}\",\"generation\":\"{}\",\"vram_mib\":{},\"pci\":\"{}\",\"av1_encode\":{},\
-                 \"encode\":{{\"av1\":{},\"h264\":{},\"h265\":{}}},\"pci_bar\":{}{}}}",
+                 \"encode\":{{\"av1\":{},\"h264\":{},\"h265\":{}}},\"pci_bar\":{},\"pcie\":{}{}}}",
                 d.index,
                 codec::gpu::manufacturer_label(d.vendor),
                 super::esc(&d.name),
@@ -133,6 +137,7 @@ pub(crate) fn devices_json(devices: &[codec::gpu::GpuDevice]) -> String {
                 codec::encode::encode_capable(d, VideoCodec::H264),
                 codec::encode::encode_capable(d, VideoCodec::H265),
                 bar,
+                pcie,
                 load
             )
         })
@@ -158,5 +163,22 @@ fn bar_json(b: &codec::gpu::BarReport) -> String {
         opt(b.resizable.map(|r| r.to_string())),
         opt(b.max_bytes.map(|m| m.to_string())),
         b.virtualised
+    )
+}
+
+/// `{"gts":8.0,"width":2,"gbytes_per_s":1.97,"chain":[{"pci":"0000:00:1c.0","gts":8.0,"width":2},...]}`
+/// — the link that limits the card, and every link on its path to the CPU.
+fn pcie_json(r: &codec::gpu::PcieReport) -> String {
+    let chain: Vec<String> = r
+        .chain
+        .iter()
+        .map(|(pci, l)| format!("{{\"pci\":\"{}\",\"gts\":{},\"width\":{}}}", super::esc(pci), l.gts, l.width))
+        .collect();
+    format!(
+        "{{\"gts\":{},\"width\":{},\"gbytes_per_s\":{:.2},\"chain\":[{}]}}",
+        r.bottleneck.gts,
+        r.bottleneck.width,
+        r.bottleneck.gbytes_per_s(),
+        chain.join(",")
     )
 }

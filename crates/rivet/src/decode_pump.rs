@@ -16,9 +16,12 @@
 //! every rung then waits on it while the other cards' decode engines sit
 //! idle. [`plan_decode_ranges`] cuts the source into ranges that can each be
 //! decoded from a keyframe on a segment boundary; the orchestrator runs one
-//! pump per range ([`DecodePumpConfig::sample_range`]), each pinned to its own
-//! card, so the cards decode different stretches of the source at the same
-//! time and the ladder's segment numbering stays continuous across the join.
+//! pump per range ([`DecodePumpConfig::sample_range`]) on a card, so the
+//! cards decode different stretches of the source at the same time and the
+//! ladder's segment numbering stays continuous across the join. The ladder
+//! cuts the source finer than one range per card and lets each card pull the
+//! next range when it is free, so a fast card decodes more of the source than
+//! a slow one (`multigpu::ladder`).
 
 use std::time::Instant;
 
@@ -65,22 +68,23 @@ pub struct DecodePumpConfig {
     pub sdr_to_hdr: Option<TransferFn>,
     /// Pin the decoder to this physical GPU; `None` = first matching adapter.
     pub gpu_index: Option<u32>,
-    /// Decode only `[start_sample, end_sample)` of the source, by demuxed
-    /// sample index. `None` decodes everything, which is the whole-source
-    /// pump.
+    /// Decode only this range of the source, by demuxed sample index:
+    /// `[decode_from_sample, end_sample)` is decoded, and of that the frames
+    /// from the range's lead-in on are emitted ([`DecodeRange`]). `None`
+    /// decodes everything, which is the whole-source pump.
     ///
-    /// `start_sample` **must** be a sample [`plan_decode_ranges`] returned —
-    /// that is, one carrying an IDR/IRAP. Starting anywhere else gives the
-    /// decoder a picture whose references it never saw, and the output is
+    /// The range **must** be one [`plan_decode_ranges`] returned — its
+    /// `decode_from_sample` carries an IDR/IRAP. Starting anywhere else gives
+    /// the decoder a picture whose references it never saw, and the output is
     /// wrong rather than absent.
     ///
-    /// Samples before `start_sample` are still demuxed — they have to be, the
-    /// demuxer is a pull API with no seek — but they are not handed to the
-    /// decoder. Demuxing is parsing; decoding is the expensive half, and
-    /// skipping it is the entire saving. Composes with a clip's trim window,
-    /// which counts *decoded* frames: the range decides what is decoded, the
-    /// trim decides what is kept.
-    pub sample_range: Option<(u64, Option<u64>)>,
+    /// Samples before it are still demuxed — they have to be, the demuxer is
+    /// a pull API with no seek — but they are not handed to the decoder.
+    /// Demuxing is parsing; decoding is the expensive half, and skipping it is
+    /// the entire saving. Composes with a clip's trim window, which counts
+    /// *decoded* frames: the range decides what is decoded, the trim decides
+    /// what is kept.
+    pub sample_range: Option<DecodeRange>,
     /// Clockwise rotation the container declared, in degrees (0/90/180/270).
     ///
     /// Applied to every frame as it leaves the decoder, so nothing fed by this
@@ -188,6 +192,17 @@ pub struct DecodeRange {
     /// Frames before this range — its first segment's index, given a
     /// `frames_per_chunk` that divides the boundary.
     pub start_frame: u64,
+    /// Where decoding starts: `start_sample`, or an earlier keyframe when the
+    /// range carries a lead-in.
+    pub decode_from_sample: u64,
+    /// Frames just before `start_frame` this range also emits, ahead of its
+    /// own — the previous chunk's tail, which a chunk with a lead-in margin
+    /// (single-file chunk-and-stitch) replays to warm its encoder. A range
+    /// that emits them starts its first chunk exactly as a whole-source
+    /// decode would, so where the source is cut changes nothing in the
+    /// output. They are decoded from `decode_from_sample` and handed to no
+    /// frame hook: the range before already showed them.
+    pub lead_in: u64,
 }
 
 impl DecodeRange {
@@ -195,17 +210,24 @@ impl DecodeRange {
     /// before range-parallel decode existed, and the fallback whenever a
     /// source cannot be split safely.
     pub fn whole_source() -> Self {
-        Self { start_sample: 0, end_sample: None, start_frame: 0 }
+        Self { start_sample: 0, end_sample: None, start_frame: 0, decode_from_sample: 0, lead_in: 0 }
+    }
+
+    /// A range that starts decoding at its own first sample, with no lead-in.
+    pub fn new(start_sample: u64, end_sample: Option<u64>, start_frame: u64) -> Self {
+        Self { start_sample, end_sample, start_frame, decode_from_sample: start_sample, lead_in: 0 }
     }
 
     /// The `sample_range` a pump config takes for this range: `None` for the
-    /// whole source (nothing to skip), the bounds otherwise.
-    pub fn sample_range(&self) -> Option<(u64, Option<u64>)> {
-        if self.start_sample == 0 && self.end_sample.is_none() {
-            None
-        } else {
-            Some((self.start_sample, self.end_sample))
-        }
+    /// whole source (nothing to skip), the range otherwise.
+    pub fn sample_range(&self) -> Option<DecodeRange> {
+        if *self == Self::whole_source() { None } else { Some(*self) }
+    }
+
+    /// The frames this range contributes (lead-in excluded), given the
+    /// frames in the whole source and where the next range starts.
+    pub fn frames(&self, next_start_frame: Option<u64>, total_frames: u64) -> u64 {
+        next_start_frame.unwrap_or(total_frames).saturating_sub(self.start_frame)
     }
 }
 
@@ -233,11 +255,19 @@ impl DecodeRange {
 ///
 /// One decoded frame per demuxed sample is assumed, which holds for the
 /// progressive single-layer streams the pipeline accepts.
+///
+/// `lead_in` is the chunk lead-in margin, in frames (`0` for none). Each range
+/// after the first then starts decoding at the latest keyframe at least that
+/// far before its boundary and emits those `lead_in` frames ahead of its own
+/// ([`DecodeRange::lead_in`]), so its first chunk gets the same lead-in a
+/// whole-source decode gives it. A boundary with no such keyframe before it
+/// starts cold, as every range did before.
 pub fn plan_decode_ranges(
     input_data: &Bytes,
     codec_name: &str,
     frames_per_chunk: u32,
     want: usize,
+    lead_in: u64,
 ) -> Option<Vec<DecodeRange>> {
     if want <= 1 || frames_per_chunk == 0 {
         return None;
@@ -306,13 +336,33 @@ pub fn plan_decode_ranges(
     }
     splits.sort_unstable();
 
+    // Keyframes a lead-in may start from: `(sample, presented frame)` for
+    // each one with every hidden frame behind it.
+    let starts: Vec<(u64, u64)> = keyframes
+        .iter()
+        .copied()
+        .filter_map(|k| match &presentation {
+            None => Some((k, k)),
+            Some(p) => p.presented_index_after_hidden(k).map(|f| (k, f)),
+        })
+        .collect();
+    let with_lead_in = |start: u64, end: Option<u64>, start_frame: u64| -> DecodeRange {
+        let mut range = DecodeRange::new(start, end, start_frame);
+        if lead_in > 0
+            && start_frame >= lead_in
+            && let Some(&(from, _)) = starts.iter().rev().find(|&&(_, f)| f + lead_in <= start_frame)
+        {
+            range.decode_from_sample = from;
+            range.lead_in = lead_in;
+        }
+        range
+    };
+
     let mut ranges = Vec::with_capacity(splits.len() + 1);
-    let (mut start, mut start_frame) = (0u64, 0u64);
-    for (split, split_frame) in splits {
-        ranges.push(DecodeRange { start_sample: start, end_sample: Some(split), start_frame });
-        (start, start_frame) = (split, split_frame);
+    ranges.push(DecodeRange::new(0, splits.first().map(|&(s, _)| s), 0));
+    for (i, &(split, split_frame)) in splits.iter().enumerate() {
+        ranges.push(with_lead_in(split, splits.get(i + 1).map(|&(s, _)| s), split_frame));
     }
-    ranges.push(DecodeRange { start_sample: start, end_sample: None, start_frame });
 
     Some(ranges)
 }
@@ -442,7 +492,11 @@ fn decode_clip(
     // The decode range, by demuxed sample index. Everything before it is
     // parsed and not decoded; the range ends with a flush of what the decoder
     // still holds, because those frames belong to this range.
-    let (start_sample, end_sample) = cfg.sample_range.unwrap_or((0, None));
+    let range = cfg.sample_range.unwrap_or_else(DecodeRange::whole_source);
+    let (start_sample, end_sample) = (range.decode_from_sample, range.end_sample);
+    // Frames presented before this are decoded only as references for what
+    // follows; from here to `range.start_frame` they are the lead-in.
+    let emit_from = range.start_frame.saturating_sub(range.lead_in);
 
     // Absolute index of the next decoded frame in the whole source — a range
     // starting at sample `start_sample` decodes to frame `start_sample` first
@@ -471,6 +525,11 @@ fn decode_clip(
         );
     }
     let mut sample_idx: u64 = 0;
+    // Decoders number their output from 0, so a range's frames would restart
+    // the timeline at every boundary — the timestamps of the whole decode are
+    // the decoded index, which a range starting at `start_sample` reaches by
+    // adding it.
+    let lead = RangeLead { emit_from, own_from: range.start_frame, pts_offset: start_sample };
 
     // Parameter sets seen while skipping to the start of the range.
     //
@@ -494,7 +553,7 @@ fn decode_clip(
         while let Some(frame) =
             decoder.decode_next().context("decoding frame after finish in decode pump")?
         {
-            match handle_frame(clip_idx, clip, presentation.as_ref(), slots.as_ref(), normalizer, frame, senders, rt, src_idx, total, joined)? {
+            match handle_frame(clip_idx, clip, presentation.as_ref(), slots.as_ref(), normalizer, frame, senders, rt, src_idx, total, joined, lead)? {
                 FrameAction::Continue => {}
                 FrameAction::ClipDone => return Ok(Flow::Continue),
                 FrameAction::StopAll => return Ok(Flow::AllReceiversClosed),
@@ -555,7 +614,7 @@ fn decode_clip(
                 while let Some(frame) =
                     decoder.decode_next().context("decoding frame in decode pump")?
                 {
-                    match handle_frame(clip_idx, clip, presentation.as_ref(), slots.as_ref(), &mut normalizer, frame, senders, rt, &mut src_idx, total, joined)? {
+                    match handle_frame(clip_idx, clip, presentation.as_ref(), slots.as_ref(), &mut normalizer, frame, senders, rt, &mut src_idx, total, joined, lead)? {
                         FrameAction::Continue => {}
                         FrameAction::ClipDone => return Ok(Flow::Continue),
                         FrameAction::StopAll => return Ok(Flow::AllReceiversClosed),
@@ -565,6 +624,16 @@ fn decode_clip(
             None => return drain(&mut decoder, &mut normalizer, &mut src_idx, total, joined),
         }
     }
+}
+
+/// Which decoded frames of a range are emitted: from `emit_from` on, with the
+/// ones before `own_from` (the lead-in) handed to no frame hook.
+#[derive(Debug, Clone, Copy)]
+struct RangeLead {
+    emit_from: u64,
+    own_from: u64,
+    /// Added to every decoded frame's timestamp.
+    pts_offset: u64,
 }
 
 enum FrameAction {
@@ -664,7 +733,10 @@ fn handle_frame(
     src_idx: &mut u64,
     total: &mut u64,
     joined: &mut JoinedPts,
+    lead: RangeLead,
 ) -> Result<FrameAction> {
+    let mut frame = frame;
+    frame.pts += lead.pts_offset;
     let presented = match presentation.map(|p| p.place(*src_idx)) {
         None => *src_idx,
         Some(container::edit::FramePlace::Presented(index)) => index,
@@ -674,6 +746,13 @@ fn handle_frame(
         }
         Some(container::edit::FramePlace::PastEnd) => return Ok(FrameAction::ClipDone),
     };
+    // A range that decodes from a keyframe ahead of its lead-in: the frames
+    // before the lead-in are references only.
+    if presented < lead.emit_from {
+        *src_idx += 1;
+        return Ok(FrameAction::Continue);
+    }
+    let hooked = presented >= lead.own_from;
     let Some(slots) = slots else {
         if clip.end_frame.is_some_and(|end| presented >= end) {
             return Ok(FrameAction::ClipDone); // reached the out-point
@@ -688,9 +767,13 @@ fn handle_frame(
         if shown {
             let hooks = &clip.cfg.hooks;
             let fps = clip.cfg.info_for_decoder.frame_rate;
-            hooks.emit_decoded_frame(clip_idx, presented, fps, &frame)?;
+            if hooked {
+                hooks.emit_decoded_frame(clip_idx, presented, fps, &frame)?;
+            }
             let mut normalized = normalizer.normalize(frame)?;
-            hooks.emit_encoder_frame(clip_idx, presented, fps, &normalized)?;
+            if hooked {
+                hooks.emit_encoder_frame(clip_idx, presented, fps, &normalized)?;
+            }
             normalized.pts = joined.place(normalized.pts);
             if !fan_out(senders, normalized, rt)? {
                 return Ok(FrameAction::StopAll);
@@ -723,9 +806,13 @@ fn handle_frame(
     if !slots_out.is_empty() {
         let hooks = &clip.cfg.hooks;
         let fps = clip.cfg.info_for_decoder.frame_rate;
-        hooks.emit_decoded_frame(clip_idx, presented, fps, &frame)?;
+        if hooked {
+            hooks.emit_decoded_frame(clip_idx, presented, fps, &frame)?;
+        }
         let normalized = normalizer.normalize(frame)?;
-        hooks.emit_encoder_frame(clip_idx, presented, fps, &normalized)?;
+        if hooked {
+            hooks.emit_encoder_frame(clip_idx, presented, fps, &normalized)?;
+        }
         for slot in slots_out {
             let mut copy = normalized.clone();
             copy.pts = joined.place(slot);
@@ -1342,17 +1429,17 @@ mod tests {
     fn a_whole_source_range_is_the_no_op_it_claims_to_be() {
         assert_eq!(DecodeRange::whole_source().sample_range(), None);
         assert_eq!(
-            DecodeRange { start_sample: 120, end_sample: None, start_frame: 120 }.sample_range(),
-            Some((120, None))
+            DecodeRange::new(120, None, 120).sample_range(),
+            Some(DecodeRange::new(120, None, 120))
         );
     }
 
     #[test]
     fn a_single_range_or_an_unfamiliar_codec_is_not_split() {
         let input = Bytes::from_static(b"not a video");
-        assert!(plan_decode_ranges(&input, "h264", 60, 1).is_none(), "want=1 is no split");
-        assert!(plan_decode_ranges(&input, "av1", 60, 4).is_none(), "no keyframe test for av1");
-        assert!(plan_decode_ranges(&input, "h264", 0, 4).is_none(), "a zero chunk is no grid");
+        assert!(plan_decode_ranges(&input, "h264", 60, 1, 0).is_none(), "want=1 is no split");
+        assert!(plan_decode_ranges(&input, "av1", 60, 4, 0).is_none(), "no keyframe test for av1");
+        assert!(plan_decode_ranges(&input, "h264", 0, 4, 0).is_none(), "a zero chunk is no grid");
     }
 
     #[test]
@@ -1376,7 +1463,7 @@ mod tests {
             .map(|k| k as u32)
             .expect("a second keyframe");
 
-        let ranges = plan_decode_ranges(&input, "h264", per_chunk, 3)
+        let ranges = plan_decode_ranges(&input, "h264", per_chunk, 3, 0)
             .expect("a splittable source with want=3 should split");
         assert!(ranges.len() >= 2 && ranges.len() <= 3, "ranges: {ranges:?}");
 
@@ -1532,7 +1619,7 @@ mod tests {
         let (keyframes, _) = h264_keyframes(&input);
         let per_chunk =
             keyframes.iter().copied().find(|&k| k > 0).expect("a second keyframe") as u32;
-        let ranges = plan_decode_ranges(&input, "h264", per_chunk, 2).expect("splits in two");
+        let ranges = plan_decode_ranges(&input, "h264", per_chunk, 2, 0).expect("splits in two");
         assert_eq!(ranges.len(), 2, "{ranges:?}");
 
         let mut joined = Vec::new();
@@ -1554,6 +1641,7 @@ mod tests {
                 "frame {i} shape"
             );
             assert_eq!(a.data, b.data, "frame {i} pixels differ between whole and ranged decode");
+            assert_eq!(a.pts, b.pts, "frame {i} timestamp differs between whole and ranged decode");
         }
     }
 }
