@@ -8,7 +8,7 @@
 //! altref) produces nothing. Output is 8-bit 4:2:0, BT.601 (VP8 has no other
 //! colour space).
 //!
-//! Each frame decodes on [`sw_decode_threads`](super::sw_decode_threads)
+//! Each frame decodes on `sw_decode_threads`
 //! threads (`RIVET_VP8_DECODE_THREADS`, else the machine's): macroblock rows
 //! in a wavefront, as far as the stream's token partitions allow. The output
 //! does not depend on the count.
