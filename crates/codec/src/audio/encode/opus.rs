@@ -211,7 +211,7 @@ mod tests {
     use crate::audio::decode::opus::OpusDecoder;
 
     fn config(sample_rate: u32, channels: u8, bitrate: u32) -> AudioEncoderConfig {
-        AudioEncoderConfig { codec: AudioCodec::Opus, sample_rate, channels, bitrate, quality: None, layout: None }
+        AudioEncoderConfig { codec: AudioCodec::Opus, sample_rate, channels, bitrate, quality: None, layout: None, threads: 0 }
     }
 
     /// Interleaved frames where channel `c` is a tone at `freqs[c]`.

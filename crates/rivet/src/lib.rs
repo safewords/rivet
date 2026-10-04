@@ -74,6 +74,7 @@ pub mod spec;
 #[cfg(feature = "thumbnail")]
 pub mod avif;
 #[cfg(feature = "thumbnail")]
+pub mod thread_budget;
 pub mod thumbnail;
 pub mod transcode;
 pub mod validate;

@@ -42,9 +42,15 @@ pub struct VorbisEncoder {
     granule: i64,
     first_pts: Option<i64>,
     buf: Vec<f32>,
+    threads: usize,
 }
 
 impl VorbisEncoder {
+    /// The thread count handed to the encoder (`config.threads`).
+    pub fn threads(&self) -> usize {
+        self.threads
+    }
+
     pub fn new(config: &AudioEncoderConfig) -> Result<Self, AudioError> {
         if !(1..=8).contains(&config.channels) {
             return Err(AudioError::Unsupported(format!(
@@ -59,14 +65,16 @@ impl VorbisEncoder {
             )));
         }
         let quality = config.quality.unwrap_or(DEFAULT_QUALITY);
-        let inner = ::vorbis::Encoder::new(::vorbis::EncoderConfig {
+        let mut inner = ::vorbis::Encoder::new(::vorbis::EncoderConfig {
             sample_rate: config.sample_rate,
             channels: config.channels,
             quality,
             comments: Vec::new(),
         })
         .map_err(encode_error)?;
+        inner.set_threads(config.threads);
         Ok(Self {
+            threads: config.threads,
             inner,
             channels: config.channels,
             sample_rate: config.sample_rate,
@@ -157,7 +165,7 @@ mod tests {
     use crate::audio::{AudioCodec, AudioDecoder};
 
     fn config(sample_rate: u32, channels: u8, quality: Option<f32>) -> AudioEncoderConfig {
-        AudioEncoderConfig { codec: AudioCodec::Vorbis, sample_rate, channels, bitrate: 0, quality, layout: None }
+        AudioEncoderConfig { codec: AudioCodec::Vorbis, sample_rate, channels, bitrate: 0, quality, layout: None, threads: 0 }
     }
 
     #[test]

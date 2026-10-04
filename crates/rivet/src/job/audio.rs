@@ -794,6 +794,29 @@ impl<'a> EncodeState<'a> {
         }
     }
 
+    /// The encoder's configuration for input at `sample_rate` coded as
+    /// `out_layout`.
+    fn encoder_config(&self, sample_rate: u32, out_layout: &ChannelLayout) -> AudioEncoderConfig {
+        AudioEncoderConfig {
+            codec: self.codec,
+            sample_rate,
+            channels: out_layout.len() as u8,
+            // 0 = let the encoder derive it from the layout: for Opus 64k
+            // per uncoupled stream + 96k per coupled pair (64k mono, 96k
+            // stereo, 320k 5.1, 416k 7.1); for MP3 128k stereo, 64k mono;
+            // for AAC 64k mono, 128k stereo, 384k 5.1, 512k 7.1; the
+            // other codecs' own (`OutputSpec::audio_bitrate`).
+            bitrate: self.req.bitrate.unwrap_or(0),
+            quality: self.req.quality,
+            // The speakers, for the codecs whose arrangements a channel
+            // count does not name (AC-3, DTS).
+            layout: Some(out_layout.clone()),
+            // This job's share of the machine, for the encoders that
+            // would otherwise start a worker per core.
+            threads: crate::thread_budget::per_job(),
+        }
+    }
+
     /// The width and layout of the frames seen last, or of the track.
     fn last_input(&self, track_channels: u8) -> (u8, Option<ChannelLayout>) {
         self.last.clone().unwrap_or((track_channels, None))
@@ -823,21 +846,7 @@ impl<'a> EncodeState<'a> {
         };
         if self.enc.is_none() {
             let out_layout = self.output_layout(&source)?;
-            let enc = audio_encoder(AudioEncoderConfig {
-                codec: self.codec,
-                sample_rate: filtered.sample_rate,
-                channels: out_layout.len() as u8,
-                // 0 = let the encoder derive it from the layout: for Opus 64k
-                // per uncoupled stream + 96k per coupled pair (64k mono, 96k
-                // stereo, 320k 5.1, 416k 7.1); for MP3 128k stereo, 64k mono;
-                // for AAC 64k mono, 128k stereo, 384k 5.1, 512k 7.1; the
-                // other codecs' own (`OutputSpec::audio_bitrate`).
-                bitrate: self.req.bitrate.unwrap_or(0),
-                quality: self.req.quality,
-                // The speakers, for the codecs whose arrangements a channel
-                // count does not name (AC-3, DTS).
-                layout: Some(out_layout.clone()),
-            })
+            let enc = audio_encoder(self.encoder_config(filtered.sample_rate, &out_layout))
             .with_context(|| format!("{:?} encoder", self.codec))?;
             self.enc = Some(enc);
             self.in_rate = filtered.sample_rate;
@@ -1145,6 +1154,24 @@ pub(super) fn audio_codec_string(info: &AudioInfo) -> String {
                 Some(aot) => format!("mp4a.40.{aot}"),
                 None => codec::codec_strings::AAC_LC_CODEC_STRING.to_string(),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod thread_budget_tests {
+    use super::*;
+
+    /// The encoder is handed an explicit thread count, this job's share of
+    /// the machine — never 0, which the FLAC / ALAC / MP3 / Vorbis encoders
+    /// read as one worker per core whatever else is running.
+    #[test]
+    fn the_encoder_gets_the_jobs_share_of_the_machine() {
+        for codec in [AudioCodec::Mp3, AudioCodec::Vorbis, AudioCodec::Flac { bits_per_sample: 16, level: FlacLevel::Default }, AudioCodec::Alac { bits_per_sample: 16 }] {
+            let state = EncodeState::new(AudioRequest::plain(AudioCodecPolicy::Auto), codec);
+            let cfg = state.encoder_config(48_000, &ChannelLayout::named("stereo"));
+            assert!(cfg.threads >= 1, "{codec:?}: no explicit thread count");
+            assert!(cfg.threads <= crate::thread_budget::parallelism(), "{codec:?}: more threads than the machine");
         }
     }
 }

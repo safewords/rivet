@@ -138,7 +138,7 @@ fn encode_plane_set(rgba: &[u8], width: u32, layout: &Layout, q: u32, plane: Pla
     let height = (rgba.len() / 4 / width as usize) as u32;
     let tiles: Vec<(u32, u32)> =
         (0..layout.rows).flat_map(|r| (0..layout.columns).map(move |c| (c * layout.tile_w, r * layout.tile_h))).collect();
-    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(tiles.len()).max(1);
+    let workers = crate::thread_budget::per_job().min(tiles.len()).max(1);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut out: Vec<Option<Result<Coded>>> = (0..tiles.len()).map(|_| None).collect();
     let slots = std::sync::Mutex::new(&mut out);
