@@ -404,12 +404,23 @@ pub fn decode_capabilities() -> Vec<DecodeSupport> {
 /// lone pump decodes the source once for the whole ladder, so one decoder
 /// owning the cores is the intended shape (as `h26x_sw`); the output does
 /// not depend on the count.
-pub(crate) fn sw_decode_threads(env: &str) -> usize {
-    std::env::var(env)
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or_else(|| crate::threads::cap(std::thread::available_parallelism().map_or(1, |n| n.get())))
+///
+/// `share` is how many decoders run at once ([`create_decoder_shared`]): the
+/// machine's parallelism is divided among them before the budget applies. An
+/// explicit `env` count is per decoder and is taken as it is.
+pub(crate) fn sw_decode_threads(env: &str, share: usize) -> usize {
+    shared_decode_threads(
+        std::env::var(env).ok().and_then(|v| v.trim().parse::<usize>().ok()),
+        std::thread::available_parallelism().map_or(1, |n| n.get()),
+        share,
+    )
+}
+
+/// [`sw_decode_threads`] from its inputs: an explicit count as it is, else
+/// the machine divided `share` ways and held to this thread's
+/// [budget](crate::threads) — never below one.
+pub(crate) fn shared_decode_threads(explicit: Option<usize>, machine: usize, share: usize) -> usize {
+    explicit.filter(|&n| n > 0).unwrap_or_else(|| crate::threads::cap((machine / share.max(1)).max(1)))
 }
 
 pub fn create_decoder(codec: &str, info: StreamInfo) -> Result<Box<dyn Decoder>> {
@@ -429,6 +440,19 @@ pub fn create_decoder(codec: &str, info: StreamInfo) -> Result<Box<dyn Decoder>>
 pub fn create_decoder_on(
     codec: &str,
     info: StreamInfo,
+    gpu_index: Option<u32>,
+) -> Result<Box<dyn Decoder>> {
+    create_decoder_shared(codec, info, gpu_index, 1)
+}
+
+/// [`create_decoder_on`] for one of `share` decoders running at once — the
+/// ladder's range-split decode runs several software decoders side by side.
+/// A software decoder that spreads over the machine's threads takes a
+/// `1/share` part of them instead, so the decoders together use the machine
+/// once rather than `share` times over. Hardware decoders ignore it.
+pub fn create_decoder_shared(
+    codec: &str,
+    info: StreamInfo,
     // Only the hardware tiers read the pin; a build with none of them has
     // nothing to pin it to, and the parameter stays for callers' sake.
     #[cfg_attr(
@@ -436,6 +460,7 @@ pub fn create_decoder_on(
         allow(unused_variables)
     )]
     gpu_index: Option<u32>,
+    share: usize,
 ) -> Result<Box<dyn Decoder>> {
     let codec_lower = codec.to_ascii_lowercase();
     #[cfg(any(feature = "nvidia", feature = "amd", feature = "qsv"))]
@@ -483,7 +508,7 @@ pub fn create_decoder_on(
             vp9_hw_guard::NVDEC_POLICY,
             Box::new(move |i| Ok(nvdec::NvdecDecoder::new(i.clone(), vendor_index))),
         );
-        return Ok(guarded(decoder, &codec_lower, info));
+        return Ok(guarded(decoder, &codec_lower, info, share));
     }
 
     // AMD / AMF hardware decode — hand-rolled AMF FFI (`amd` feature).
@@ -519,7 +544,7 @@ pub fn create_decoder_on(
                         vp9_hw_guard::AMF_POLICY,
                         Box::new(move |i| Ok(Box::new(amf_dec::AmfDecoder::new(i.clone(), vendor_index)?) as Box<dyn Decoder>)),
                     );
-                    return Ok(guarded(decoder, &codec_lower, info));
+                    return Ok(guarded(decoder, &codec_lower, info, share));
                 }
                 Err(e) => tracing::warn!(
                     error = %e,
@@ -572,7 +597,7 @@ pub fn create_decoder_on(
                         vp9_hw_guard::QSV_POLICY,
                         Box::new(move |i| Ok(Box::new(qsv_dec::QsvDecoder::new(i.clone(), vendor_index)?) as Box<dyn Decoder>)),
                     );
-                    return Ok(guarded(decoder, &codec_lower, info));
+                    return Ok(guarded(decoder, &codec_lower, info, share));
                 }
                 Err(e) => tracing::warn!(
                     error = %e,
@@ -584,7 +609,7 @@ pub fn create_decoder_on(
         }
     }
 
-    create_software_decoder(&codec_lower, info)
+    create_software_decoder(&codec_lower, info, share)
 }
 
 /// The tiers that need no hardware.
@@ -593,12 +618,12 @@ pub fn create_decoder_on(
 /// being chosen can still reach them — see [`HardwareThenSoftware`]. Inline,
 /// they were reachable only by falling off the end of the tier list, which a
 /// decoder that has already been returned can never do.
-fn create_software_decoder(codec_lower: &str, info: StreamInfo) -> Result<Box<dyn Decoder>> {
+fn create_software_decoder(codec_lower: &str, info: StreamInfo, share: usize) -> Result<Box<dyn Decoder>> {
     // ProRes: no hardware tier takes it, and nothing below decodes it.
     if prores_sw::supports(codec_lower) {
         let mut prores_info = info;
         prores_info.codec = codec_lower.to_string();
-        let dec = prores_sw::ProresDecoder::new(prores_info)?;
+        let dec = prores_sw::ProresDecoder::new_shared(prores_info, share)?;
         tracing::info!(backend = "prores", "ProRes software decode engaged (rivet's own decoder)");
         return Ok(Box::new(dec));
     }
@@ -606,7 +631,7 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo) -> Result<Box<dy
     if vp8_sw::supports(codec_lower) {
         let mut vp8_info = info;
         vp8_info.codec = codec_lower.to_string();
-        let dec = vp8_sw::Vp8Decoder::new(vp8_info)?;
+        let dec = vp8_sw::Vp8Decoder::new_shared(vp8_info, share)?;
         tracing::info!(backend = "vp8", "VP8 software decode engaged (rivet's own decoder)");
         return Ok(Box::new(dec));
     }
@@ -614,7 +639,7 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo) -> Result<Box<dy
     if vp9_sw::supports(codec_lower) {
         let mut vp9_info = info;
         vp9_info.codec = codec_lower.to_string();
-        let dec = vp9_sw::Vp9Decoder::new(vp9_info)?;
+        let dec = vp9_sw::Vp9Decoder::new_shared(vp9_info, share)?;
         tracing::info!(backend = "vp9", "VP9 software decode engaged (rivet's own decoder)");
         return Ok(Box::new(dec));
     }
@@ -622,7 +647,7 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo) -> Result<Box<dy
     if mpeg2_sw::supports(codec_lower) {
         let mut mpeg2_info = info;
         mpeg2_info.codec = codec_lower.to_string();
-        let dec = mpeg2_sw::Mpeg2Decoder::new(mpeg2_info)?;
+        let dec = mpeg2_sw::Mpeg2Decoder::new_shared(mpeg2_info, share)?;
         tracing::info!(backend = "mpeg2", "MPEG-2 software decode engaged (rivet's own decoder)");
         return Ok(Box::new(dec));
     }
@@ -639,7 +664,7 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo) -> Result<Box<dy
     if av1_sw::supports(codec_lower) {
         let mut av1_info = info;
         av1_info.codec = codec_lower.to_string();
-        return Ok(Box::new(av1_sw::Av1Decoder::new(av1_info)?));
+        return Ok(Box::new(av1_sw::Av1Decoder::new_shared(av1_info, share)?));
     }
 
     // The native H.264 / HEVC decoders: the only software tier for them.
@@ -655,7 +680,7 @@ fn create_software_decoder(codec_lower: &str, info: StreamInfo) -> Result<Box<dy
     if h26x_sw::supports(codec_lower) && !h26x_disabled() {
         let mut native_info = info;
         native_info.codec = codec_lower.to_string();
-        let dec = h26x_sw::H26xDecoder::new(native_info)?;
+        let dec = h26x_sw::H26xDecoder::new_shared(native_info, share)?;
         tracing::info!(
             backend = "h26x",
             codec = %codec_lower,
@@ -739,9 +764,9 @@ fn vp9_guarded(
 /// is a real failure, not a capability question, and pretending otherwise
 /// would silently re-decode a whole video.
 #[cfg(any(feature = "nvidia", feature = "amd", feature = "qsv"))]
-fn guarded(primary: Box<dyn Decoder>, codec_lower: &str, info: StreamInfo) -> Box<dyn Decoder> {
+fn guarded(primary: Box<dyn Decoder>, codec_lower: &str, info: StreamInfo, share: usize) -> Box<dyn Decoder> {
     let codec = codec_lower.to_string();
-    Box::new(HardwareThenSoftware::new("hardware", primary, Box::new(move || create_software_decoder(&codec, info))))
+    Box::new(HardwareThenSoftware::new("hardware", primary, Box::new(move || create_software_decoder(&codec, info, share))))
 }
 
 /// Builds the next decoder tier down, once.

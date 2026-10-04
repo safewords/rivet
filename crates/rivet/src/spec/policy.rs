@@ -635,12 +635,18 @@ impl Default for OutputMode {
 /// Anything that cannot be split safely decodes whole under every variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DecodePolicy {
-    /// Split the decode into one range per decode-capable card of the encode
-    /// policy's set, where the source allows; whole otherwise. The default.
+    /// Split the decode into several ranges per decode-capable card of the
+    /// encode policy's set, where the source allows; whole otherwise. Each
+    /// card pulls the next range when it is free, so a fast card decodes more
+    /// of the source than a slow one, and near the end a card that would
+    /// finish a range after the others had finished everything leaves it to
+    /// them. The default.
     #[default]
     Auto,
-    /// One decoder for the whole source, on the first decode-capable card of
-    /// the encode policy's set. What every job did before ranges existed; the
+    /// One decoder for the whole source, on the decode-capable card of the
+    /// encode policy's set expected to be fastest (measured earlier in the
+    /// process, else judged from its memory and PCIe link — not simply the
+    /// first one detected). What every job did before ranges existed; the
     /// control arm of any comparison, and the choice for a host whose decode
     /// engines are already saturated.
     Whole,

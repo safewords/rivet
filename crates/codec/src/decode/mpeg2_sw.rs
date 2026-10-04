@@ -30,12 +30,18 @@ pub struct Mpeg2Decoder {
 
 impl Mpeg2Decoder {
     pub fn new(info: StreamInfo) -> Result<Self> {
+        Self::new_shared(info, 1)
+    }
+
+    /// One of `share` decoders running at once: a `1/share` part of the
+    /// machine's threads ([`sw_decode_threads`](super::sw_decode_threads)).
+    pub fn new_shared(info: StreamInfo, share: usize) -> Result<Self> {
         let codec = info.codec.to_ascii_lowercase();
         if !supports(&codec) {
             bail!("the MPEG-2 decoder decodes MPEG-1/2 video, not '{codec}'");
         }
         let mut inner = mpeg2::Decoder::new();
-        inner.set_threads(super::sw_decode_threads("RIVET_MPEG2_DECODE_THREADS"));
+        inner.set_threads(super::sw_decode_threads("RIVET_MPEG2_DECODE_THREADS", share));
         Ok(Self { inner, info, ready: VecDeque::new(), next_pts: 0 })
     }
 
@@ -125,7 +131,7 @@ mod tests {
     #[test]
     fn decodes_on_the_software_decoder_threads() {
         let dec = Mpeg2Decoder::new(info("mpeg2")).expect("decoder");
-        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_MPEG2_DECODE_THREADS"));
+        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_MPEG2_DECODE_THREADS", 1));
     }
 
     #[test]

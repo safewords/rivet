@@ -958,6 +958,7 @@ async fn run_splice_job_inner(
             ),
             gpu_index: decode_gpu,
             sample_range: None,
+            software_share: 1,
             rotation_degrees: prep.header.rotation_degrees,
             filters: Arc::clone(&filter_chain),
             decimate: clip_decimate,

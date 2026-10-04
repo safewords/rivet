@@ -74,8 +74,27 @@ pub(super) async fn run_single_file(
             "RIVET_FORCE_CHUNKED=1: using the chunk-and-stitch engine regardless of GPU count"
         );
     }
+    // Too few chunks to spread: the chunk engine decodes a whole chunk (ten
+    // GOPs) before its encoder starts, where the serial path streams decode
+    // into encode, so it only pays once there are chunks enough to keep the
+    // cards busy side by side. On devbox a one-rung 1080p file took 2.3 s
+    // chunked against 0.9 s serial at 10 s (one chunk), 5.3 s against 2.4 s
+    // at 30 s (two). Under two chunks per card the job runs serially, on the
+    // card expected to be fastest (`serial_target`).
+    let chunk_frames = u64::from(multigpu::single_file_chunk_frames(spec.gop_frames(frame_rate)));
+    let chunks = total_input_frames.div_ceil(chunk_frames.max(1)) * spec.rungs.len() as u64;
+    let one_chunk = chunks < 2 * gpu_pool.capacity().max(1) as u64;
+    if one_chunk && spec.encode_policy.spreads() && gpu_pool.capacity() > 1 && !force_chunked {
+        tracing::info!(
+            total_input_frames,
+            chunks,
+            cards = gpu_pool.capacity(),
+            "too few chunks to spread across the cards: encoding serially on the card expected to be fastest"
+        );
+    }
     if spec.encode_policy.spreads()
         && total_input_frames > 0
+        && (!one_chunk || force_chunked)
         && (gpu_pool.capacity() > 1 || (force_chunked && gpu_pool.capacity() == 1))
         // Trim/splice jobs take the serial path: the multi-GPU chunker sizes its
         // chunks from the full source frame count, which a trim invalidates.
@@ -165,6 +184,7 @@ pub(super) async fn run_single_file(
         ),
         gpu_index: decode_gpu,
         sample_range: None,
+        software_share: 1,
         rotation_degrees: header.rotation_degrees,
         filters: Arc::clone(&filter_chain),
         decimate,

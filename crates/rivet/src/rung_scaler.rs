@@ -50,6 +50,11 @@ pub struct RungScalerConfig {
     /// as final would tell the muxer the stream ended in the middle of the
     /// video.
     pub is_final_range: bool,
+    /// Frames at the head of the input that are not this scaler's own: the
+    /// previous chunk's tail, decoded by this range only to be its first
+    /// chunk's lead-in ([`DecodeRange::lead_in`](crate::decode_pump::DecodeRange::lead_in)).
+    /// They become the carry, exactly as if this scaler had chunked them.
+    pub lead_in: usize,
 }
 
 /// Blocking scaler loop. Designed for `tokio::task::spawn_blocking`.
@@ -104,6 +109,7 @@ fn scaler_loop(
     // Trailing frames of the previous chunk, replayed as this chunk's lead-in
     // so its encoder starts warm. Held as a ring of at most `OVERLAP_FRAMES`.
     let mut carry: Vec<VideoFrame> = Vec::with_capacity(cfg.overlap);
+    let mut lead_in_left = cfg.lead_in;
 
     let emit = |lead: &[VideoFrame],
                 chunk_frames: Vec<VideoFrame>,
@@ -141,6 +147,16 @@ fn scaler_loop(
                     cfg.rung_idx, cfg.target_width, cfg.target_height
                 )
             })?;
+        if lead_in_left > 0 {
+            lead_in_left -= 1;
+            if cfg.overlap > 0 {
+                carry.push(scaled);
+                if carry.len() > cfg.overlap {
+                    carry.remove(0);
+                }
+            }
+            continue;
+        }
         current_chunk.push(scaled);
         if current_chunk.len() >= chunk_size {
             let full = std::mem::replace(&mut current_chunk, Vec::with_capacity(chunk_size));
@@ -192,6 +208,7 @@ mod tests {
             overlap: 16,
             first_segment_idx: 0,
             is_final_range: true,
+            lead_in: 0,
         };
         let copy = cfg.clone();
         assert_eq!(copy.rung_idx, 1);

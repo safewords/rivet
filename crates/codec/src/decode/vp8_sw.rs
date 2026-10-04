@@ -36,11 +36,17 @@ pub struct Vp8Decoder {
 
 impl Vp8Decoder {
     pub fn new(info: StreamInfo) -> Result<Self> {
+        Self::new_shared(info, 1)
+    }
+
+    /// One of `share` decoders running at once: a `1/share` part of the
+    /// machine's threads ([`sw_decode_threads`](super::sw_decode_threads)).
+    pub fn new_shared(info: StreamInfo, share: usize) -> Result<Self> {
         let codec = info.codec.to_ascii_lowercase();
         if !supports(&codec) {
             bail!("the VP8 decoder decodes VP8, not '{codec}'");
         }
-        Ok(Self { inner: vp8::Decoder::with_threads(super::sw_decode_threads("RIVET_VP8_DECODE_THREADS")), info, ready: VecDeque::new(), next_pts: 0 })
+        Ok(Self { inner: vp8::Decoder::with_threads(super::sw_decode_threads("RIVET_VP8_DECODE_THREADS", share)), info, ready: VecDeque::new(), next_pts: 0 })
     }
 }
 
@@ -103,7 +109,7 @@ mod tests {
     #[test]
     fn decodes_on_the_software_decoder_threads() {
         let dec = Vp8Decoder::new(info("vp8")).expect("decoder");
-        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_VP8_DECODE_THREADS"));
+        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_VP8_DECODE_THREADS", 1));
     }
 
     #[test]

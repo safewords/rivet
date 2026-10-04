@@ -334,16 +334,19 @@ enum Command {
         #[arg(long)]
         gpu: Option<u32>,
         /// Encode serially on a single GPU instead of chunk-encoding across all
-        /// GPUs. Without `--gpu N` this picks the first GPU. Default: all GPUs.
+        /// GPUs. Without `--gpu N` this picks the GPU expected to be fastest.
+        /// Default: all GPUs.
         #[arg(long)]
         single_gpu: bool,
         /// Constrain encode to one GPU vendor family (e.g. all NVIDIA cards,
         /// ignoring an integrated AMD/Intel GPU).
         #[arg(long, value_enum)]
         gpu_family: Option<GpuFamilyArg>,
-        /// The decode plan: `auto` (default — split the source into one range
-        /// per capable card where the bitstream allows, each card decoding its
-        /// own stretch), `whole` (one decoder for the whole source), `fastest`
+        /// The decode plan: `auto` (default — cut the source into several
+        /// ranges per capable card where the bitstream allows, each card
+        /// pulling the next one when it is free, so a faster card decodes
+        /// more), `whole` (one decoder for the whole source, on the card
+        /// expected to be fastest), `fastest`
         /// (benchmark the cards, one decoder on the quickest), `gpu:N` (one
         /// decoder pinned to card N — e.g. an iGPU while the dGPUs encode) or
         /// `ranges:N`. The source only splits where it safely can — an

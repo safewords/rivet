@@ -69,6 +69,11 @@ fn coverage_error(label: &str, expected: usize, indices: &[usize]) -> Option<Str
 /// ~130 chunks to spread across the GPUs.
 const GOPS_PER_CHUNK: u32 = 10;
 
+/// Frames per single-file chunk at this GOP: [`GOPS_PER_CHUNK`] GOPs.
+pub fn single_file_chunk_frames(keyframe_interval: u32) -> u32 {
+    keyframe_interval.saturating_mul(GOPS_PER_CHUNK).max(1)
+}
+
 /// How the chunk lead-in margin is made safe.
 ///
 /// A margin is only correct if the first *kept* frame is a random-access point,
@@ -125,7 +130,7 @@ pub async fn run_multigpu_single_file(
         return Ok(Vec::new());
     }
     let shape = LadderShape {
-        frames_per_chunk: params.keyframe_interval.saturating_mul(GOPS_PER_CHUNK).max(1),
+        frames_per_chunk: single_file_chunk_frames(params.keyframe_interval),
         overlap: lead_in_margin(params.keyframe_interval),
     };
     let total_segments = total_segments_for_rung(params.total_input_frames, shape.frames_per_chunk);
@@ -234,9 +239,9 @@ pub async fn run_multigpu_single_file(
     drop(finalizer_tx);
 
     // Decode, scale, encode ------------------------------------------------
-    let ranges = ladder::plan_ranges(&params, shape, capacity);
-    let (pumps, receivers) = ladder::spawn_pumps(&params, &ranges, n);
-    let scalers = ladder::spawn_scalers(rungs, &ranges, shape, receivers, &ladder);
+    let plan = ladder::plan_decode(&params, shape, capacity);
+    let pumps = ladder::spawn_decode(&params, plan, rungs, shape, &ladder);
+    let scalers = tokio::task::JoinSet::new();
 
     let ctx = WorkerCtx {
         codec: params.codec,
@@ -266,7 +271,7 @@ pub async fn run_multigpu_single_file(
             })
         },
     );
-    let (workers, _) = match ladder::spawn_workers(&params, &ctx, rungs, &ladder, encode).await {
+    let (workers, _) = match ladder::spawn_workers(&params, &ctx, rungs, shape, &ladder, encode).await {
         Ok(w) => w,
         Err(e) => {
             // Stop the pumps and scalers already running in blocking threads;

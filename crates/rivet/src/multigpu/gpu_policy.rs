@@ -755,19 +755,36 @@ fn pool_at(policy: EncodePolicy, codec: VideoCodec, ten_bit: bool) -> Result<Arc
 /// preference: `--encode family:intel` on a host with no Intel card encoded
 /// on NVENC, and said so only at `info`.
 ///
-/// An unpinned policy keeps the index it always had (the policy's first
-/// card, or none) and no vendor pin: the chain may still fall to software
-/// for it, which is the documented meaning of "no pin". A software pool pins
-/// nothing either way.
+/// An unpinned policy carries no vendor pin: the chain may still fall to
+/// software for it, which is the documented meaning of "no pin". Its index is
+/// the policy's first card, or none — unless the pool holds several cards,
+/// when it is the one expected to be fastest (an index alone is a
+/// preference the chain honours on whichever vendor's tier holds it). A
+/// software pool pins nothing either way.
+///
+/// Where the pool holds several cards, "first" is the card expected to be
+/// fastest ([`speed::fastest_of`](super::speed::fastest_of): measured in this
+/// process, else from the card's memory and PCIe link), not the first one
+/// detected: on devbox that is an A380 on a 3.0 x2 chipset link next to an
+/// A750 on 4.0 x16, and a serial job on the A380 took 2-3.5x as long.
 pub fn serial_target(policy: EncodePolicy, pool: &GpuPool) -> (Option<u32>, Option<GpuVendor>) {
     if pool.is_software() {
         return (None, None);
     }
+    let slots = pool.snapshot_leases();
+    let fastest = || {
+        let keys: Vec<super::speed::DeviceKey> =
+            slots.iter().map(|s| super::speed::DeviceKey::Gpu(s.index)).collect();
+        super::speed::fastest_of(super::speed::ANY_ENCODE_ROLE, &keys).map(|i| &slots[i])
+    };
     if pins_silicon(policy) {
-        return match pool.snapshot_leases().first() {
+        return match fastest() {
             Some(slot) => (Some(slot.index), Some(slot.vendor)),
             None => (None, None),
         };
+    }
+    if slots.len() > 1 {
+        return (fastest().map(|slot| slot.index), None);
     }
     (serial_gpu_for_policy(policy), None)
 }
@@ -1132,6 +1149,20 @@ mod tests {
         for policy in [EncodePolicy::AllGpus, EncodePolicy::PerRung, EncodePolicy::SingleGpu(None)] {
             assert_eq!(serial_target(policy, &pool), (None, None), "{policy:?}");
         }
+    }
+
+    /// Several cards: the one expected to be fastest, not the first
+    /// detected — pinned with its vendor under a policy that names silicon,
+    /// by index alone otherwise. Equal expectations keep detection order.
+    #[test]
+    fn several_cards_serve_a_serial_job_from_the_fastest() {
+        let pool = GpuPool::new(&[synth(40, GpuVendor::Intel), synth(41, GpuVendor::Intel)]);
+        assert_eq!(serial_target(EncodePolicy::Family(GpuFamily::Intel), &pool), (Some(40), Some(GpuVendor::Intel)));
+        assert_eq!(serial_target(EncodePolicy::SingleGpu(None), &pool), (Some(40), None));
+        super::super::speed::record_rate("encode:any", super::super::speed::DeviceKey::Gpu(40), 100.0);
+        super::super::speed::record_rate("encode:any", super::super::speed::DeviceKey::Gpu(41), 300.0);
+        assert_eq!(serial_target(EncodePolicy::Family(GpuFamily::Intel), &pool), (Some(41), Some(GpuVendor::Intel)));
+        assert_eq!(serial_target(EncodePolicy::AllGpus, &pool), (Some(41), None));
     }
 
     /// A software pool has no card to name; the chain reaches software on

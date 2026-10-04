@@ -87,6 +87,7 @@ pub struct H26xDecoder {
     produced: bool,
 }
 
+
 /// Whether the native tier serves `codec_lower`.
 pub fn supports(codec_lower: &str) -> bool {
     matches!(
@@ -99,11 +100,23 @@ impl H26xDecoder {
     /// Build a decoder for `info.codec` (or the label passed by the
     /// dispatcher, already lower-cased and stored in `info`).
     pub fn new(info: StreamInfo) -> Result<Self> {
+        Self::new_shared(info, 1)
+    }
+
+    /// One of `share` decoders running at once: `H26X_THREADS` as it is, else
+    /// a `1/share` part of the machine held to the thread's budget
+    /// ([`shared_decode_threads`](super::shared_decode_threads)).
+    pub fn new_shared(info: StreamInfo, share: usize) -> Result<Self> {
         let codec = info.codec.to_ascii_lowercase();
+        let threads = super::shared_decode_threads(
+            std::env::var("H26X_THREADS").ok().and_then(|v| v.trim().parse().ok()),
+            std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 32),
+            share,
+        );
         let inner = match codec.as_str() {
-            "h264" | "avc1" | "avc" => Inner::H264(h26x::h264::H264Decoder::new()),
+            "h264" | "avc1" | "avc" => Inner::H264(h26x::h264::H264Decoder::with_threads(threads)),
             "h265" | "hevc" | "hvc1" | "hev1" | "hvc2" | "hev2" => {
-                Inner::Hevc(h26x::hevc::HevcDecoder::new())
+                Inner::Hevc(h26x::hevc::HevcDecoder::with_threads(threads))
             }
             other => bail!("h26x decodes H.264 and HEVC, not '{other}'"),
         };
@@ -262,6 +275,18 @@ impl Decoder for H26xDecoder {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn concurrent_decoders_divide_the_threads() {
+        use super::super::shared_decode_threads as threads;
+        assert_eq!(threads(None, 32, 1), 32);
+        assert_eq!(threads(None, 32, 3), 10, "the machine divided among the decoders");
+        assert_eq!(threads(Some(8), 32, 2), 8, "an explicit count is per decoder");
+        assert_eq!(crate::threads::with_budget(6, || threads(None, 32, 4)), 6, "held to the pump's budget");
+        assert_eq!(crate::threads::with_budget(16, || threads(None, 32, 4)), 8, "the budget is a ceiling");
+        assert_eq!(threads(Some(0), 6, 2), 3, "0 is no setting");
+        assert_eq!(threads(None, 2, 4), 1, "never below one");
+    }
+
     use super::*;
     use crate::frame::ColorSpace;
 
@@ -286,6 +311,7 @@ mod tests {
         assert!(H26xDecoder::new(info("hevc")).is_ok());
         assert!(H26xDecoder::new(info("hvc1")).is_ok());
         assert!(H26xDecoder::new(info("av1")).is_err());
+        assert!(H26xDecoder::new_shared(info("h264"), 4).is_ok());
         assert!(supports("avc1") && supports("hev1") && !supports("vp9"));
     }
 

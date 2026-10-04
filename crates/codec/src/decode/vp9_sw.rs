@@ -32,12 +32,18 @@ pub struct Vp9Decoder {
 
 impl Vp9Decoder {
     pub fn new(info: StreamInfo) -> Result<Self> {
+        Self::new_shared(info, 1)
+    }
+
+    /// One of `share` decoders running at once: a `1/share` part of the
+    /// machine's threads ([`sw_decode_threads`](super::sw_decode_threads)).
+    pub fn new_shared(info: StreamInfo, share: usize) -> Result<Self> {
         let codec = info.codec.to_ascii_lowercase();
         if !supports(&codec) {
             bail!("the VP9 decoder decodes VP9, not '{codec}'");
         }
         let mut inner = vp9::Decoder::new();
-        inner.set_threads(super::sw_decode_threads("RIVET_VP9_DECODE_THREADS"));
+        inner.set_threads(super::sw_decode_threads("RIVET_VP9_DECODE_THREADS", share));
         Ok(Self { inner, info, ready: VecDeque::new(), next_pts: 0 })
     }
 
@@ -120,7 +126,21 @@ mod tests {
     #[test]
     fn decodes_on_the_software_decoder_threads() {
         let dec = Vp9Decoder::new(info("vp9")).expect("decoder");
-        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_VP9_DECODE_THREADS"));
+        assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_VP9_DECODE_THREADS", 1));
+    }
+
+    /// One of several decoders running at once (the ladder's range-split
+    /// decode) takes its share of the machine, not all of it.
+    #[test]
+    fn a_shared_decoder_takes_its_share_of_the_threads() {
+        let alone = Vp9Decoder::new(info("vp9")).expect("decoder").inner.threads();
+        let shared = Vp9Decoder::new_shared(info("vp9"), 4).expect("decoder").inner.threads();
+        assert_eq!(shared, crate::decode::sw_decode_threads("RIVET_VP9_DECODE_THREADS", 4));
+        if std::env::var_os("RIVET_VP9_DECODE_THREADS").is_none() {
+            let machine = std::thread::available_parallelism().map_or(1, |n| n.get());
+            assert_eq!(alone, machine);
+            assert_eq!(shared, (machine / 4).max(1));
+        }
     }
 
     /// Inside a decode pump's thread budget the decoder takes the budget.

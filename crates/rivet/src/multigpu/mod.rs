@@ -30,7 +30,7 @@
 //!   stream the caller muxes. Same range-split decode, same ladder workers.
 //! - Both are **selectable**, not hard-wired, and each question has exactly
 //!   one knob: [`DecodePolicy`](crate::spec::DecodePolicy) is the whole decode
-//!   plan (split one range per capable card / whole / a pinned card / the
+//!   plan (split into ranges the capable cards pull / whole / a pinned card / the
 //!   fastest card / N ranges), [`EncodePolicy`](crate::spec::EncodePolicy) is
 //!   the whole encode plan (every card ladder-scheduled / every card pinned per
 //!   rung / one vendor family / a single card, serial),
@@ -46,6 +46,7 @@ mod gpu_policy;
 mod hls;
 mod ladder;
 mod single_file;
+pub(crate) mod speed;
 
 #[cfg(test)]
 pub(crate) use gpu_policy::{cards_for_policy, host_verdicts};
@@ -55,7 +56,7 @@ pub use gpu_policy::{
 };
 pub(crate) use gpu_policy::check_rate_pool;
 pub use hls::run_multigpu_hls;
-pub use single_file::{RungPackets, run_multigpu_single_file};
+pub use single_file::{RungPackets, run_multigpu_single_file, single_file_chunk_frames};
 
 /// The run was stopped by its caller's cancel signal
 /// ([`MultiGpuParams::cancel`]) rather than by a failure. Comes back as the
@@ -269,6 +270,7 @@ impl MultiGpuParams<'_> {
                     ),
                     gpu_index: gpu,
                     sample_range: None,
+                    software_share: 1,
                     rotation_degrees: self.header.rotation_degrees,
                     filters: self.filters.clone(),
                     // `frame_rate` is the source's, capped.
