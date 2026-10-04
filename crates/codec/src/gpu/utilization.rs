@@ -114,10 +114,10 @@ impl GpuUtilizationReader {
                 let max = std::fs::read_to_string(entry.path().join("gt_max_freq_mhz"))
                     .ok()
                     .and_then(|s| s.trim().parse::<u32>().ok());
-                if let (Some(cur), Some(max)) = (cur, max) {
-                    if max > 0 {
-                        out.util_percent = ((cur as u64 * 100 / max as u64).min(100)) as u8;
-                    }
+                if let (Some(cur), Some(max)) = (cur, max)
+                    && max > 0
+                {
+                    out.util_percent = ((cur as u64 * 100 / max as u64).min(100)) as u8;
                 }
                 let used =
                     std::fs::read_to_string(entry.path().join("device").join("mem_info_vram_used"))

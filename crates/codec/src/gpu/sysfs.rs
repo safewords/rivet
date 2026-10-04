@@ -13,10 +13,10 @@ pub(super) fn read_drm_vram_mib(device_path: &std::path::Path) -> u64 {
     //   /sys/bus/pci/devices/<bdf>/drm/cardN/device/mem_info_vram_total
     //   /sys/bus/pci/devices/<bdf>/i915_capabilities (Intel; not VRAM)
     let direct = device_path.join("mem_info_vram_total");
-    if let Ok(s) = std::fs::read_to_string(&direct) {
-        if let Ok(bytes) = s.trim().parse::<u64>() {
-            return bytes / 1024 / 1024;
-        }
+    if let Ok(s) = std::fs::read_to_string(&direct)
+        && let Ok(bytes) = s.trim().parse::<u64>()
+    {
+        return bytes / 1024 / 1024;
     }
     // Walk drm/cardN/device/mem_info_vram_total (one extra hop on
     // some kernel versions).
@@ -24,10 +24,10 @@ pub(super) fn read_drm_vram_mib(device_path: &std::path::Path) -> u64 {
     if let Ok(entries) = std::fs::read_dir(&drm_dir) {
         for entry in entries.flatten() {
             let candidate = entry.path().join("device").join("mem_info_vram_total");
-            if let Ok(s) = std::fs::read_to_string(&candidate) {
-                if let Ok(bytes) = s.trim().parse::<u64>() {
-                    return bytes / 1024 / 1024;
-                }
+            if let Ok(s) = std::fs::read_to_string(&candidate)
+                && let Ok(bytes) = s.trim().parse::<u64>()
+            {
+                return bytes / 1024 / 1024;
             }
         }
     }
@@ -170,10 +170,10 @@ pub(super) fn read_intel_vram_resident_bytes(bdf_filter: Option<&str>) -> Option
             // are formatted as "<num> <unit>" with unit ∈ {B, KiB,
             // MiB, GiB} per drm-fdinfo.rst.
             for line in content.lines() {
-                if let Some(rest) = line.strip_prefix("drm-resident-local0:") {
-                    if let Some(bytes) = parse_drm_size(rest) {
-                        total_bytes = total_bytes.saturating_add(bytes);
-                    }
+                if let Some(rest) = line.strip_prefix("drm-resident-local0:")
+                    && let Some(bytes) = parse_drm_size(rest)
+                {
+                    total_bytes = total_bytes.saturating_add(bytes);
                 }
             }
         }
