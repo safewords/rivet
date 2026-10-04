@@ -1230,9 +1230,10 @@ impl Av1Mp4Muxer {
         );
 
         // Stream final layout: ftyp + moov + mdat-header + mdat-payload.
-        let out_file = File::create(output_path)
+        // Whole or not at all: a failure below leaves no truncated MP4 at
+        // `output_path` (see `crate::atomic`).
+        let mut out = crate::atomic::AtomicFile::create(output_path)
             .with_context(|| format!("creating output file {}", output_path.display()))?;
-        let mut out = BufWriter::new(out_file);
         out.write_all(&ftyp).context("writing ftyp")?;
         out.write_all(&moov).context("writing moov")?;
         if use_largesize_mdat {
@@ -1342,7 +1343,8 @@ impl Av1Mp4Muxer {
                 );
             }
         }
-        out.flush().context("flushing output")?;
+        out.commit()
+            .with_context(|| format!("committing output file {}", output_path.display()))?;
 
         Ok(())
     }
@@ -1351,8 +1353,11 @@ impl Av1Mp4Muxer {
     /// reads it back. Callers hitting the 4 GB ceiling should use
     /// `finalize_to_file` instead.
     pub fn finalize(self) -> Result<Bytes> {
-        let tmp = NamedTempFile::new().context("creating finalize buffer tempfile")?;
-        let path = tmp.path().to_path_buf();
+        // A private directory rather than an open temporary file: the output
+        // is renamed into place, and Windows refuses a rename over a file
+        // that is still open.
+        let tmp = tempfile::tempdir().context("creating finalize buffer directory")?;
+        let path = tmp.path().join("finalize.mp4");
         self.finalize_to_file(&path)?;
         let mut f = File::open(&path).context("reopening finalize buffer tempfile")?;
         let mut buf = Vec::new();

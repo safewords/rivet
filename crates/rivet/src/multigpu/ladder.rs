@@ -373,6 +373,17 @@ pub(super) fn plan_ranges(params: &MultiGpuParams<'_>, shape: LadderShape, capac
     vec![DecodeRange::whole_source()]
 }
 
+/// The filter thread budget of each of `pumps` decode pumps running at once:
+/// `0` (the filters' own default, the whole machine) for a lone pump, else
+/// the machine divided among them, at least one thread each.
+fn filter_threads_per_pump(pumps: usize) -> usize {
+    if pumps <= 1 {
+        return 0;
+    }
+    let parallelism = std::thread::available_parallelism().map_or(1, |n| n.get());
+    (parallelism / pumps).max(1)
+}
+
 /// One pump per range, each on its own decode-capable card, each fanning out
 /// to one channel per rung. Returns the pump tasks and
 /// `receivers[range][rung]`.
@@ -412,9 +423,14 @@ pub(super) fn spawn_pumps(
             }
         }
         let rt = tokio::runtime::Handle::current();
+        // Several pumps at once share the machine: each one's filters (the
+        // denoisers split frames over threads) get its share of it.
+        let filter_threads = filter_threads_per_pump(ranges.len());
         pump_tasks.spawn(async move {
             tokio::task::spawn_blocking(move || {
-                crate::decode_pump::run_spliced_decode_pump_blocking(clips, senders, rt)
+                codec::filter::with_thread_budget(filter_threads, || {
+                    crate::decode_pump::run_spliced_decode_pump_blocking(clips, senders, rt)
+                })
             })
             .await
             .map_err(|e| anyhow!("decode pump (range {range_idx}) join error: {e}"))
@@ -998,6 +1014,15 @@ async fn stop<R>(run: &mut Running<R>, why: anyhow::Error) -> anyhow::Error {
 mod tests {
     use super::*;
     use bytes::Bytes;
+
+    /// A lone pump's filters keep the machine; several share it.
+    #[test]
+    fn pumps_share_the_filter_threads() {
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        assert_eq!(filter_threads_per_pump(1), 0);
+        assert_eq!(filter_threads_per_pump(2), (cores / 2).max(1));
+        assert_eq!(filter_threads_per_pump(cores * 4), 1);
+    }
     use codec::frame::{ColorSpace, PixelFormat};
     use std::time::Duration;
 

@@ -48,6 +48,33 @@ use bytes::BytesMut;
 
 use crate::frame::{PixelFormat, VideoFrame};
 
+std::thread_local! {
+    /// [`with_thread_budget`]'s limit on this thread (0: none).
+    static THREAD_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Run `f` with the filters it applies on this thread splitting their work
+/// over at most `threads` threads, the calling thread among them (0: no
+/// limit beyond the host's, as outside any budget). For a caller that runs
+/// several filter chains at once — one decode pump per range of a source —
+/// and so must share the machine between them. The output does not depend
+/// on the thread count.
+pub fn with_thread_budget<R>(threads: usize, f: impl FnOnce() -> R) -> R {
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            THREAD_BUDGET.with(|b| b.set(self.0));
+        }
+    }
+    let _restore = Restore(THREAD_BUDGET.with(|b| b.replace(threads)));
+    f()
+}
+
+/// The budget [`with_thread_budget`] set on this thread (0: none).
+pub(crate) fn thread_budget() -> usize {
+    THREAD_BUDGET.with(std::cell::Cell::get)
+}
+
 mod brightness;
 mod contrast;
 mod crop;

@@ -461,3 +461,41 @@ async fn sync_transcode_one_rung_is_the_file_and_several_are_the_status() {
         assert_eq!(resp.status().as_u16(), 200, "{url}");
     }
 }
+
+/// `RIVET_SERVER_JOBS`: a whole number of at least one, else one.
+#[test]
+fn concurrent_jobs_default_to_one() {
+    use super::concurrent_jobs;
+    assert_eq!(concurrent_jobs(None), 1);
+    assert_eq!(concurrent_jobs(Some("3")), 3);
+    assert_eq!(concurrent_jobs(Some(" 2 ")), 2);
+    assert_eq!(concurrent_jobs(Some("0")), 1);
+    assert_eq!(concurrent_jobs(Some("lots")), 1);
+}
+
+/// A job waits, `queued`, while the server's job slots are all taken, and
+/// runs once one is free: jobs are not all started at once, each sizing its
+/// pools to the whole machine.
+#[tokio::test]
+async fn a_job_stays_queued_until_a_slot_is_free() {
+    let running = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+    let held = std::sync::Arc::clone(&running).acquire_owned().await.unwrap();
+    let handle = std::sync::Arc::new(super::JobHandle::new(uuid::Uuid::new_v4(), "single"));
+    let task = tokio::spawn(super::handlers::run_job_task(
+        std::sync::Arc::clone(&handle),
+        std::sync::Arc::clone(&running),
+        axum::body::Bytes::from_static(b"not media"),
+        crate::spec::OutputSpec::default(),
+        None,
+        None,
+    ));
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(handle.status_json()["status"], "queued", "no slot: the job waits");
+    drop(held);
+    task.await.unwrap();
+    assert_eq!(handle.status_json()["status"], "failed", "with the slot it ran (and failed on its bytes)");
+    assert_eq!(running.available_permits(), 1, "and gave the slot back");
+}

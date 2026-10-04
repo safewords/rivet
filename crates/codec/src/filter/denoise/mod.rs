@@ -261,7 +261,11 @@ pub(super) fn for_row_bands<T: Send>(
     f: impl Fn(usize, &mut [T]) + Sync,
 ) {
     let h = out.len().checked_div(w).unwrap_or(0);
-    let bands = max_threads().min(h / min_band_rows.max(1)).max(1);
+    let threads = match super::thread_budget() {
+        0 => max_threads(),
+        budget => max_threads().min(budget),
+    };
+    let bands = threads.min(h / min_band_rows.max(1)).max(1);
     if bands == 1 {
         return f(0, out);
     }
@@ -284,6 +288,35 @@ pub(super) fn clamp_idx(v: isize, hi: usize) -> usize {
 mod tests {
     use super::test_support::planes;
     use super::*;
+
+    /// A thread budget bounds the bands a kernel splits a plane into, is
+    /// put back after, and does not change the output.
+    #[test]
+    fn a_thread_budget_bounds_the_bands() {
+        let (w, h) = (64usize, 4096usize);
+        let bands = |budget: usize| {
+            let calls = std::sync::atomic::AtomicUsize::new(0);
+            let mut out = vec![0u8; w * h];
+            crate::filter::with_thread_budget(budget, || {
+                for_row_bands(&mut out, w, 1, |y0, rows| {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    for (i, row) in rows.chunks_mut(w).enumerate() {
+                        row.fill(((y0 + i) % 251) as u8);
+                    }
+                });
+            });
+            (calls.into_inner(), out)
+        };
+        let (one, a) = bands(1);
+        let (two, b) = bands(2);
+        assert_eq!(one, 1);
+        assert!(two <= 2);
+        assert_eq!(a, b);
+        assert_eq!(crate::filter::thread_budget(), 0, "the budget is put back");
+        let (any, c) = bands(0);
+        assert!((1..=max_threads()).contains(&any));
+        assert_eq!(a, c);
+    }
 
     #[test]
     fn the_blend_matches_the_scalar_reference_at_every_tier() {

@@ -51,8 +51,10 @@
 
 use anyhow::{Context, Result};
 use frame::{ColorMetadata, VideoCodec};
-use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+use std::fs;
+use std::io::Write;
+
+use crate::atomic::{write_atomic, AtomicFile};
 use std::path::{Path, PathBuf};
 
 use crate::AudioInfo;
@@ -626,9 +628,8 @@ impl CmafVideoMuxer {
         }
 
         let path = self.output_dir.join(format!("seg-{:05}.m4s", seq));
-        let file = File::create(&path)
+        let mut writer = AtomicFile::create(&path)
             .with_context(|| format!("creating CMAF segment file: {}", path.display()))?;
-        let mut writer = BufWriter::new(file);
         writer.write_all(&moof.bytes).context("writing moof")?;
         writer
             .write_all(&(mdat_box_size as u32).to_be_bytes())
@@ -639,7 +640,9 @@ impl CmafVideoMuxer {
                 .write_all(&sample.payload)
                 .context("writing mdat payload")?;
         }
-        writer.flush().context("flushing CMAF segment writer")?;
+        writer
+            .commit()
+            .with_context(|| format!("committing CMAF segment file: {}", path.display()))?;
         let byte_size = moof.bytes.len() as u64 + mdat_box_size;
 
         self.base_decode_time += segment_duration;
@@ -763,15 +766,9 @@ impl CmafVideoMuxer {
                 unreachable!("refused by the constructor")
             }
         };
-        let mut file = File::create(&self.init_path).with_context(|| {
-            format!(
-                "creating CMAF video init segment: {}",
-                self.init_path.display()
-            )
+        write_atomic(&self.init_path, &init).with_context(|| {
+            format!("writing CMAF video init segment: {}", self.init_path.display())
         })?;
-        file.write_all(&init)
-            .context("writing CMAF video init segment bytes")?;
-        file.flush().context("flushing CMAF video init segment")?;
         self.init_written = true;
         Ok(())
     }
@@ -877,9 +874,8 @@ impl CmafAudioMuxer {
         }
 
         let path = self.output_dir.join(format!("seg-{:05}.m4s", seq));
-        let file = File::create(&path)
+        let mut writer = AtomicFile::create(&path)
             .with_context(|| format!("creating CMAF audio segment file: {}", path.display()))?;
-        let mut writer = BufWriter::new(file);
         writer
             .write_all(&moof.bytes)
             .context("writing audio moof")?;
@@ -895,8 +891,8 @@ impl CmafAudioMuxer {
                 .context("writing audio mdat payload")?;
         }
         writer
-            .flush()
-            .context("flushing CMAF audio segment writer")?;
+            .commit()
+            .with_context(|| format!("committing CMAF audio segment file: {}", path.display()))?;
         let byte_size = moof.bytes.len() as u64 + mdat_box_size;
 
         self.base_decode_time += segment_duration;
@@ -930,15 +926,9 @@ impl CmafAudioMuxer {
             return Ok(());
         }
         let init = build_init_segment_audio_with_edit(&self.info, &self.edit);
-        let mut file = File::create(&self.init_path).with_context(|| {
-            format!(
-                "creating CMAF audio init segment: {}",
-                self.init_path.display()
-            )
+        write_atomic(&self.init_path, &init).with_context(|| {
+            format!("writing CMAF audio init segment: {}", self.init_path.display())
         })?;
-        file.write_all(&init)
-            .context("writing CMAF audio init segment bytes")?;
-        file.flush().context("flushing CMAF audio init segment")?;
         self.init_written = true;
         Ok(())
     }

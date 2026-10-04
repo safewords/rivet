@@ -240,7 +240,9 @@ was written to `output.path`, which `output_path` then names. `renditions` has
 one entry per requested rung, in request order: the box asked for, the size
 produced, and the rung it merged into when it came out the same as another.
 
-`status` is `queued` → `running` → `completed` | `failed` | `rejected`. On
+`status` is `queued` → `running` → `completed` | `failed` | `rejected`. A job
+stays `queued` while the server's job slots are taken (one by default:
+`RIVET_SERVER_JOBS`); a `?sync=true` request waits the same way. On
 failure, `error` carries the message (e.g. "no AV1 encoder available on this
 host"). `rejected` means a [hook](hooks.md) stopped the job. `error` names the
 hook, the stage and the reason, and a `?sync=true` request gets `422`.
