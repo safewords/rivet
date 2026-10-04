@@ -1624,3 +1624,89 @@ fn scale_region_pads_ten_bit_with_ten_bit_black() {
     assert_eq!(luma[8 * 8], 700, "picture");
     assert_eq!(luma[8 * 15], 64, "bottom bar");
 }
+
+/// The separable AVX2 scaler (horizontal pass once per source row, shuffled
+/// fetches) writes exactly the bytes of the per-pixel-gather kernel it
+/// replaced: up- and downscales, the ladder's ratios, odd sizes, widths with
+/// a scalar tail, steps too wide for the shuffle, random and rail content.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[test]
+fn separable_avx2_scaler_writes_the_gather_kernels_bytes() {
+    if !std::is_x86_feature_detected!("avx2") {
+        eprintln!("SKIP: no AVX2 on this host");
+        return;
+    }
+    let mut seed = 0x5ca1e_u64;
+    let mut next = || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as u32
+    };
+    let shapes = [
+        (1920usize, 1080usize, 1280usize, 720usize),
+        (1920, 1080, 640, 360),
+        (1280, 720, 1920, 1080),
+        (960, 540, 640, 360),
+        (101, 37, 64, 19),
+        (64, 32, 48, 17),
+        (40, 9, 16, 4),
+        (33, 33, 47, 31),
+        (500, 20, 31, 7),
+        (16, 2, 16, 1),
+    ];
+    for (sw, sh, dw, dh) in shapes {
+        for kind in 0..3 {
+            let src: Vec<u8> = (0..sw * sh)
+                .map(|_| match kind {
+                    0 => next() as u8,
+                    1 => [0u8, 255][(next() & 1) as usize],
+                    _ => (next() % 7) as u8 + 120,
+                })
+                .collect();
+            let got = bilinear_scale_plane(&src, sw, sh, dw, dh);
+            // SAFETY: AVX2 checked above.
+            let want = unsafe { super::scale::bilinear_scale_plane_avx2_gather(&src, sw, sh, dw, dh) };
+            assert!(got == want, "{sw}x{sh} -> {dw}x{dh} kind {kind}");
+        }
+    }
+}
+
+/// The same for the 10-bit scaler (gathered word pairs, rows computed once).
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[test]
+fn separable_avx2_scaler_u16_writes_the_gather_kernels_samples() {
+    if !std::is_x86_feature_detected!("avx2") {
+        eprintln!("SKIP: no AVX2 on this host");
+        return;
+    }
+    let mut seed = 0x10b_u64;
+    let mut next = || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as u32
+    };
+    let shapes = [
+        (1920usize, 1080usize, 1280usize, 720usize),
+        (1920, 1080, 640, 360),
+        (1280, 720, 1920, 1080),
+        (101, 37, 64, 19),
+        (64, 32, 48, 17),
+        (40, 9, 16, 4),
+        (33, 33, 47, 31),
+        (500, 20, 31, 7),
+        (16, 2, 16, 1),
+    ];
+    for (sw, sh, dw, dh) in shapes {
+        for kind in 0..3 {
+            let src: Vec<u16> = (0..sw * sh)
+                .map(|_| match kind {
+                    0 => (next() % 1024) as u16,
+                    1 => [0u16, 1023][(next() & 1) as usize],
+                    _ => (next() % 7) as u16 + 500,
+                })
+                .collect();
+            let got = bilinear_scale_plane_u16(&src, sw, sh, dw, dh);
+            // SAFETY: AVX2 checked above.
+            let want = unsafe { super::scale::bilinear_scale_plane_u16_avx2_gather(&src, sw, sh, dw, dh) };
+            assert!(got == want, "{sw}x{sh} -> {dw}x{dh} kind {kind}");
+        }
+    }
+}

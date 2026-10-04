@@ -369,7 +369,7 @@ impl SdrToHdr {
             }
         }
         let mut out = Vec::with_capacity((w * h + 2 * cw * ch) * 2);
-        out.extend(y_code.iter().flat_map(|v| v.to_le_bytes()));
+        super::write_u16le_vec(&mut out, &y_code);
         for sums in [&cb_sum, &cr_sum] {
             for cy in 0..ch {
                 for cx in 0..cw {
