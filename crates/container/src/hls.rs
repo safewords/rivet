@@ -26,8 +26,10 @@
 //! to silently skip the variant.
 
 use anyhow::{Context, Result};
-use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+use std::fs;
+use std::io::Write;
+
+use crate::atomic::AtomicFile;
 use std::path::{Path, PathBuf};
 
 use crate::cmaf::CmafTrackManifest;
@@ -246,8 +248,7 @@ fn write_media_playlist(
     manifest: &CmafTrackManifest,
     target_duration_seconds: u32,
 ) -> Result<()> {
-    let file = File::create(path)?;
-    let mut w = BufWriter::new(file);
+    let mut w = AtomicFile::create(path)?;
 
     writeln!(w, "#EXTM3U")?;
     writeln!(w, "#EXT-X-VERSION:7")?;
@@ -278,7 +279,7 @@ fn write_media_playlist(
     }
 
     writeln!(w, "#EXT-X-ENDLIST")?;
-    w.flush()?;
+    w.commit()?;
     Ok(())
 }
 
@@ -292,8 +293,7 @@ fn write_subtitle_media_playlist(
     manifest: &WebVttManifest,
     target_duration_seconds: u32,
 ) -> Result<()> {
-    let file = File::create(path)?;
-    let mut w = BufWriter::new(file);
+    let mut w = AtomicFile::create(path)?;
     writeln!(w, "#EXTM3U")?;
     writeln!(w, "#EXT-X-VERSION:7")?;
     writeln!(w, "#EXT-X-TARGETDURATION:{}", target_duration_seconds)?;
@@ -309,7 +309,7 @@ fn write_subtitle_media_playlist(
         writeln!(w, "{name}")?;
     }
     writeln!(w, "#EXT-X-ENDLIST")?;
-    w.flush()?;
+    w.commit()?;
     Ok(())
 }
 
@@ -336,10 +336,9 @@ fn write_master_playlist(
     subtitles: &[SubtitleVariantSpec],
 ) -> Result<()> {
     let body = render_master_playlist_to_string(video_variants, audio, subtitles);
-    let file = File::create(path)?;
-    let mut w = BufWriter::new(file);
+    let mut w = AtomicFile::create(path)?;
     w.write_all(body.as_bytes())?;
-    w.flush()?;
+    w.commit()?;
     Ok(())
 }
 

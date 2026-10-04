@@ -124,14 +124,20 @@ jobs:
         # engine, demuxed and decoded by rivet with PSNR against the source
         # (software AV1 at 8 and 10 bits, VP9 profile 2 and VP9 / AV1
         # bitrate rungs among them); the AV1 PSNR / SSIM gate on the
-        # software encoder.
+        # software encoder. And the rest of the crate's integration tests
+        # that need no GPU: the AV1 encode / mux / decode chain on a pattern
+        # (e2e, fidelity_pattern, fidelity_sanity), the binary never writing
+        # over its input and writing each HLS file whole (output_overwrite),
+        # the HTTP API (server_api). Only cbr_rates is left out: it is the
+        # Intel GPU job's (QSV rate control) and skips without the card.
         env:
           RIVET_REQUIRE_MEDIAINFO: "1"
           RIVET_REQUIRE_MKVTOOLNIX: "1"
         run: >-
-          cargo test -p rivet-transcoder --release --locked --features h26x-fallback,av1-sw-fallback
+          cargo test -p rivet-transcoder --release --locked --features h26x-fallback,av1-sw-fallback,image,server,batch
           --test fit_e2e --test dts_audio --test hls_rates --test fidelity_mediainfo --test audio_codecs_e2e
-          --test new_codecs_e2e --test fidelity_psnr_ssim
+          --test new_codecs_e2e --test fidelity_psnr_ssim --test e2e --test fidelity_pattern
+          --test fidelity_sanity --test output_overwrite --test server_api
 
   msrv:
     name: MSRV (1.99)

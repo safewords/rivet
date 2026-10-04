@@ -25,6 +25,13 @@
 //! job's status carries its hook report (`hooks`), and a job a hook rejected
 //! ends `rejected` with the rejection (a `?sync=true` request gets `422`).
 //!
+//! **Concurrency.** A job sizes its own encoders and pools to the machine
+//! (the software slots and thread shares of `multigpu::gpu_policy`), so
+//! jobs run one at a time by default: a request accepted while another job
+//! runs stays `queued` until it ends, rather than each job spreading over
+//! every core at once. [`SERVER_JOBS_ENV`] raises the limit (a GPU host whose
+//! jobs are mostly hardware encodes, say).
+//!
 //! The job registry is in-memory; completed single-file artifacts are held in
 //! RAM until the process exits (fine for a sidecar/worker, not a public CDN —
 //! a production deployment would offload to object storage from a `ProgressSink`
@@ -63,18 +70,38 @@ pub(super) const MAX_UPLOAD: usize = 4 * 1024 * 1024 * 1024;
 // State
 // ---------------------------------------------------------------------------
 
+/// Environment variable: how many jobs `rivet serve` runs at once (default
+/// 1; at least 1). Jobs beyond it wait, `queued`, in arrival order.
+pub const SERVER_JOBS_ENV: &str = "RIVET_SERVER_JOBS";
+
+/// The number of jobs run at once: `value` (the [`SERVER_JOBS_ENV`] setting)
+/// as a whole number of at least one, else one.
+pub(super) fn concurrent_jobs(value: Option<&str>) -> usize {
+    value.and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n >= 1).unwrap_or(1)
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub(super) jobs: Arc<RwLock<HashMap<Uuid, Arc<JobHandle>>>>,
     /// The hooks every job can run ([`crate::hooks`]).
     pub(super) hooks: crate::hooks::Hooks,
+    /// One permit per job that may run at once ([`SERVER_JOBS_ENV`]); a job
+    /// holds one from leaving `queued` to its end. Fair: waiting jobs start
+    /// in the order they were accepted.
+    pub(super) running: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
     fn new(hooks: crate::hooks::Hooks) -> Self {
+        let slots = concurrent_jobs(std::env::var(SERVER_JOBS_ENV).ok().as_deref());
+        Self::with_slots(hooks, slots)
+    }
+
+    pub(super) fn with_slots(hooks: crate::hooks::Hooks, slots: usize) -> Self {
         Self {
             jobs: Arc::new(RwLock::new(HashMap::new())),
             hooks,
+            running: Arc::new(tokio::sync::Semaphore::new(slots.max(1))),
         }
     }
 }

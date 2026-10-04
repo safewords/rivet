@@ -208,3 +208,87 @@ fn a_batch_job_never_writes_over_its_input() {
     assert_eq!(std::fs::read(&b).unwrap(), mp3);
     assert!(dir.path().join("a.rivet.mp3").exists(), "a's output is beside it");
 }
+
+/// Every file under `dir`, recursively.
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() { stack.push(p) } else { out.push(p) }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// An HLS package's files — segments, init segments, playlists — are each
+/// written to a temporary file and renamed into place: a finished package
+/// holds no temporary files, and rewriting a package replaces each file
+/// rather than writing through it, so a hard link at a segment's path (to a
+/// file that is not an input) keeps its other name's contents.
+#[cfg(feature = "h26x-fallback")]
+#[test]
+fn an_hls_package_is_written_file_by_file_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let clip = common::synth::clip(64, 64, 10, 1.0, 0, 0, false);
+    let input = source(dir.path(), "clip.mp4", &clip);
+    let pkg = dir.path().join("pkg");
+    let run = || {
+        rivet(&[
+            os("transcode"),
+            input.as_os_str(),
+            os("--mode"),
+            os("hls"),
+            os("--codec"),
+            os("h264"),
+            os("-o"),
+            pkg.as_os_str(),
+        ])
+    };
+    let o = run();
+    assert!(o.status.success(), "HLS job: {}", stderr(&o));
+    let files = files_under(&pkg);
+    assert!(files.iter().any(|p| p.extension().is_some_and(|e| e == "m4s")), "segments written: {files:?}");
+    let leftovers: Vec<_> = files
+        .iter()
+        .filter(|p| p.file_name().unwrap().to_string_lossy().ends_with(".part"))
+        .collect();
+    assert!(leftovers.is_empty(), "no temporary files left behind: {leftovers:?}");
+
+    // Hard-link a file that is not an input over the first video segment,
+    // then write the package again.
+    let segment = files
+        .iter()
+        .find(|p| p.extension().is_some_and(|e| e == "m4s") && p.to_string_lossy().contains("video"))
+        .expect("a video segment")
+        .clone();
+    let other = source(dir.path(), "other.bin", b"not a segment");
+    std::fs::remove_file(&segment).unwrap();
+    if std::fs::hard_link(&other, &segment).is_err() {
+        return; // a file system without hard links
+    }
+    let o = run();
+    assert!(o.status.success(), "HLS job again: {}", stderr(&o));
+    assert_eq!(std::fs::read(&other).unwrap(), b"not a segment", "the other name keeps its contents");
+    assert_ne!(std::fs::read(&segment).unwrap(), b"not a segment", "the segment is rewritten");
+    assert_eq!(std::fs::read(&input).unwrap(), clip, "the source is untouched");
+}
+
+/// The rename does not loosen the guard: an input hard-linked at a path the
+/// package writes is still the input, and still refused before any work.
+#[test]
+fn an_input_linked_into_an_hls_package_is_still_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let clip = common::synth::clip(64, 64, 10, 0.5, 0, 0, false);
+    let input = source(dir.path(), "clip.mp4", &clip);
+    let pkg = dir.path().join("pkg");
+    std::fs::create_dir_all(pkg.join("video")).unwrap();
+    let linked = pkg.join("video").join("seg-00001.m4s");
+    if std::fs::hard_link(&input, &linked).is_err() {
+        return;
+    }
+    let o = rivet(&[os("transcode"), linked.as_os_str(), os("--mode"), os("hls"), os("-o"), pkg.as_os_str()]);
+    assert_refused(&o, &input, &clip);
+}
