@@ -2050,7 +2050,6 @@ dependencies = [
 name = "rivet-lossless"
 version = "0.1.0"
 dependencies = [
- "md5",
  "thiserror 2.0.18",
 ]
 
