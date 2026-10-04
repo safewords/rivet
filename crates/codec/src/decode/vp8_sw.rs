@@ -7,6 +7,11 @@
 //! frame (an IVF frame, a WebM block, an MP4 sample); a hidden frame (an
 //! altref) produces nothing. Output is 8-bit 4:2:0, BT.601 (VP8 has no other
 //! colour space).
+//!
+//! Each frame decodes on up to [`decode_threads`] threads
+//! (`RIVET_VP8_DECODE_THREADS`, default up to four): macroblock rows in a
+//! wavefront, as far as the stream's token partitions allow. The output does
+//! not depend on the count.
 
 use std::collections::VecDeque;
 
@@ -19,6 +24,17 @@ use crate::frame::{ColorSpace, PixelFormat, StreamInfo, VideoFrame};
 /// The codec labels the VP8 tier serves.
 pub fn supports(codec_lower: &str) -> bool {
     matches!(codec_lower, "vp8" | "vp08")
+}
+
+/// Threads each VP8 decoder may use: `RIVET_VP8_DECODE_THREADS`, else up
+/// to four (the pipeline runs other work beside the decode, and other
+/// decodes beside this one).
+pub fn decode_threads() -> usize {
+    std::env::var("RIVET_VP8_DECODE_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()).min(4))
 }
 
 /// A VP8 decoder behind rivet's [`Decoder`] trait.
@@ -35,7 +51,7 @@ impl Vp8Decoder {
         if !supports(&codec) {
             bail!("the VP8 decoder decodes VP8, not '{codec}'");
         }
-        Ok(Self { inner: vp8::Decoder::new(), info, ready: VecDeque::new(), next_pts: 0 })
+        Ok(Self { inner: vp8::Decoder::with_threads(decode_threads()), info, ready: VecDeque::new(), next_pts: 0 })
     }
 }
 

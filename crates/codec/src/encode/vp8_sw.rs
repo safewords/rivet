@@ -22,6 +22,13 @@
 //! No rate control — a bitrate rung is refused by name. The speed tier sets
 //! the motion search range (8 / 16 / 32 samples).
 //!
+//! # Threads
+//!
+//! Each frame encodes on [`EncoderConfig::threads`] threads (0: one per
+//! CPU); the stream does not depend on the count. Frames 720 lines or taller
+//! are written with four token partitions, so a decoder (this crate's
+//! included) can decode their macroblock rows in parallel.
+//!
 //! # Colour
 //!
 //! VP8 has one colour space (BT.601, RFC 6386 §9.2) and signals nothing
@@ -68,6 +75,8 @@ impl Vp8Encoder {
                 SpeedTier::Standard => 16,
                 SpeedTier::Archive => 32,
             },
+            token_partitions: if config.height >= 720 { 4 } else { 1 },
+            threads: config.threads,
             ..vp8::Config::default()
         };
         let inner = vp8::Encoder::new(cfg.clone()).context("the VP8 encoder rejected the configuration")?;
