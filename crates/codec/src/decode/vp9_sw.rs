@@ -123,6 +123,15 @@ mod tests {
         assert_eq!(dec.inner.threads(), crate::decode::sw_decode_threads("RIVET_VP9_DECODE_THREADS"));
     }
 
+    /// Inside a decode pump's thread budget the decoder takes the budget.
+    #[test]
+    fn a_pump_budget_bounds_the_decoder_threads() {
+        let dec = crate::filter::with_thread_budget(3, || Vp9Decoder::new(info("vp9")).expect("decoder"));
+        if std::env::var("RIVET_VP9_DECODE_THREADS").is_err() {
+            assert_eq!(dec.inner.threads(), 3);
+        }
+    }
+
     #[test]
     fn only_vp9_constructs() {
         assert!(Vp9Decoder::new(info("vp9")).is_ok());
