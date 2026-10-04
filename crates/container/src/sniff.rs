@@ -29,7 +29,10 @@ pub enum ContainerKind {
     Matroska,
     /// RIFF AVI.
     Avi,
-    /// MPEG transport stream: a `0x47` sync byte on the 188-byte grid.
+    /// MPEG transport stream: a `0x47` sync byte on the 188-byte grid, or
+    /// the 192-byte grid of a Blu-ray / BDAV `.m2ts` (after each packet's
+    /// 4-byte TP_extra_header), or the 204-byte grid of packets stored with
+    /// their Reed-Solomon parity.
     MpegTs,
     /// MPEG program stream (`.mpg`, `.vob`): a pack start code, `00 00 01 BA`.
     MpegPs,
@@ -150,14 +153,12 @@ pub fn sniff_container(data: &[u8]) -> ContainerKind {
     if crate::raw_audio::sniff_wav(data) {
         return ContainerKind::Wav;
     }
-    // MPEG-TS: 0x47 sync byte at offset 0 AND at offset 188 (and 376 if we
-    // have the bytes). A single 0x47 appears routinely in random payloads, so
-    // require two confirming hits before committing.
-    if data[0] == 0x47
-        && data.len() > 188
-        && data[188] == 0x47
-        && (data.len() <= 376 || data[376] == 0x47)
-    {
+    // MPEG-TS: the 0x47 sync byte on the packet grid — 188-byte packets,
+    // Blu-ray / BDAV 192-byte source packets (a 4-byte TP_extra_header
+    // first, so the sync sits at 4, 196, 388), or 204-byte packets — at the
+    // first two packets and the third when the bytes reach it: a single 0x47
+    // appears routinely in random payloads. The demuxer reads the same test.
+    if crate::ts::sniff_layout(data).is_some() {
         return ContainerKind::MpegTs;
     }
     // Ogg: the capture pattern and stream structure version 0.
@@ -235,6 +236,28 @@ mod tests {
         ts[0] = 0x47;
         ts[188] = 0x47;
         assert_eq!(sniff_container(&ts), ContainerKind::MpegTs);
+
+        // Blu-ray / BDAV: a 4-byte TP_extra_header before each packet, so
+        // the sync byte sits at 4, 196, 388 — zeroed headers or not.
+        let mut m2ts = vec![0u8; 3 * 192];
+        for k in 0..3 {
+            m2ts[k * 192..k * 192 + 4].copy_from_slice(&[0x0E, 0xBF, 0x46, 0x22]);
+            m2ts[k * 192 + 4] = 0x47;
+        }
+        assert_eq!(sniff_container(&m2ts), ContainerKind::MpegTs, "192-byte packets");
+        for k in 0..3 {
+            m2ts[k * 192..k * 192 + 4].fill(0);
+        }
+        assert_eq!(sniff_container(&m2ts), ContainerKind::MpegTs, "zeroed TP_extra_header");
+        // A third packet off the grid is not one.
+        m2ts[388] = 0;
+        assert_eq!(sniff_container(&m2ts), ContainerKind::Unknown);
+        // 204-byte packets (Reed-Solomon parity kept).
+        let mut rs = vec![0u8; 3 * 204];
+        for k in 0..3 {
+            rs[k * 204] = 0x47;
+        }
+        assert_eq!(sniff_container(&rs), ContainerKind::MpegTs, "204-byte packets");
 
         // A lone 0x47 is not a transport stream.
         let mut not_ts = vec![0u8; 190];

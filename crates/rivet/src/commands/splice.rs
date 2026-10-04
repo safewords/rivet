@@ -91,6 +91,15 @@ pub(crate) fn run(args: SpliceArgs) -> Result<()> {
         .iter()
         .map(|s| parse_clip_spec(s))
         .collect::<Result<Vec<_>>>()?;
+    // The output is none of the clips: checked before any work.
+    {
+        let inputs: Vec<&std::path::Path> = parsed.iter().map(|(p, _, _)| p.as_path()).collect();
+        if matches!(args.mode, ModeArg::Hls) {
+            rivet::output_guard::refuse_input_in_dir(&args.output, &inputs, rivet::output_guard::hls_package_writes_at)?;
+        } else {
+            rivet::output_guard::refuse_input_as_output(&args.output, &inputs)?;
+        }
+    }
     let mut clip_bytes = Vec::with_capacity(parsed.len());
     for (path, _, _) in &parsed {
         clip_bytes
@@ -138,7 +147,7 @@ pub(crate) fn run(args: SpliceArgs) -> Result<()> {
         && let Some(r) = out.rungs.first()
         && let RungArtifact::File(bytes) = &r.artifact
     {
-        std::fs::write(&output, bytes).with_context(|| format!("writing {}", output.display()))?;
+        rivet::output_guard::write_atomic(&output, bytes).with_context(|| format!("writing {}", output.display()))?;
     }
     eprintln!(
         "  spliced {} clip(s) → {} ({:.2} MiB) in {:.2}s",

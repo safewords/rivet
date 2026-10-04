@@ -27,6 +27,10 @@ clap.workspace = true
 tokio.workspace = true
 bytes.workspace = true
 tempfile.workspace = true
+# Whether an output path is the input file (`src/output_guard.rs`): file
+# identity, so a case variant or a hard link counts. MIT / Unlicense, already
+# in the dependency tree.
+same-file = "1"
 
 # Hooks (`src/hooks/`): content digests for the built-in digest hook, and JSON
 # for the event documents handed to exec / webhook hooks and the hook report.

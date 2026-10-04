@@ -574,6 +574,15 @@ fn run_one(
         ext,
     );
 
+    // Never the source: an output resolving to the input would replace it.
+    match &plan {
+        OutputPlan::SingleFile(target) => crate::output_guard::refuse_input_as_output(target, &[input])?,
+        OutputPlan::Directory(dir) => {
+            let writes_at = |rel: &Path| is_hls && crate::output_guard::hls_package_writes_at(rel);
+            crate::output_guard::refuse_input_in_dir(dir, &[input], writes_at)?
+        }
+    }
+
     let sink = Arc::new(crate::fn_sink(|_p| {}));
     match plan {
         OutputPlan::Directory(dir) => {
@@ -591,7 +600,8 @@ fn run_one(
                 if let RungArtifact::File(b) = r.artifact {
                     written += b.len() as u64;
                     let f = dir.join(format!("{}.{ext}", r.label));
-                    fs::write(&f, &b).with_context(|| format!("writing {}", f.display()))?;
+                    crate::output_guard::refuse_input_as_output(&f, &[input])?;
+                    crate::output_guard::write_atomic(&f, &b).with_context(|| format!("writing {}", f.display()))?;
                 }
             }
             Ok((dir, frames, written))
@@ -611,7 +621,7 @@ fn run_one(
                     _ => None,
                 })
                 .context("no single-file output produced")?;
-            fs::write(&target, &data).with_context(|| format!("writing {}", target.display()))?;
+            crate::output_guard::write_atomic(&target, &data).with_context(|| format!("writing {}", target.display()))?;
             Ok((target, frames, data.len() as u64))
         }
     }
@@ -633,6 +643,9 @@ enum OutputPlan {
 ///   the directory).
 /// - no `output` → `output_dir` (or the input's folder) + `<stem>.mp4` /
 ///   `<stem>/`.
+/// - a name made here (not one given verbatim) is never the input itself:
+///   `<stem>.rivet.<ext>` where `<stem>.<ext>` would be the input (`clip.mp4`
+///   to MP4 beside itself, `song.mp3` to MP3).
 fn resolve_output(
     job_output: Option<&str>,
     manifest_out_dir: Option<&Path>,
@@ -648,14 +661,15 @@ fn resolve_output(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "output".into());
     let wants_dir = is_hls || multi;
+    let made = |p: PathBuf| crate::output_guard::default_beside_input(p, input);
 
     if let Some(o) = job_output {
         let looks_dir = o.ends_with('/') || o.ends_with('\\');
         let p = join_rel(base_dir, o);
         if wants_dir {
-            OutputPlan::Directory(if looks_dir { p.join(&stem) } else { p })
+            OutputPlan::Directory(if looks_dir { made(p.join(&stem)) } else { p })
         } else if looks_dir {
-            OutputPlan::SingleFile(p.join(format!("{stem}.{ext}")))
+            OutputPlan::SingleFile(made(p.join(format!("{stem}.{ext}"))))
         } else {
             OutputPlan::SingleFile(p)
         }
@@ -664,9 +678,9 @@ fn resolve_output(
             .map(|d| d.to_path_buf())
             .unwrap_or_else(|| input.parent().map(Path::to_path_buf).unwrap_or_default());
         if wants_dir {
-            OutputPlan::Directory(base.join(&stem))
+            OutputPlan::Directory(made(base.join(&stem)))
         } else {
-            OutputPlan::SingleFile(base.join(format!("{stem}.{ext}")))
+            OutputPlan::SingleFile(made(base.join(format!("{stem}.{ext}"))))
         }
     }
 }
@@ -894,6 +908,38 @@ jobs:
         assert!(matches!(
             resolve_output(None, Some(Path::new("/out")), base, inp, false, false, "mp4"),
             OutputPlan::SingleFile(p) if p == Path::new("/out/clip.mp4")
+        ));
+    }
+
+    /// A name the batch makes is never the input: `clip.mp4` to MP4 beside
+    /// itself, or `song.mp3` to MP3, is `<stem>.rivet.<ext>`, whichever
+    /// spelling (case) the default comes out in. A name given verbatim is
+    /// kept, for the job to refuse.
+    #[test]
+    fn a_default_output_is_never_the_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let clip = base.join("clip.mp4");
+        std::fs::write(&clip, b"source").unwrap();
+        let file = |plan| match plan {
+            OutputPlan::SingleFile(p) => p,
+            OutputPlan::Directory(_) => panic!("a single file"),
+        };
+        assert_eq!(file(resolve_output(None, None, base, &clip, false, false, "mp4")), base.join("clip.rivet.mp4"));
+        assert_eq!(file(resolve_output(None, None, base, &clip, false, false, "mov")), base.join("clip.mov"));
+        let base_str = format!("{}/", base.display());
+        assert_eq!(
+            file(resolve_output(Some(&base_str), None, base, &clip, false, false, "mp4")),
+            base.join("clip.rivet.mp4")
+        );
+        assert_eq!(file(resolve_output(Some("clip.mp4"), None, base, &clip, false, false, "mp4")), base.join("clip.mp4"));
+        // An HLS directory `<stem>/` for an input with no extension is the
+        // input's own name.
+        let bare = base.join("clip");
+        std::fs::write(&bare, b"source").unwrap();
+        assert!(matches!(
+            resolve_output(None, None, base, &bare, true, false, "mp4"),
+            OutputPlan::Directory(p) if p == base.join("clip.rivet")
         ));
     }
 

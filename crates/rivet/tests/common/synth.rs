@@ -224,6 +224,28 @@ pub fn encode_h264(cfg: &H264, pictures: impl IntoIterator<Item = Vec<u8>>) -> V
     out
 }
 
+/// Codes `pictures` (planar 8-bit 4:2:0, display order) as HEVC with this
+/// workspace's encoder at a fixed quantiser, I and P pictures only.
+pub fn encode_h265(w: u32, h: u32, fps: u32, pictures: impl IntoIterator<Item = Vec<u8>>) -> Vec<Coded> {
+    let mut enc = h26x::encode::h265::H265Encoder::new(Config {
+        width: w,
+        height: h,
+        chroma: ChromaFormat::Yuv420,
+        gop: fps.max(1),
+        rate: RateControl::ConstantQp(24),
+        fps,
+        threads: 0,
+        ..Config::default()
+    })
+    .expect("the h26x HEVC encoder takes the configuration");
+    let mut out = Vec::new();
+    for p in pictures {
+        out.extend(enc.push(&p).expect("encode a picture"));
+    }
+    out.extend(enc.flush().expect("flush the encoder"));
+    out.into_iter().map(|a| Coded { data: a.data, pts: a.display, key: a.keyframe }).collect()
+}
+
 /// Codes `pictures` (planar 4:2:0) as MPEG-2 video with this workspace's
 /// encoder, I and P pictures only, `aspect_ratio_information` as given (1
 /// square, 2 4:3, 3 16:9). Returns one coded picture per frame; the first

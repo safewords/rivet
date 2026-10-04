@@ -10,7 +10,7 @@ use super::{
     STREAM_TYPE_BD_EAC3, STREAM_TYPE_BD_LPCM, STREAM_TYPE_DTS, STREAM_TYPE_DTS_HD_HR, STREAM_TYPE_DTS_HD_MA,
     STREAM_TYPE_EAC3, STREAM_TYPE_H264, STREAM_TYPE_HEVC, STREAM_TYPE_MPEG1_AUDIO, STREAM_TYPE_MPEG1_VIDEO,
     STREAM_TYPE_MPEG2_AUDIO, STREAM_TYPE_MPEG2_VIDEO, STREAM_TYPE_MPEG4_AUDIO_RAW, STREAM_TYPE_PES_PRIVATE,
-    STREAM_TYPE_TRUEHD,
+    STREAM_TYPE_TRUEHD, STREAM_TYPE_BD_SECONDARY_DTS, STREAM_TYPE_BD_SECONDARY_EAC3,
 };
 
 /// Walk the PAT section and return every `(program_number, pmt_pid)`
@@ -152,7 +152,7 @@ pub(super) fn parse_pmt_streams(
                     kind: AudioCodecKind::Ac3,
                 });
             }
-            STREAM_TYPE_EAC3 | STREAM_TYPE_BD_EAC3 => {
+            STREAM_TYPE_EAC3 | STREAM_TYPE_BD_EAC3 | STREAM_TYPE_BD_SECONDARY_EAC3 => {
                 audio.push(AudioStreamInfo {
                     pid,
                     stream_type: stype,
@@ -162,10 +162,13 @@ pub(super) fn parse_pmt_streams(
             STREAM_TYPE_DTS | STREAM_TYPE_DTS_HD_HR | STREAM_TYPE_DTS_HD_MA => {
                 audio.push(AudioStreamInfo { pid, stream_type: stype, kind: AudioCodecKind::Dts });
             }
-            STREAM_TYPE_BD_LPCM | STREAM_TYPE_TRUEHD | STREAM_TYPE_AAC_LATM | STREAM_TYPE_MPEG4_AUDIO_RAW => {
+            STREAM_TYPE_BD_LPCM => {
+                audio.push(AudioStreamInfo { pid, stream_type: stype, kind: AudioCodecKind::BdLpcm });
+            }
+            STREAM_TYPE_TRUEHD | STREAM_TYPE_BD_SECONDARY_DTS | STREAM_TYPE_AAC_LATM | STREAM_TYPE_MPEG4_AUDIO_RAW => {
                 let name = match stype {
-                    STREAM_TYPE_BD_LPCM => "pcm_bluray",
                     STREAM_TYPE_TRUEHD => "truehd",
+                    STREAM_TYPE_BD_SECONDARY_DTS => "dts_express",
                     STREAM_TYPE_AAC_LATM => "aac_latm",
                     _ => "mpeg4_audio_raw",
                 };

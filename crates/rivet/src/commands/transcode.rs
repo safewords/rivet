@@ -164,6 +164,20 @@ pub(crate) fn run(args: TranscodeArgs) -> Result<()> {
     // Determine output target — by the spec's shape, since an input with no
     // video makes a single-file job an audio-only one.
     let (output_dir, single_file_target) = plan_output(&args, &spec);
+    // Never the source: an output that resolves to the input file would
+    // replace it with the transcode. Checked before any work.
+    if let Some(file) = &single_file_target {
+        rivet::output_guard::refuse_input_as_output(file, &[&args.input])?;
+    }
+    if let Some(dir) = &output_dir {
+        // An HLS package writes `master.m3u8` and its subdirectories; a
+        // directory of rungs writes `<label>.<ext>`, checked as it is written.
+        let writes_at = |rel: &Path| match args.mode {
+            ModeArg::Hls => rivet::output_guard::hls_package_writes_at(rel),
+            _ => false,
+        };
+        rivet::output_guard::refuse_input_in_dir(dir, &[&args.input], writes_at)?;
+    }
     // Made before the job runs, so an unusable path fails before any work.
     // A job that ends with nothing in it (refused by the encode pool's
     // preflight, say) takes back what this run made when `made_dir` drops;
@@ -248,14 +262,15 @@ fn write_outputs(
                 if let Some(r) = out.rungs.first()
                     && let RungArtifact::File(bytes) = &r.artifact
                 {
-                    std::fs::write(file, bytes)
+                    rivet::output_guard::write_atomic(file, bytes)
                         .with_context(|| format!("writing {}", file.display()))?;
                 }
             } else if let Some(dir) = output_dir {
                 for r in &out.rungs {
                     if let RungArtifact::File(bytes) = &r.artifact {
                         let path = dir.join(format!("{}.{ext}", r.label));
-                        std::fs::write(&path, bytes)
+                        rivet::output_guard::refuse_input_as_output(&path, &[&args.input])?;
+                        rivet::output_guard::write_atomic(&path, bytes)
                             .with_context(|| format!("writing {}", path.display()))?;
                     }
                 }
@@ -314,7 +329,8 @@ fn parse_wxh(s: &str) -> Result<rivet::settings::RungArg> {
 }
 
 /// `<stem>.<codec>.<ext>` beside the input: `clip.av1.mp4`, `clip.prores.mov`,
-/// `clip.vp9.webm`.
+/// `clip.vp9.webm`. Like every default here, never the input itself (see
+/// [`rivet::output_guard::default_beside_input`]).
 fn default_file(input: &Path, spec: &rivet::OutputSpec) -> PathBuf {
     let stem = input
         .file_stem()
@@ -323,9 +339,11 @@ fn default_file(input: &Path, spec: &rivet::OutputSpec) -> PathBuf {
     let codec = spec.video_codec.codec().label();
     let mut out = input.to_path_buf();
     out.set_file_name(format!("{stem}.{codec}.{}", spec.file_extension()));
-    out
+    rivet::output_guard::default_beside_input(out, input)
 }
 
+/// `<stem>.<ext>` beside the input (`--mode audio`: `clip.mp3`), or
+/// `<stem>.rivet.<ext>` when that is the input itself (`x.mp3` from `x.mp3`).
 fn default_file_ext(input: &Path, ext: &str) -> PathBuf {
     let stem = input
         .file_stem()
@@ -333,7 +351,7 @@ fn default_file_ext(input: &Path, ext: &str) -> PathBuf {
         .unwrap_or_else(|| "output".to_string());
     let mut out = input.to_path_buf();
     out.set_file_name(format!("{stem}.{ext}"));
-    out
+    rivet::output_guard::default_beside_input(out, input)
 }
 
 fn default_dir(input: &Path, suffix: &str) -> PathBuf {
@@ -343,5 +361,5 @@ fn default_dir(input: &Path, suffix: &str) -> PathBuf {
         .unwrap_or_else(|| "output".to_string());
     let mut out = input.to_path_buf();
     out.set_file_name(format!("{stem}.{suffix}"));
-    out
+    rivet::output_guard::default_beside_input(out, input)
 }
