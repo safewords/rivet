@@ -39,7 +39,11 @@
 //! patch distances are exact integers, so the output is bit-identical for any
 //! thread count.
 
+// The vector bodies are only reached through `tiered!`'s x86 arms.
+#![cfg_attr(not(any(target_arch = "x86", target_arch = "x86_64")), allow(dead_code))]
+
 use super::for_row_bands;
+use super::simd::{Simd, Tier, tiered};
 
 /// Fixed setting for `denoise=nlmeans[:STRENGTH]`, where the method runs at one
 /// internal setting and `STRENGTH` only blends: a 3×3 patch, a 9×9 research
@@ -110,13 +114,16 @@ impl Weights {
         Weights {
             free: FREE_FACTOR * sigma * sigma * n,
             scale: LUT_STEPS / (n * hh),
+            // One entry past the table, 0: what an index off its end reads
+            // as (`of`'s `unwrap_or`), so the vector form can clamp onto it.
             lut: (0..LUT_LEN)
                 .map(|i| (-(i as f32 + 0.5) / LUT_STEPS).exp())
+                .chain([0.0])
                 .collect(),
         }
     }
 
-    #[inline(always)]
+    #[cfg(test)]
     fn of(&self, ssd: u32) -> f32 {
         let excess = ssd as f32 - self.free;
         if excess <= 0.0 {
@@ -172,7 +179,27 @@ impl<'a> Kernel<'a> {
     }
 
     /// Denoise output rows `y0 .. y0 + rows.len() / w` into `rows`.
+    ///
+    /// The loops are element-wise (integer squared differences, `sum +=
+    /// w * c`, `wsum += w`), so the compiler vectorises them; on a CPU with
+    /// AVX2 (and the denoise tier allowing it) the same code is compiled a
+    /// second time with that feature and runs eight lanes wide. Element-wise
+    /// IEEE operations without contraction, so both write the same bytes.
     fn band(&self, y0: usize, rows: &mut [u8]) {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if Tier::detect() >= Tier::Avx2 {
+            #[target_feature(enable = "avx2")]
+            unsafe fn avx2(k: &Kernel<'_>, y0: usize, rows: &mut [u8]) {
+                k.band_impl(y0, rows)
+            }
+            // SAFETY: the tier is Avx2 only on a CPU with AVX2.
+            return unsafe { avx2(self, y0, rows) };
+        }
+        self.band_impl(y0, rows)
+    }
+
+    #[inline(always)]
+    fn band_impl(&self, y0: usize, rows: &mut [u8]) {
         let (w, h, src) = (self.w, self.h, self.src);
         let y1 = y0 + rows.len() / w;
         // The centre sample is its own candidate, at distance 0 ⇒ weight 1.
@@ -208,24 +235,25 @@ impl<'a> Kernel<'a> {
                     let acc = (y - y0) * w;
                     // Candidate p + o, weighted by the map at p.
                     if y + dy < h {
-                        let wr = &wmap[(y - qa) * w..][..w];
-                        let cand = &src[(y + dy) * w..][..w];
-                        for x in xa..xb {
-                            let wt = wr[x];
-                            sum[acc + x] += wt * cand[(x as isize + dx) as usize] as f32;
-                            wsum[acc + x] += wt;
+                        let wr = &wmap[(y - qa) * w + xa..(y - qa) * w + xb];
+                        let c0 = ((y + dy) * w) as isize + xa as isize + dx;
+                        let cand = &src[c0 as usize..][..xb - xa];
+                        let (s, ws) = (&mut sum[acc + xa..acc + xb], &mut wsum[acc + xa..acc + xb]);
+                        for (((s, ws), &wt), &c) in s.iter_mut().zip(ws.iter_mut()).zip(wr).zip(cand) {
+                            *s += wt * c as f32;
+                            *ws += wt;
                         }
                     }
                     // Candidate p − o = q, weighted by the map at q.
                     if y >= dy {
                         let qy = y - dy;
-                        let wr = &wmap[(qy - qa) * w..][..w];
-                        let cand = &src[qy * w..][..w];
-                        for qx in xa..xb {
-                            let x = (qx as isize + dx) as usize;
-                            let wt = wr[qx];
-                            sum[acc + x] += wt * cand[qx] as f32;
-                            wsum[acc + x] += wt;
+                        let wr = &wmap[(qy - qa) * w + xa..(qy - qa) * w + xb];
+                        let cand = &src[qy * w + xa..qy * w + xb];
+                        let x0 = (acc as isize + xa as isize + dx) as usize;
+                        let (s, ws) = (&mut sum[x0..x0 + (xb - xa)], &mut wsum[x0..x0 + (xb - xa)]);
+                        for (((s, ws), &wt), &c) in s.iter_mut().zip(ws.iter_mut()).zip(wr).zip(cand) {
+                            *s += wt * c as f32;
+                            *ws += wt;
                         }
                     }
                 }
@@ -239,6 +267,7 @@ impl<'a> Kernel<'a> {
     /// Fill `wmap` rows `q − qa` (for q in `qa..qb`), columns `xa..xb`, with
     /// the weight between the patches at q and q + (dx, dy).
     #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
     fn weight_rows(
         &self,
         dx: isize,
@@ -258,16 +287,26 @@ impl<'a> Kernel<'a> {
         // Squared differences of padded row `py`, added to (or taken from)
         // the column sums. Padded row py + dy and column cx + dx stay inside
         // the padded plane because q + o is inside the plane.
+        //
+        // Written as zipped slices (the `+ dx` folded into where `b`
+        // starts) with the add and the subtract as separate loops, so the
+        // compiler vectorises them: integer arithmetic, the same sums.
         let diff_row = |py: usize, col: &mut [u32], add: bool| {
-            let a = &pad[py * pw..][..pw];
-            let b = &pad[(py + dy) * pw..][..pw];
-            for cx in ca..cb {
-                let d = a[cx] as i32 - b[(cx as isize + dx) as usize] as i32;
-                let d2 = (d * d) as u32;
-                if add {
-                    col[cx] += d2;
-                } else {
-                    col[cx] -= d2;
+            let a = &pad[py * pw + ca..py * pw + cb];
+            let b0 = (py + dy) * pw;
+            let b = &pad[(b0 as isize + ca as isize + dx) as usize..][..cb - ca];
+            let col = &mut col[ca..cb];
+            let d2 = |(&a, &b): (&u8, &u8)| {
+                let d = a as i32 - b as i32;
+                (d * d) as u32
+            };
+            if add {
+                for (c, d) in col.iter_mut().zip(a.iter().zip(b).map(d2)) {
+                    *c += d;
+                }
+            } else {
+                for (c, d) in col.iter_mut().zip(a.iter().zip(b).map(d2)) {
+                    *c -= d;
                 }
             }
         };
@@ -276,14 +315,20 @@ impl<'a> Kernel<'a> {
         for py in qa..qa + side {
             diff_row(py, col, true);
         }
+        let tier = Tier::detect();
+        let mut win = vec![0u32; xb - xa];
         for q in qa..qb {
             let out = &mut wmap[(q - qa) * w..][..w];
+            // The patch sums along the row (exact integers), then their
+            // weights, which vectorise once the running sum is out of the way.
             let mut s: u32 = col[xa..xa + side].iter().sum();
-            out[xa] = self.weights.of(s);
+            win[0] = s;
             for x in xa + 1..xb {
                 s = s + col[x + side - 1] - col[x - 1];
-                out[x] = self.weights.of(s);
+                win[x - xa] = s;
             }
+            let wt = &self.weights;
+            weights_row(tier, &win, &mut out[xa..xb], wt.free, wt.scale, &wt.lut);
             if q + 1 < qb {
                 diff_row(q, col, false);
                 diff_row(q + side, col, true);
@@ -292,10 +337,83 @@ impl<'a> Kernel<'a> {
     }
 }
 
+/// `Weights::of` along a row of patch sums.
+fn weights_row_scalar(win: &[u32], out: &mut [f32], free: f32, scale: f32, lut: &[f32]) {
+    for (o, &s) in out.iter_mut().zip(win) {
+        let excess = s as f32 - free;
+        *o = if excess <= 0.0 { 1.0 } else { lut.get((excess * scale) as usize).copied().unwrap_or(0.0) };
+    }
+}
+
+tiered!(fn weights_row(win: &[u32], out: &mut [f32], free: f32, scale: f32, lut: &[f32]) => weights_row_body, scalar weights_row_scalar);
+
+/// [`weights_row_scalar`] lane-wise, bit-exact: the sum converted as `as f32`
+/// converts it (every sum is below 2^31), the excess, and where it is
+/// positive the table entry at its scaled, truncated index — clamped onto
+/// the table's trailing 0 past its end, which is what `unwrap_or(0.0)`
+/// reads there; 1 elsewhere.
+#[inline(always)]
+unsafe fn weights_row_body<S: Simd>(win: &[u32], out: &mut [f32], free: f32, scale: f32, lut: &[f32]) {
+    unsafe {
+        let l = S::LANES;
+        let wide = win.len() - win.len() % l;
+        let (zero, one) = (S::set1_f32(0.0), S::set1_f32(1.0));
+        let (vfree, vscale, end) = (S::set1_f32(free), S::set1_f32(scale), S::set1_f32((lut.len() - 1) as f32));
+        let mut i = 0;
+        while i < wide {
+            let excess = S::sub_f32(S::i32_to_f32(S::load_i32(win.as_ptr().add(i) as *const i32)), vfree);
+            let p = S::min_f32(S::max_f32(S::mul_f32(excess, vscale), zero), end);
+            let wt = S::gather_f32(lut, S::trunc_f32_i32(p));
+            S::store_f32(out.as_mut_ptr().add(i), S::blend_f32(wt, one, S::cmpge_f32(zero, excess)));
+            i += l;
+        }
+        weights_row_scalar(&win[wide..], &mut out[wide..], free, scale, lut);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::{noisy, planes};
     use super::*;
+
+    /// The weight row at every tier the host has is the scalar one bit for
+    /// bit: sums of zero, at and around the free zone, mid-table, past the
+    /// table's end and near the largest a 99x99 patch can reach, at several
+    /// strengths, every row length up to 40 (all tails).
+    #[test]
+    fn every_tier_weighs_like_the_scalar_row() {
+        let mut seed = 0x77_u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as u32
+        };
+        for (sigma, n) in [(1.0f32, 9usize), (10.0, 9), (30.0, 49), (4.0, 9801)] {
+            let wt = Weights::new(sigma, n);
+            let free = wt.free as u32;
+            for len in 0..=40 {
+                let win: Vec<u32> = (0..len)
+                    .map(|_| match next() % 6 {
+                        0 => 0,
+                        1 => free,
+                        2 => free + next() % 3,
+                        3 => free.saturating_sub(next() % 3),
+                        4 => next() % (free * 20 + 1),
+                        _ => 637_000_000 - next() % 1000,
+                    })
+                    .collect();
+                let mut want = vec![0f32; len];
+                weights_row_scalar(&win, &mut want, wt.free, wt.scale, &wt.lut);
+                for (o, &s) in want.iter().zip(&win) {
+                    assert_eq!(o.to_bits(), wt.of(s).to_bits());
+                }
+                for tier in Tier::available() {
+                    let mut got = vec![0f32; len];
+                    weights_row(tier, &win, &mut got, wt.free, wt.scale, &wt.lut);
+                    assert!(got.iter().zip(&want).all(|(a, b)| a.to_bits() == b.to_bits()), "{tier:?} sigma {sigma} len {len}");
+                }
+            }
+        }
+    }
 
     /// The definition, evaluated directly: every candidate, every patch
     /// sample, no running sums, no symmetry.

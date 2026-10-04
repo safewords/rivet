@@ -150,6 +150,8 @@ pub(crate) trait Simd: Copy {
     /// Lane mask (all ones where `a >= b`).
     unsafe fn cmpge_f32(a: Self::F, b: Self::F) -> Self::F;
     unsafe fn and_f32(a: Self::F, b: Self::F) -> Self::F;
+    /// `b` where `mask` (a [`Self::cmpge_f32`] result) is set, else `a`.
+    unsafe fn blend_f32(a: Self::F, b: Self::F, mask: Self::F) -> Self::F;
     unsafe fn i32_to_f32(a: Self::I) -> Self::F;
     /// `table[idx]` per lane. Every index must be in bounds.
     unsafe fn gather_f32(table: &[f32], idx: Self::I) -> Self::F;
@@ -328,6 +330,10 @@ mod avx2_impl {
         #[inline(always)]
         unsafe fn and_f32(a: __m256, b: __m256) -> __m256 {
             unsafe { _mm256_and_ps(a, b) }
+        }
+        #[inline(always)]
+        unsafe fn blend_f32(a: __m256, b: __m256, mask: __m256) -> __m256 {
+            unsafe { _mm256_blendv_ps(a, b, mask) }
         }
         #[inline(always)]
         unsafe fn i32_to_f32(a: __m256i) -> __m256 {
@@ -521,6 +527,10 @@ mod sse41_impl {
         #[inline(always)]
         unsafe fn and_f32(a: __m128, b: __m128) -> __m128 {
             unsafe { _mm_and_ps(a, b) }
+        }
+        #[inline(always)]
+        unsafe fn blend_f32(a: __m128, b: __m128, mask: __m128) -> __m128 {
+            unsafe { _mm_blendv_ps(a, b, mask) }
         }
         #[inline(always)]
         unsafe fn i32_to_f32(a: __m128i) -> __m128 {
