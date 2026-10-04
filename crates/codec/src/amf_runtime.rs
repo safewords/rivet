@@ -36,6 +36,8 @@ pub(crate) fn wide(s: &str) -> Vec<AmfWchar> {
 
 /// Decode a null-terminated `wchar_t` string back to UTF-8 (tests and logs).
 #[cfg(test)]
+// `AmfWchar` is u16 on Windows and u32 elsewhere: the cast is a no-op only on the latter.
+#[allow(clippy::unnecessary_cast)]
 pub(crate) unsafe fn from_wide(p: *const AmfWchar) -> String {
     unsafe {
         let mut len = 0usize;
