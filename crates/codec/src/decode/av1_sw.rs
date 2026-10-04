@@ -98,13 +98,14 @@ enum Engine {
 
 /// Threads each decoder may use for tiles and post-filters:
 /// `RIVET_AV1_DECODE_THREADS`, else up to four (the pipeline runs other work
-/// beside the decode, and other decodes beside this one).
+/// beside the decode, and other decodes beside this one), held to the
+/// building thread's [budget](crate::threads).
 pub fn decode_threads() -> usize {
     std::env::var("RIVET_AV1_DECODE_THREADS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()).min(4))
+        .unwrap_or_else(|| crate::threads::cap(std::thread::available_parallelism().map_or(1, |n| n.get()).min(4)))
 }
 
 fn worker_disabled() -> bool {

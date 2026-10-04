@@ -376,6 +376,18 @@ pub fn run_spliced_decode_pump_blocking(
     senders: Vec<tokio::sync::mpsc::Sender<VideoFrame>>,
     rt: tokio::runtime::Handle,
 ) -> Result<u64> {
+    // Everything this pump splits across threads on its own — its decoder's
+    // pool, the filters' bands, the colour conversions' rows — stays within
+    // the job's share of the machine (a range pump's caller may narrow it
+    // further), so jobs running at once fit the machine together.
+    codec::threads::with_budget(crate::thread_budget::per_job(), || run_clips(clips, senders, rt))
+}
+
+fn run_clips(
+    clips: Vec<ClipSource>,
+    senders: Vec<tokio::sync::mpsc::Sender<VideoFrame>>,
+    rt: tokio::runtime::Handle,
+) -> Result<u64> {
     let mut total: u64 = 0;
     let mut joined = JoinedPts::default();
     let result = (|| {

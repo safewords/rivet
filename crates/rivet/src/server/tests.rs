@@ -462,15 +462,18 @@ async fn sync_transcode_one_rung_is_the_file_and_several_are_the_status() {
     }
 }
 
-/// `RIVET_SERVER_JOBS`: a whole number of at least one, else one.
+/// Jobs at once: `RIVET_SERVER_JOBS` when it is a whole number of at least
+/// one, else one per hardware encode device, at least one.
 #[test]
-fn concurrent_jobs_default_to_one() {
+fn concurrent_jobs_default_to_the_encode_devices() {
     use super::concurrent_jobs;
-    assert_eq!(concurrent_jobs(None), 1);
-    assert_eq!(concurrent_jobs(Some("3")), 3);
-    assert_eq!(concurrent_jobs(Some(" 2 ")), 2);
-    assert_eq!(concurrent_jobs(Some("0")), 1);
-    assert_eq!(concurrent_jobs(Some("lots")), 1);
+    assert_eq!(concurrent_jobs(None, 0), 1, "no card: one job");
+    assert_eq!(concurrent_jobs(None, 1), 1);
+    assert_eq!(concurrent_jobs(None, 2), 2, "two Arc cards: two jobs");
+    assert_eq!(concurrent_jobs(Some("3"), 2), 3, "the setting wins");
+    assert_eq!(concurrent_jobs(Some(" 1 "), 4), 1);
+    assert_eq!(concurrent_jobs(Some("0"), 2), 2, "an unusable setting falls back");
+    assert_eq!(concurrent_jobs(Some("lots"), 0), 1);
 }
 
 /// A job waits, `queued`, while the server's job slots are all taken, and

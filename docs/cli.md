@@ -835,9 +835,13 @@ rivet serve [--addr <ADDR>]
 
 Runs the HTTP transcode API (requires a `--features server` build). `--addr`
 defaults to `127.0.0.1:8080`. See the [HTTP API reference](api.md) for endpoints.
-Jobs run one at a time — each sizes its encoders and thread pools to the
-whole machine — and a job accepted while another runs stays `queued` until
-it ends; `RIVET_SERVER_JOBS=<n>` runs up to `n` at once.
+The server runs as many jobs at once as the host has hardware encode devices
+this build can use (two Arc cards in a `--features qsv` build: two jobs), and
+one on a host without any; `RIVET_SERVER_JOBS=<n>` sets it. A job accepted
+while every slot is busy stays `queued` until one frees. With `n` slots each
+job gets a `1/n` share of the CPU — its software encoders and decoders,
+worker pools, and the decode pump's filters and colour conversions — even
+while it runs alone, so the jobs together never oversubscribe the machine.
 
 ```sh
 cargo build --release --features server,nvidia
@@ -854,7 +858,7 @@ rivet serve --addr 0.0.0.0:8080
 | `TRANSCODE_ENCODER_BACKEND` | Force an encoder backend on the serial single-file path: `nvenc` \| `amf` \| `qsv` \| `h26x` \| `av1` (`rav1e` is still accepted for `av1`) \| `prores` \| `vp8` \| `vp9` \| `mpeg2` \| `mpeg4`. |
 | `RIVET_SOFTWARE_SLOTS` | Number of software encoder slots in the software pool (derived from the host by default; clamped to `1..=` the available parallelism). |
 | `RIVET_FORCE_CHUNKED` | `1` runs the chunk-and-stitch engine on a one-GPU host, to exercise the chunked path (no speedup). |
-| `RIVET_SERVER_JOBS` | `rivet serve`: how many jobs run at once (default 1; the rest wait `queued`, in arrival order). |
+| `RIVET_SERVER_JOBS` | `rivet serve`: how many jobs run at once (default: the host's usable hardware encode devices, at least 1; the rest wait `queued`, in arrival order). Each job gets that fraction of the CPU. |
 | `RIVET_FILE_ROOT` | `rivet serve`: confine the JSON body's server-side `input.path` / `output.path` to this directory. |
 | `LIBVA_MESSAGING_LEVEL` | rivet sets it to `0` (libva errors only) unless it is already set; set it yourself (e.g. `2`) to see libva's driver messages. |
 | `DISABLE_NVDEC` | Skip NVDEC for every codec (fall through to the next decode tier). |

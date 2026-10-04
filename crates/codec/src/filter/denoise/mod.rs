@@ -261,10 +261,7 @@ pub(super) fn for_row_bands<T: Send>(
     f: impl Fn(usize, &mut [T]) + Sync,
 ) {
     let h = out.len().checked_div(w).unwrap_or(0);
-    let threads = match super::thread_budget() {
-        0 => max_threads(),
-        budget => max_threads().min(budget),
-    };
+    let threads = crate::threads::cap(max_threads());
     let bands = threads.min(h / min_band_rows.max(1)).max(1);
     if bands == 1 {
         return f(0, out);
@@ -312,7 +309,7 @@ mod tests {
         assert_eq!(one, 1);
         assert!(two <= 2);
         assert_eq!(a, b);
-        assert_eq!(crate::filter::thread_budget(), 0, "the budget is put back");
+        assert_eq!(crate::threads::budget(), 0, "the budget is put back");
         let (any, c) = bands(0);
         assert!((1..=max_threads()).contains(&any));
         assert_eq!(a, c);
