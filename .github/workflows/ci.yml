@@ -498,9 +498,12 @@ jobs:
         # chunks done on every card and every card's video engines busy.
         # Every rendition decodes; the full-size one close to the source.
         #
-        # Printed, not asserted: on devbox the default plan is no faster than
-        # the A750 alone, because the A380 (PCIe 3.0 x2 behind the chipset,
-        # 2-3.5x slower at 1080p) gets an even share of the decode.
+        # With the default plans the cards together must beat the fastest
+        # card alone (at most 0.95x its time): devbox's A380 (PCIe 3.0 x2
+        # behind the chipset) is 2-3.5x slower at 1080p than its A750 (4.0
+        # x16), and the work is split by speed — the decode stays off a card
+        # far behind the fastest, and the tail of the encode runs on the
+        # fast one (multigpu::speed).
         env:
           CARDS: ${{ steps.cards.outputs.cards }}
           GPUS: ${{ steps.cards.outputs.gpus }}
@@ -516,6 +519,9 @@ jobs:
           done
           $ASSERT all usage-ladder-family-intel.json cards.json
           $ASSERT chunks ladder-family-intel.log cards.json
+          wall() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['wall_s'])" "$1"; }
+          fast=$(python3 -c "import json; c=json.load(open('cards.json')); print(min(c, key=lambda i: json.load(open(f'usage-ladder-gpu-{i}.json'))['wall_s']))")
+          $ASSERT faster "default AV1 ladder on all cards vs card $fast alone"             "$(wall usage-ladder-family-intel.json)" "$(wall "usage-ladder-gpu-$fast.json")" 0.95
           full=$(awk '/RESOLUTION=1920x1080/{getline; print; exit}' ladder-family-intel/master.m3u8)
           $CHECK "ladder-family-intel/$full" --ref src1080.mp4 --codec av1 --frames 900 --size 1920x1080 --min-psnr 30
 
@@ -544,6 +550,29 @@ jobs:
             $ASSERT faster "$codec archive ladder on all cards vs card $fast alone" \
               "$(wall "usage-busy-$codec-family-intel.json")" "$(wall "usage-busy-$codec-gpu-$fast.json")" 0.85
             for p in $(find "busy-$codec-family-intel/video" -name '*.m3u8' | sort); do $CHECK "$p" --codec "$codec" --frames 900; done
+          done
+
+      - name: Cards of different speeds share the work by speed
+        # Each card alone and all of them together (decode auto and whole):
+        # a three-rung AV1 HLS ladder, a one-rung H.265 single file of 10 s,
+        # and the same of 30 s (reported only). The ladder on all cards must
+        # take at most 0.95x the fastest card's time alone, the 10 s rung
+        # at most 1.10x (one chunk: it encodes serially on the fastest card).
+        # Then a 70 s rung through the chunk engine (four chunks on two
+        # cards), where a card's encoder session is reset and reused for its
+        # next chunk, for H.265, H.264 and AV1.
+        env:
+          CARDS: ${{ steps.cards.outputs.cards }}
+        run: |
+          if [ "$CARDS" -lt 2 ]; then echo "skipped: $CARDS card on this host" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          bin/synth_clip src1080s.mp4 --size 1920x1080 --fps 30 --seconds 10 --noise 6 --bitrate 20000000
+          python3 .github/scripts/speed_aware_timings.py $RIVET src1080.mp4 src1080s.mp4 --repeat 2
+          bin/synth_clip src1080x.mp4 --size 1920x1080 --fps 30 --seconds 70 --noise 6 --bitrate 20000000
+          for codec in h265 h264 av1; do
+            $RIVET transcode src1080x.mp4 -o "reuse-$codec.mp4" --codec "$codec" --rung 1920x1080 --encode family:intel               2> "reuse-$codec.log" || { tail -60 "reuse-$codec.log"; exit 1; }
+            $ASSERT chunks "reuse-$codec.log" cards.json
+            grep -h "built vs reused" "reuse-$codec.log" | sed 's/.*sessions: //'
+            $CHECK "reuse-$codec.mp4" --codec "$codec" --frames 2100
           done
 
       - name: One job per card, all at once
