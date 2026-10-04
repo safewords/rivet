@@ -56,7 +56,10 @@ impl Level {
     pub fn get() -> Level {
         static LEVEL: OnceLock<Level> = OnceLock::new();
         *LEVEL.get_or_init(|| {
-            let level = Level::cap(Level::host(), std::env::var("RIVET_PIPE_MAX_SIMD").ok().as_deref());
+            let level = Level::cap(
+                Level::host(),
+                std::env::var("RIVET_PIPE_MAX_SIMD").ok().as_deref(),
+            );
             tracing::debug!(host = ?Level::host(), ?level, "pipeline SIMD level");
             level
         })

@@ -25,7 +25,11 @@ use codec::tonemap::{
 fn median(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let n = v.len();
-    if n % 2 == 1 { v[n / 2] } else { 0.5 * (v[n / 2 - 1] + v[n / 2]) }
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    }
 }
 
 fn time_frames(frames: &[VideoFrame], transfer: TransferFn, avx2: bool) -> f64 {
@@ -63,11 +67,23 @@ fn main() {
     let frames: Vec<VideoFrame> = bytes
         .chunks_exact(frame_bytes)
         .take(max_frames)
-        .map(|c| VideoFrame::new(Bytes::copy_from_slice(c), w, h, PixelFormat::Yuv420p10le, ColorSpace::Bt2020, 0))
+        .map(|c| {
+            VideoFrame::new(
+                Bytes::copy_from_slice(c),
+                w,
+                h,
+                PixelFormat::Yuv420p10le,
+                ColorSpace::Bt2020,
+                0,
+            )
+        })
         .collect();
     assert!(!frames.is_empty(), "no whole frames in {path} at {w}x{h}");
     let avx2 = std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma");
-    println!("{} frames of {w}x{h} {transfer:?}; avx2+fma available: {avx2}", frames.len());
+    println!(
+        "{} frames of {w}x{h} {transfer:?}; avx2+fma available: {avx2}",
+        frames.len()
+    );
 
     // ── agreement ──
     let mut max_diff = 0u8;
@@ -103,7 +119,10 @@ fn main() {
     for r in 0..reps {
         // Control: the same path twice, alternating order.
         let (a, b) = if r % 2 == 0 {
-            (time_frames(&frames, transfer, false), time_frames(&frames, transfer, false))
+            (
+                time_frames(&frames, transfer, false),
+                time_frames(&frames, transfer, false),
+            )
         } else {
             let b = time_frames(&frames, transfer, false);
             (time_frames(&frames, transfer, false), b)

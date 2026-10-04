@@ -223,7 +223,7 @@ fn dot_scalar(x: &[f32], t: &[f32]) -> f32 {
     let n = x.len().min(t.len());
     let wide = n - n % 16;
     let mut a = [0f32; 16];
-    for (xs, ts) in x[..wide].chunks_exact(16).zip(t[..wide].chunks_exact(16)) {
+    for (xs, ts) in x[..wide].as_chunks::<16>().0.iter().zip(t[..wide].as_chunks::<16>().0) {
         for j in 0..16 {
             a[j] += xs[j] * ts[j];
         }
