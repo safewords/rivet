@@ -61,6 +61,10 @@ jobs:
       - name: Lib tests
         run: |
           cargo test -p rivet-codec      --lib --features serde --locked
+          # rivet-codec's integration tests: the software encoders and decoders
+          # end to end (odd sizes, AV1 / H.26x round trips, the native codecs in
+          # their containers). The GPU ones build to nothing without their features.
+          cargo test -p rivet-codec      --release --features serde --locked --tests
           # The GPU backends' pure unit tests (parameter layouts, property
           # sequences): dlopen FFI, so they build and run with no card.
           cargo test -p rivet-codec      --lib --features serde,qsv,nvidia,amd --locked
