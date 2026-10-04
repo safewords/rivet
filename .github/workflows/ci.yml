@@ -336,6 +336,16 @@ jobs:
     # replaces, so a burst of pushes would lose whole runs instead of only
     # their scheduling job. A one-card job from another run can still hold a
     # devbox card for a while; the pod then waits for it.
+    #
+    # No other GPU work can share the cards while it runs, so no concurrency
+    # group with the per-card jobs is needed (and one would cost: a group
+    # runs one member and keeps one pending, cancelling the rest). The pod
+    # requests gpu.intel.com/i915: 2 on devbox, which has exactly two, and
+    # the device plugin runs with -shared-dev-num 1, so while it holds them
+    # no other pod (safewords-runners-gpu, or another org's GPU runners,
+    # all of which request i915) is given either card: per-card jobs queued
+    # meanwhile run on vulpes-zerda's A310 or wait. Other pods can still
+    # load devbox's CPU, which is what the interleaved timings are for.
     needs: [gpu-build, gpu-devices, gpu-codec]
     if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.gpu-build.result == 'success' }}
     concurrency:
@@ -375,13 +385,13 @@ jobs:
         # them (`--encode family:intel`, the default decode plan): on all,
         # chunks done on every card and every card's video engines busy.
         # Every rendition decodes; the full-size one close to the source.
-        #
-        # With the default plans the cards together must beat the fastest
-        # card alone (at most 0.95x its time): devbox's A380 (PCIe 3.0 x2
-        # behind the chipset) is 2-3.5x slower at 1080p than its A750 (4.0
-        # x16), and the work is split by speed — the decode stays off a card
-        # far behind the fastest, and the tail of the encode runs on the
-        # fast one (multigpu::speed).
+        # devbox's A380 (PCIe 3.0 x2 behind the chipset) is 2-3.5x slower at
+        # 1080p than its A750 (4.0 x16), and the work is split by speed — the
+        # decode stays off a card far behind the fastest, and the tail of the
+        # encode runs on the fast one (multigpu::speed). These runs are single
+        # and only reported (scheduling.json); the timing judgement (at most
+        # 0.95x the fastest card alone) is the interleaved best of three in
+        # "Cards of different speeds share the work by speed".
         env:
           CARDS: ${{ steps.cards.outputs.cards }}
           GPUS: ${{ steps.cards.outputs.gpus }}
@@ -397,22 +407,19 @@ jobs:
           done
           $ASSERT all usage-ladder-family-intel.json cards.json
           $ASSERT chunks ladder-family-intel.log cards.json
-          wall() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['wall_s'])" "$1"; }
-          fast=$(python3 -c "import json; c=json.load(open('cards.json')); print(min(c, key=lambda i: json.load(open(f'usage-ladder-gpu-{i}.json'))['wall_s']))")
-          $ASSERT faster "default AV1 ladder on all cards vs card $fast alone"             "$(wall usage-ladder-family-intel.json)" "$(wall "usage-ladder-gpu-$fast.json")" 0.95
           full=$(awk '/RESOLUTION=1920x1080/{getline; print; exit}' ladder-family-intel/master.m3u8)
           $CHECK "ladder-family-intel/$full" --ref src1080.mp4 --codec av1 --frames 900 --size 1920x1080 --min-psnr 30
 
-      - name: When the encode is the bottleneck, all the cards beat the fastest one alone
+      - name: When the encode is the bottleneck, every card does chunks
         # The encoders at `--video-speed archive` and the decode on the
-        # fastest card, so the encode is the limit: the ladder on every card
-        # must take at most 0.85x the fastest card's time alone (devbox:
-        # about 0.7x).
+        # fastest card, so the encode is the limit: pinned stays pinned, and
+        # on all cards every card encodes. Timed (at most 0.85x the fastest
+        # card alone; devbox: about 0.7x) in the interleaved runs of the
+        # next step.
         env:
           CARDS: ${{ steps.cards.outputs.cards }}
         run: |
           if [ "$CARDS" -lt 2 ]; then echo "skipped: $CARDS card on this host" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
-          wall() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['wall_s'])" "$1"; }
           fast=$(python3 -c "import json; c=json.load(open('cards.json')); print(min(c, key=lambda i: json.load(open(f'usage-ladder-gpu-{i}.json'))['wall_s']))")
           echo "the fastest card is $fast"
           for codec in av1 h265; do
@@ -425,38 +432,48 @@ jobs:
             $ASSERT pinned "usage-busy-$codec-gpu-$fast.json" cards.json "$fast"
             $ASSERT all "usage-busy-$codec-family-intel.json" cards.json
             $ASSERT chunks "busy-$codec-family-intel.log" cards.json
-            $ASSERT faster "$codec archive ladder on all cards vs card $fast alone" \
-              "$(wall "usage-busy-$codec-family-intel.json")" "$(wall "usage-busy-$codec-gpu-$fast.json")" 0.85
             for p in $(find "busy-$codec-family-intel/video" -name '*.m3u8' | sort); do $CHECK "$p" --codec "$codec" --frames 900; done
           done
 
       - name: Cards of different speeds share the work by speed
-        # Each card alone and all of them together (decode auto and whole):
-        # a three-rung AV1 HLS ladder, a one-rung H.265 single file of 10 s,
-        # and the same of 30 s (reported only). The ladder on all cards must
-        # take at most 0.95x the fastest card's time alone, the 10 s rung
-        # at most 1.10x (one chunk: it encodes serially on the fastest card).
-        # Then a 70 s rung through the chunk engine (four chunks on two
-        # cards), where a card's encoder session is reset and reused for its
-        # next chunk, for H.265, H.264 and AV1.
+        # The timing assertions, all compared within this run: each card
+        # alone and all of them together (decode auto and whole), three
+        # rounds, every round running every plan in a rotated order, best of
+        # the three (speed_aware_timings.py). A three-rung AV1 HLS ladder:
+        # all cards at most 0.95x the fastest card alone. A one-rung H.265
+        # single file of 10 s: at most 1.10x (one chunk: it encodes serially
+        # on the fastest card). The same of 30 s: reported only. The ladder
+        # at `--video-speed archive`, AV1 and H.265: at most 0.85x. Every
+        # round's time, each plan's spread and the ratios go to the summary
+        # and to speed_aware_timings.json.
+        #
+        # Then a 70 s rung through the chunk engine (four chunks), where a
+        # card's encoder session is reset and reused for its next chunk, for
+        # H.265, H.264 and AV1: every card that encodes builds one session
+        # and reuses it. Which cards take chunks is the speed gate's call
+        # and is not asserted here (the steps above assert the spread): for
+        # H.264 the A750 encodes a chunk faster than the decode delivers the
+        # next, so the gate rightly leaves the A380 out in some runs, and
+        # the job is faster for it (devbox: 7.7 s against 8.1-8.7 s).
         env:
           CARDS: ${{ steps.cards.outputs.cards }}
         run: |
           if [ "$CARDS" -lt 2 ]; then echo "skipped: $CARDS card on this host" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
           bin/synth_clip src1080s.mp4 --size 1920x1080 --fps 30 --seconds 10 --noise 6 --bitrate 20000000
-          python3 .github/scripts/speed_aware_timings.py $RIVET src1080.mp4 src1080s.mp4 --repeat 2
+          python3 .github/scripts/speed_aware_timings.py $RIVET src1080.mp4 src1080s.mp4 --repeat 3
           bin/synth_clip src1080x.mp4 --size 1920x1080 --fps 30 --seconds 70 --noise 6 --bitrate 20000000
           for codec in h265 h264 av1; do
             $RIVET transcode src1080x.mp4 -o "reuse-$codec.mp4" --codec "$codec" --rung 1920x1080 --encode family:intel               2> "reuse-$codec.log" || { tail -60 "reuse-$codec.log"; exit 1; }
-            $ASSERT chunks "reuse-$codec.log" cards.json
-            grep -h "built vs reused" "reuse-$codec.log" | sed 's/.*sessions: //'
+            $ASSERT reuse "reuse-$codec.log"
             $CHECK "reuse-$codec.mp4" --codec "$codec" --frames 2100
           done
 
       - name: One job per card, all at once
         # Independent jobs pinned to their own cards, side by side: each
         # stays on its card, every output decodes, and none is slowed by the
-        # others (at most 1.15x its time alone).
+        # others (at most 1.15x its time alone; devbox: 0.96-1.00x). Three
+        # rounds of alone-then-together; each card's best of three together
+        # against its best of three alone, every round in the summary.
         env:
           CARDS: ${{ steps.cards.outputs.cards }}
           GPUS: ${{ steps.cards.outputs.gpus }}
@@ -464,18 +481,25 @@ jobs:
           if [ "$CARDS" -lt 2 ]; then echo "skipped: $CARDS card on this host" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
           job() { $USAGE "usage-$2.json" -- $RIVET transcode src1080.mp4 -o "$2.mp4" --codec h265 --rung 1920x1080 \
                     --encode "gpu:$1" --decode "gpu:$1" 2> "$2.log"; }
-          for n in $GPUS; do job "$n" "alone-$n" || { tail -50 "alone-$n.log"; exit 1; }; done
-          pids=""
-          for n in $GPUS; do job "$n" "together-$n" & pids="$pids $!"; done
-          for pid in $pids; do wait "$pid" || { tail -50 together-*.log; exit 1; }; done
           wall() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['wall_s'])" "$1"; }
-          for n in $GPUS; do
-            $ASSERT pinned "usage-alone-$n.json" cards.json "$n"
-            $ASSERT pinned "usage-together-$n.json" cards.json "$n"
-            for t in "alone-$n" "together-$n"; do
-              $CHECK "$t.mp4" --ref src1080.mp4 --codec h265 --frames 900 --size 1920x1080 --min-psnr 30
+          for round in 1 2 3; do
+            for n in $GPUS; do job "$n" "alone-$n" || { tail -50 "alone-$n.log"; exit 1; }; done
+            pids=""
+            for n in $GPUS; do job "$n" "together-$n" & pids="$pids $!"; done
+            for pid in $pids; do wait "$pid" || { tail -50 together-*.log; exit 1; }; done
+            for n in $GPUS; do
+              $ASSERT pinned "usage-alone-$n.json" cards.json "$n"
+              $ASSERT pinned "usage-together-$n.json" cards.json "$n"
+              for t in "alone-$n" "together-$n"; do
+                [ "$round" = 1 ] && $CHECK "$t.mp4" --ref src1080.mp4 --codec h265 --frames 900 --size 1920x1080 --min-psnr 30
+                wall "usage-$t.json" >> "walls-$t.txt"
+              done
             done
-            $ASSERT faster "card $n alongside the others vs alone" "$(wall "usage-together-$n.json")" "$(wall "usage-alone-$n.json")" 1.15
+          done
+          for n in $GPUS; do
+            echo "card $n alone: $(paste -sd' ' "walls-alone-$n.txt") s; alongside the others: $(paste -sd' ' "walls-together-$n.txt") s" | tee -a "$GITHUB_STEP_SUMMARY"
+            $ASSERT faster "card $n alongside the others vs alone (best of 3)" \
+              "$(sort -g "walls-together-$n.txt" | head -1)" "$(sort -g "walls-alone-$n.txt" | head -1)" 1.15
           done
 
       - name: Per-card timings
@@ -491,6 +515,8 @@ jobs:
           path: |
             *.log
             usage-*.json
+            walls-*.txt
+            speed_aware_timings.json
             scheduling.json
             devices.json
             cards.json
