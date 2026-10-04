@@ -1451,16 +1451,31 @@ async fn stop<R>(run: &mut Running<R>, why: anyhow::Error) -> anyhow::Error {
         tracing::warn!(error = %format!("{why:#}"), "ladder run failed; stopping the workers");
     }
     run.abort.abort();
+    let mut worker_failure: Option<String> = None;
     while let Some(joined) = run.workers.join_next().await {
         match joined {
             Ok((slot, Ok(()))) => tracing::debug!(slot, "ladder worker returned its lease"),
             Ok((slot, Err(e))) => {
-                tracing::debug!(slot, error = %format!("{e:#}"), "ladder worker ended with an error while stopping")
+                tracing::debug!(slot, error = %format!("{e:#}"), "ladder worker ended with an error while stopping");
+                if worker_failure.is_none() && !e.is::<super::Cancelled>() {
+                    worker_failure = Some(format!("ladder worker {slot} failed: {e:#}"));
+                }
             }
             Err(je) => tracing::debug!(%je, "ladder worker join error while stopping"),
         }
     }
-    why
+    // A worker that fails drops its hold on the rung, and the rung's
+    // finalizer, woken by that, can report the hole the failure left ("chunk
+    // coverage incomplete") before the worker's own task has been joined —
+    // which then read as the cause. The worker's error is the cause: say it
+    // first. (devbox: a two-chunk H.265 file failed with only the coverage
+    // message.)
+    match worker_failure {
+        Some(cause) if !why.is::<super::Cancelled>() && !format!("{why:#}").starts_with("ladder worker") => {
+            anyhow!("{cause} (and then: {why:#})")
+        }
+        _ => why,
+    }
 }
 
 #[cfg(test)]
@@ -1711,6 +1726,34 @@ mod tests {
                 assert!(pool.try_claim().is_some(), "the failed worker's lease must be back in the pool");
             },
         );
+    }
+
+    /// A worker's failure is the error the run reports, even when the
+    /// finalizer's complaint about the chunk it never delivered arrives first.
+    #[test]
+    fn a_workers_failure_is_reported_ahead_of_the_hole_it_left() {
+        within(Duration::from_secs(10), "a failed run did not stop", || async {
+            let ladder: Arc<Ladder<()>> = Arc::new(Ladder::new(&two_rungs(), 2));
+            let mut workers: JoinSet<(usize, Result<()>)> = JoinSet::new();
+            workers.spawn(async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                (1, Err(anyhow!("QSV said no")))
+            });
+            let (ftx, finalizer_rx) = mpsc::channel::<(usize, Result<Option<()>>)>(2);
+            ftx.send((0, Err(anyhow!("chunk coverage incomplete")))).await.unwrap();
+            let run = Running {
+                pumps: JoinSet::new(),
+                scalers: JoinSet::new(),
+                workers,
+                finalizer_rx,
+                finalizers_remaining: 2,
+                abort: Arc::clone(&ladder.abort),
+                cancel: None,
+            };
+            let msg = format!("{:#}", drain(run).await.expect_err("must fail"));
+            assert!(msg.starts_with("ladder worker 1 failed: QSV said no"), "{msg}");
+            assert!(msg.contains("chunk coverage incomplete"), "{msg}");
+        });
     }
 
     /// The last worker able to serve a rung strikes it off: nothing will
