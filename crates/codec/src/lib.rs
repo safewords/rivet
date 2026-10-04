@@ -29,6 +29,7 @@ pub mod hevc_sei;
 pub use ::frame::pixel_format;
 pub mod probe;
 pub mod quality;
+pub mod simd;
 #[cfg(feature = "qsv")]
 pub(crate) mod qsv_ffi;
 pub mod tonemap;
