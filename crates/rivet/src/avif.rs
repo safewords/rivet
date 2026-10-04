@@ -81,7 +81,9 @@ pub fn encode_rgb(rgb: &[u8], width: u32, height: u32, quality: u8) -> Result<Ve
         bail!("AVIF: {} bytes of RGB for {width}x{height}", rgb.len());
     }
     let rgba: Vec<u8> = rgb
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .flat_map(|p| [p[0], p[1], p[2], u8::MAX])
         .collect();
     encode_rgba(&rgba, width, height, false, quality)

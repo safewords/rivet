@@ -24,6 +24,8 @@ use super::{MultiGpuParams, RungManifest, WorkerCtx, report, spawn_progress_repo
 
 /// Run the multi-GPU HLS ladder. Returns one `Option<RungManifest>` per rung
 /// (in rung order); `None` means the rung produced no segments.
+// `idx` names the rung to the ladder as well as indexing `rungs`.
+#[allow(clippy::needless_range_loop)]
 pub async fn run_multigpu_hls(
     params: MultiGpuParams<'_>,
     sink: Arc<dyn ProgressSink>,

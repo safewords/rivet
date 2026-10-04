@@ -42,6 +42,8 @@
 // The OpenAPI document (`server::docs`) is one `json!` literal, deeper than
 // the default macro recursion limit allows.
 #![recursion_limit = "256"]
+// Parsers return their pieces as tuples spelled out at the signature.
+#![allow(clippy::type_complexity)]
 
 #[cfg(feature = "thumbnail")]
 pub mod avif;

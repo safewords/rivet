@@ -605,7 +605,7 @@ fn guarded_pass(
             stream.info.clone(),
             policy,
         )
-        .with_rebuild(Box::new(move |i| make(i)));
+        .with_rebuild(Box::new(make));
         run(Box::new(g), &stream.samples)
     });
     match guarded

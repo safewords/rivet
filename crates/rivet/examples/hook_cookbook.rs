@@ -128,7 +128,9 @@ impl DecodedFrameHook for BlankFrames {
 pub mod my_hasher {
     pub fn compute(rgb: &[u8], width: u32, height: u32) -> u64 {
         let luma: Vec<u8> = rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| ((p[0] as u32 + p[1] as u32 + p[2] as u32) / 3) as u8)
             .collect();
         let small = rivet::hooks::phash::shrink(&luma, width as usize, height as usize, 8, 8);

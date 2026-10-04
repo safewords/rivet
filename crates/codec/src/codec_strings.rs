@@ -215,6 +215,7 @@ mod tests {
         assert_eq!(hevc_codec_string("hvc1", &sps), "hvc1.2.4.H120");
     }
 
+    #[allow(clippy::too_many_arguments)] // one argument per sequence-header field
     fn synth_seq_header(
         seq_profile: u8,
         seq_level_idx_0: u8,

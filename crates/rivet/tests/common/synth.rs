@@ -378,7 +378,7 @@ struct BitWriter {
 
 impl BitWriter {
     fn bit(&mut self, b: u32) {
-        if self.n % 8 == 0 {
+        if self.n.is_multiple_of(8) {
             self.out.push(0);
         }
         if b != 0 {
@@ -786,20 +786,15 @@ pub fn add_to_sample_entry(file: &[u8], entry: &[u8; 4], child: &[u8]) -> Vec<u8
                 }
                 b"stco" if shift > 0 => {
                     let mut b = inner[..8].to_vec();
-                    for o in inner[8..].chunks_exact(4) {
-                        b.extend_from_slice(
-                            &(u32::from_be_bytes(o.try_into().unwrap()) + shift as u32)
-                                .to_be_bytes(),
-                        );
+                    for o in inner[8..].as_chunks::<4>().0 {
+                        b.extend_from_slice(&(u32::from_be_bytes(*o) + shift as u32).to_be_bytes());
                     }
                     out.extend(wrap(kind, &b));
                 }
                 b"co64" if shift > 0 => {
                     let mut b = inner[..8].to_vec();
-                    for o in inner[8..].chunks_exact(8) {
-                        b.extend_from_slice(
-                            &(u64::from_be_bytes(o.try_into().unwrap()) + shift).to_be_bytes(),
-                        );
+                    for o in inner[8..].as_chunks::<8>().0 {
+                        b.extend_from_slice(&(u64::from_be_bytes(*o) + shift).to_be_bytes());
                     }
                     out.extend(wrap(kind, &b));
                 }

@@ -71,7 +71,7 @@ impl RgbaImage {
             return None;
         }
         let mut data = Vec::with_capacity(rgb.len() / 3 * 4);
-        for p in rgb.chunks_exact(3) {
+        for p in rgb.as_chunks::<3>().0 {
             data.extend_from_slice(&[p[0], p[1], p[2], u8::MAX]);
         }
         Some(Self {

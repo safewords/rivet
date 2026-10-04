@@ -23,7 +23,7 @@ fn ftyp_lists_av01_and_iso6_and_mp42_brands() {
     assert_eq!(&ftyp[8..12], b"iso6", "major_brand should be iso6");
     // After major(4) + minor(4) the compatible_brands list runs to end.
     let compat = &ftyp[16..];
-    let brands: Vec<&[u8]> = compat.chunks_exact(4).collect();
+    let brands: Vec<&[u8]> = compat.as_chunks::<4>().0.iter().map(|c| &c[..]).collect();
     assert!(
         brands.contains(&b"av01".as_ref()),
         "compatible_brands must list av01 per AV1-ISOBMFF §2.1; got {:?}",

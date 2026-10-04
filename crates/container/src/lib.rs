@@ -1,3 +1,5 @@
+// Box and track writers take the box's fields one by one, as the spec lays them out.
+#![allow(clippy::too_many_arguments)]
 pub mod aac_asc;
 pub mod ac3_sync;
 pub(crate) mod annexb;

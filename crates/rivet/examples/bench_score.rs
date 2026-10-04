@@ -85,7 +85,9 @@ fn to_8bit(f: VideoFrame) -> VideoFrame {
         PixelFormat::Yuv420p10le => {
             let data: Vec<u8> = f
                 .data
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|b| (u16::from_le_bytes([b[0], b[1]]) >> 2) as u8)
                 .collect();
             VideoFrame::new(

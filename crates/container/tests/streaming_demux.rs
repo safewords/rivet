@@ -30,11 +30,8 @@ fn test_media(name: &str) -> Option<Vec<u8>> {
 /// accumulate.
 fn drain<D: StreamingDemuxer + ?Sized>(d: &mut D) -> Vec<Sample> {
     let mut out = Vec::new();
-    loop {
-        match d.next_video_sample().expect("next_video_sample") {
-            Some(s) => out.push(s),
-            None => break,
-        }
+    while let Some(s) = d.next_video_sample().expect("next_video_sample") {
+        out.push(s);
     }
     // After EOF, repeated calls must continue returning Ok(None) —
     // streaming demuxer is a one-shot iterator, not a cycle.
@@ -287,17 +284,17 @@ fn synth_opendml_two_movi_six_samples() -> (Vec<u8>, Vec<Vec<u8>>) {
     // movi#1 + ix00#1
     let mut movi1_body = Vec::new();
     let mut data_offsets_1 = Vec::new();
-    for i in 0..3 {
+    for p in &payloads[0..3] {
         let cur = movi1_body.len();
-        movi1_body.extend_from_slice(&chunk(b"00dc", &payloads[i]));
-        data_offsets_1.push((cur + 8, payloads[i].len()));
+        movi1_body.extend_from_slice(&chunk(b"00dc", p));
+        data_offsets_1.push((cur + 8, p.len()));
     }
     let mut movi2_body = Vec::new();
     let mut data_offsets_2 = Vec::new();
-    for i in 3..6 {
+    for p in &payloads[3..6] {
         let cur = movi2_body.len();
-        movi2_body.extend_from_slice(&chunk(b"00dc", &payloads[i]));
-        data_offsets_2.push((cur + 8, payloads[i].len()));
+        movi2_body.extend_from_slice(&chunk(b"00dc", p));
+        data_offsets_2.push((cur + 8, p.len()));
     }
     let movi1_chunk = list(b"movi", &movi1_body);
     let movi2_chunk = list(b"movi", &movi2_body);
@@ -478,7 +475,7 @@ fn ts_streaming_handles_empty_packet_run_after_pmt_without_yielding() {
     let mut s = demux_streaming(&bytes).unwrap();
     let s1 = s.next_video_sample().unwrap().expect("first sample");
     let s2 = s.next_video_sample().unwrap().expect("second sample");
-    assert_eq!(s.next_video_sample().unwrap().is_none(), true);
+    assert!(s.next_video_sample().unwrap().is_none());
     assert!(
         s1.data.starts_with(&[0xAA; 16]) || s1.data.contains(&0xAA),
         "first sample should contain AA payload"
@@ -596,8 +593,9 @@ fn streaming_dispatcher_rejects_unknown_container() {
 #[test]
 fn streaming_dispatcher_rejects_short_buffer() {
     let short = vec![0u8; 4];
-    match demux_streaming(&short) {
-        Ok(_) => panic!("dispatcher must reject short buffer"),
-        Err(_) => {} // any error is acceptable; the dispatcher must not panic
-    }
+    // Any error is acceptable; the dispatcher must not panic.
+    assert!(
+        demux_streaming(&short).is_err(),
+        "dispatcher must reject short buffer"
+    );
 }

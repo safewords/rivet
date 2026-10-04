@@ -680,7 +680,7 @@ mod tests {
         let b = resample(44_100, 48_000, 2, &input, 4096);
         assert_eq!(a.len(), 2 * (n * 48_000usize).div_ceil(44_100));
         assert_eq!(a, b);
-        for v in a.chunks_exact(2).skip(500).take(9000) {
+        for v in a.as_chunks::<2>().0.iter().skip(500).take(9000) {
             assert!((v[1] + 0.25).abs() < 1e-4, "{}", v[1]);
         }
     }

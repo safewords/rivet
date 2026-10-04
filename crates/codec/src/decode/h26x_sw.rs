@@ -41,6 +41,8 @@ use super::Decoder;
 use crate::frame::{PixelFormat, StreamInfo, VideoFrame};
 
 /// The two decoders behind one face.
+// One per decoder instance: the size difference costs nothing.
+#[allow(clippy::large_enum_variant)]
 enum Inner {
     H264(h26x::h264::H264Decoder),
     Hevc(h26x::hevc::HevcDecoder),
@@ -189,7 +191,7 @@ impl H26xDecoder {
             if shift == 0 {
                 out.extend_from_slice(pic.packed());
             } else {
-                for pair in pic.packed().chunks_exact(2) {
+                for pair in pic.packed().as_chunks::<2>().0 {
                     let v = u16::from_le_bytes([pair[0], pair[1]]) << shift;
                     out.extend_from_slice(&v.to_le_bytes());
                 }

@@ -493,16 +493,15 @@ impl ImageSpec {
                 bail!("invalid output spec: image quality for {format} is given twice");
             }
         }
-        if self.lossless {
-            if let Some(f) = self
+        if self.lossless
+            && let Some(f) = self
                 .formats
                 .iter()
                 .find(|f| !matches!(f, ImageFormat::Webp | ImageFormat::Png))
-            {
-                bail!(
-                    "invalid output spec: lossless applies to webp (png is always lossless); {f} has no lossless form here"
-                );
-            }
+        {
+            bail!(
+                "invalid output spec: lossless applies to webp (png is always lossless); {f} has no lossless form here"
+            );
         }
         if !(1..=10).contains(&self.speed) {
             bail!(

@@ -25,8 +25,10 @@ fn file(out: &JobOutput) -> &[u8] {
 
 /// What a phone or a tagger leaves in a file.
 fn identifying() -> Metadata {
-    let mut m = Metadata::default();
-    m.location = Some(Location::coordinates(37.3349, -122.009, Some(10.0)));
+    let mut m = Metadata {
+        location: Some(Location::coordinates(37.3349, -122.009, Some(10.0))),
+        ..Metadata::default()
+    };
     m.device.make = Some("Apple".into());
     m.device.model = Some("iPhone 15 Pro".into());
     m.device.software = Some("17.4.1".into());

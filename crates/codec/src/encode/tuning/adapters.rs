@@ -720,7 +720,7 @@ pub fn qsv_params_with(
             &mut params,
             &EncodeOverrides {
                 quality_delta: 0,
-                ..overrides.clone()
+                ..*overrides
             },
         );
         return params;

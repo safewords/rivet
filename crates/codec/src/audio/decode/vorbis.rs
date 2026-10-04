@@ -71,6 +71,8 @@ impl VorbisDecoder {
 }
 
 impl AudioDecoder for VorbisDecoder {
+    // Interleaving indexes every channel's plane by the same sample position.
+    #[allow(clippy::needless_range_loop)]
     fn decode(&mut self, packet: &[u8], pts: i64) -> Result<Vec<AudioFrame>, AudioError> {
         if self.next_pts_us.is_none() {
             self.next_pts_us = Some(pts);

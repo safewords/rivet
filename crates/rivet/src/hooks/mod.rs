@@ -1387,10 +1387,10 @@ impl Hooks {
             if !e.stages.contains(stage) || !e.sampling.selects(index, fps) {
                 continue;
             }
-            if let Some(max) = e.sampling.max_frames {
-                if session.frame_counts[i].fetch_add(1, Ordering::Relaxed) >= max {
-                    continue;
-                }
+            if let Some(max) = e.sampling.max_frames
+                && session.frame_counts[i].fetch_add(1, Ordering::Relaxed) >= max
+            {
+                continue;
             }
             takers[i] = true;
             any = true;

@@ -276,10 +276,10 @@ fn vorbis_comments(m: &Metadata) -> Vec<String> {
     if let Some(t) = &m.capture_time {
         out.push(format!("DATE={t}"));
     }
-    if let Some(loc) = &m.location {
-        if let Some(s) = iso6709::format(loc).or_else(|| loc.name.clone()) {
-            out.push(format!("LOCATION={s}"));
-        }
+    if let Some(loc) = &m.location
+        && let Some(s) = iso6709::format(loc).or_else(|| loc.name.clone())
+    {
+        out.push(format!("LOCATION={s}"));
     }
     out
 }
@@ -382,10 +382,10 @@ pub fn mp3(file: &[u8], m: &Metadata) -> Vec<u8> {
     if let Some(t) = &m.capture_time {
         text_frame(b"TDRC", utf8(t));
     }
-    if let Some(loc) = &m.location {
-        if let Some(s) = iso6709::format(loc).or_else(|| loc.name.clone()) {
-            text_frame(b"TXXX", utf8(&format!("LOCATION\0{s}")));
-        }
+    if let Some(loc) = &m.location
+        && let Some(s) = iso6709::format(loc).or_else(|| loc.name.clone())
+    {
+        text_frame(b"TXXX", utf8(&format!("LOCATION\0{s}")));
     }
     if frames.is_empty() {
         return file.to_vec();

@@ -108,7 +108,9 @@ fn plane8(data: &[u8], samples: usize, bits: u32) -> Result<Vec<u8>> {
     }
     let shift = bits - 8;
     Ok(data[..samples * 2]
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| (u16::from_le_bytes([c[0], c[1]]) >> shift).min(255) as u8)
         .collect())
 }
@@ -179,7 +181,9 @@ pub fn rgb8(frame: &VideoFrame) -> Result<Vec<u8>> {
                 );
             }
             return Ok(data
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .take(pixels)
                 .flat_map(|p| [p[0], p[1], p[2]])
                 .collect());
@@ -204,7 +208,7 @@ pub fn rgb8(frame: &VideoFrame) -> Result<Vec<u8>> {
                 );
             }
             let (mut u, mut v) = (Vec::with_capacity(n), Vec::with_capacity(n));
-            for pair in rest[..n * 2].chunks_exact(2) {
+            for pair in rest[..n * 2].as_chunks::<2>().0 {
                 u.push(pair[0]);
                 v.push(pair[1]);
             }
@@ -417,7 +421,7 @@ const UNIT: [f32; 256] = {
 pub fn rgb8_to_planar_f32(rgb: &[u8], width: u32, height: u32) -> Vec<f32> {
     let n = (width * height) as usize;
     let mut out = vec![0f32; n * 3];
-    for (i, px) in rgb.chunks_exact(3).take(n).enumerate() {
+    for (i, px) in rgb.as_chunks::<3>().0.iter().take(n).enumerate() {
         for c in 0..3 {
             out[c * n + i] = UNIT[px[c] as usize];
         }

@@ -86,7 +86,7 @@ fn luma_spread(frame: &VideoFrame) -> u32 {
         PixelFormat::Yuv420p10le => {
             let n = (w * h * 2).min(data.len());
             let y = &data[..n];
-            for px in y.chunks_exact(2).step_by(17) {
+            for px in y.as_chunks::<2>().0.iter().step_by(17) {
                 let v = u16::from_le_bytes([px[0], px[1]]) as u32; // 0..=1023
                 sample(v >> 2); // → 8-bit scale
             }

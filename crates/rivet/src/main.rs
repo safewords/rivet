@@ -163,6 +163,8 @@ struct Cli {
     command: Command,
 }
 
+// Parsed once per run: the size difference between subcommands costs nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
     /// Transcode an input file to AV1.

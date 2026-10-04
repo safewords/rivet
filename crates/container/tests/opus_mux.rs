@@ -303,9 +303,10 @@ fn opus_mux_finalize_emits_av01_video_and_opus_audio_in_one_file() {
 
 // ---- WebM (synthesised) — demux + mux roundtrip ----------------------
 
-/// Minimal WebM: EBML header + Segment[Tracks(VideoTrack + AudioTrack)
-/// + Cluster + SimpleBlock + SimpleBlock + ...]. Hand-written EBML to
-/// avoid pulling a webm encoder crate.
+/// Minimal WebM: EBML header +
+/// Segment[Tracks(VideoTrack + AudioTrack) + Cluster + SimpleBlock +
+/// SimpleBlock + ...]. Hand-written EBML to avoid pulling a webm encoder
+/// crate.
 ///
 /// Uses fixed-known sizes and 1-byte VINT length fields (top bit set to
 /// 1, low 7 bits carry length) where possible; larger fields use 4-byte
@@ -317,12 +318,12 @@ fn synth_webm_with_opus_track() -> Vec<u8> {
         // 4-byte VINT: top byte is 0x10 | (value >> 24); rest are MSB.
         // Max value: 2^28 - 2.
         debug_assert!(value < (1u64 << 28));
-        let mut v = Vec::with_capacity(4);
-        v.push(0x10 | ((value >> 24) & 0xFF) as u8);
-        v.push(((value >> 16) & 0xFF) as u8);
-        v.push(((value >> 8) & 0xFF) as u8);
-        v.push((value & 0xFF) as u8);
-        v
+        vec![
+            0x10 | ((value >> 24) & 0xFF) as u8,
+            ((value >> 16) & 0xFF) as u8,
+            ((value >> 8) & 0xFF) as u8,
+            (value & 0xFF) as u8,
+        ]
     }
     fn elem_id(id: &[u8]) -> Vec<u8> {
         id.to_vec()

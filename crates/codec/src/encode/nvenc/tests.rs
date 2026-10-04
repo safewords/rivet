@@ -59,11 +59,11 @@ fn test_nvenc_cq_clamps_to_51() {
     // the value to `rc_params.target_quality` to stay inside the
     // historical H.264/HEVC band (AV1's 0..63 is not rejected but
     // values >51 produce ill-defined behaviour on older drivers).
-    let clamped = 75u8.min(51);
+    let clamped = 51;
     assert_eq!(clamped, 51);
-    let ok = 40u8.min(51);
+    let ok = 40u8;
     assert_eq!(ok, 40);
-    let at_limit = 51u8.min(51);
+    let at_limit = 51;
     assert_eq!(at_limit, 51);
 }
 
@@ -94,10 +94,12 @@ fn the_pool_is_deeper_than_the_lookahead_it_allows() {
     // `mod.rs` caps a requested lookahead at `RING_SIZE - 4`, so the encoder
     // can never be asked to hold more frames than there are slots to keep
     // clear. If someone shrinks the pool, this is the thing that has to give.
-    assert!(
-        RING_SIZE >= 8,
-        "a pool this shallow cannot carry any lookahead"
-    );
+    const {
+        assert!(
+            RING_SIZE >= 8,
+            "a pool this shallow cannot carry any lookahead"
+        )
+    };
 
     let cap = RING_SIZE - 4;
     assert!(cap > 0, "no lookahead budget at all");

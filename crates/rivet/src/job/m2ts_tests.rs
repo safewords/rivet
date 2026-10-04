@@ -31,7 +31,7 @@ use crate::{JobOutput, RungArtifact};
 fn bdav(ts: &[u8], ats_step: u32) -> Vec<u8> {
     assert_eq!(ts.len() % 188, 0);
     let mut out = Vec::with_capacity(ts.len() / 188 * 192);
-    for (i, pkt) in ts.chunks_exact(188).enumerate() {
+    for (i, pkt) in ts.as_chunks::<188>().0.iter().enumerate() {
         let ats = (i as u32).wrapping_mul(ats_step) & 0x3FFF_FFFF;
         out.extend_from_slice(&ats.to_be_bytes()); // top two bits: copy_permission_indicator 0
         out.extend_from_slice(pkt);
@@ -43,7 +43,9 @@ fn bdav(ts: &[u8], ats_step: u32) -> Vec<u8> {
 /// 204-byte stream keeps its Reed-Solomon parity (the reader passes over
 /// them, so their value does not matter).
 fn with_parity(ts: &[u8]) -> Vec<u8> {
-    ts.chunks_exact(188)
+    ts.as_chunks::<188>()
+        .0
+        .iter()
         .flat_map(|p| p.iter().copied().chain([0xA5; 16]))
         .collect()
 }
@@ -302,7 +304,9 @@ fn the_audio_reader_reads_lpcm_from_an_m2ts() {
         .samples
         .iter()
         .flat_map(|s| {
-            s.chunks_exact(2)
+            s.as_chunks::<2>()
+                .0
+                .iter()
                 .map(|b| i32::from(i16::from_le_bytes([b[0], b[1]])))
         })
         .collect();

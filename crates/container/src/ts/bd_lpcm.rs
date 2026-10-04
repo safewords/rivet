@@ -226,7 +226,9 @@ mod tests {
             ("pcm_s16le", 6, 48_000)
         );
         let values: Vec<i16> = track.samples[0]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| i16::from_le_bytes([b[0], b[1]]))
             .collect();
         assert_eq!(values, [1, 2, 3, 6, 4, 5, 1, 2, 3, 6, 4, 5]);
@@ -239,7 +241,9 @@ mod tests {
         let f = frame16(11, 8, 1);
         let (track, _) = bd_lpcm_from_pes(&f, &[0]).unwrap().unwrap();
         let values: Vec<i16> = track.samples[0]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| i16::from_le_bytes([b[0], b[1]]))
             .collect();
         assert_eq!(values, [1, 2, 3, 8, 5, 6, 4, 7]);

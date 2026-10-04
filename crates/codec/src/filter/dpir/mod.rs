@@ -334,7 +334,9 @@ impl Levels {
 pub(crate) fn plane_to_f32(plane: &[u8], bps: usize) -> Vec<f32> {
     if bps == 2 {
         plane
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]) as f32)
             .collect()
     } else {

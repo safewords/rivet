@@ -608,9 +608,10 @@ pub enum Muxer {
 }
 
 /// The high-level shape of the output.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum OutputMode {
     /// One self-contained file per rung.
+    #[default]
     SingleFile,
     /// Segmented CMAF + HLS: a media playlist per rung, a shared audio
     /// rendition, and a master playlist. `segment_seconds` is the target
@@ -621,12 +622,6 @@ pub enum OutputMode {
     /// encoded and there are no rungs. Also what a single-file job becomes
     /// when its input has no video.
     AudioOnly,
-}
-
-impl Default for OutputMode {
-    fn default() -> Self {
-        OutputMode::SingleFile
-    }
 }
 
 /// The decode plan — which card(s) decode, and whether the decode is one

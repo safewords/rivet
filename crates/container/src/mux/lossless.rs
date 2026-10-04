@@ -60,7 +60,7 @@ fn audio_sample_entry_head(b: &mut BoxBuilder, info: &AudioInfo, sample_size: u1
 /// right in both.
 pub(super) fn entry_sample_rate(rate: u32) -> u32 {
     let mut r = rate;
-    while r > 0xFFFF && r % 2 == 0 {
+    while r > 0xFFFF && r.is_multiple_of(2) {
         r /= 2;
     }
     r.min(0xFFFF)

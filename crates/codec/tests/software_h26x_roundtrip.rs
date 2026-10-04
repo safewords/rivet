@@ -334,7 +334,9 @@ fn round_trip_format(codec: VideoCodec, bframes: u8, format: PixelFormat) {
         let w = W as usize;
         let luma: Vec<u16> = if ten {
             f.data[..w * H as usize * 2]
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|p| u16::from_le_bytes([p[0], p[1]]))
                 .collect()
         } else {
@@ -457,7 +459,9 @@ fn h265_ten_bit_round_trips_through_the_native_pair() {
         );
         let w = W as usize;
         let luma: Vec<u16> = f.data[..w * H as usize * 2]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|p| u16::from_le_bytes([p[0], p[1]]))
             .collect();
         let edge = edge_x(i as u64);

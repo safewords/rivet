@@ -868,7 +868,7 @@ mod with_candle {
         assert_eq!(super::super::run::default_tile(&Device::Cpu), DEFAULT_TILE);
         assert_eq!(DEFAULT_TILE, 512);
         // A GPU pays the overlap per tile, not memory: 720p / 1080p go whole.
-        assert!(DEFAULT_TILE_GPU >= 1920, "{DEFAULT_TILE_GPU}");
+        const { assert!(DEFAULT_TILE_GPU >= 1920) };
         #[cfg(feature = "dpir-cuda")]
         if let Ok(cuda) = Device::new_cuda(0) {
             assert_eq!(super::super::run::default_tile(&cuda), DEFAULT_TILE_GPU);
@@ -914,8 +914,7 @@ mod with_candle {
         let mut data = Vec::with_capacity(96 * 64 * 3 / 2);
         for y in 0..64 {
             for x in 0..96 {
-                let clean =
-                    40 + (x * 3 / 2) as i32 + if (x / 12 + y / 12) % 2 == 0 { 30 } else { 0 };
+                let clean = 40 + (x * 3 / 2) + if (x / 12 + y / 12) % 2 == 0 { 30 } else { 0 };
                 data.push((clean + n()).clamp(0, 255) as u8);
             }
         }
@@ -952,7 +951,12 @@ mod with_candle {
         // The denoiser must pull the noisy frame toward the clean one.
         let f = noisy_frame();
         let clean = |x: usize, y: usize| {
-            40 + (x * 3 / 2) as i32 + if (x / 12 + y / 12) % 2 == 0 { 30 } else { 0 }
+            40 + (x * 3 / 2) as i32
+                + if (x / 12 + y / 12).is_multiple_of(2) {
+                    30
+                } else {
+                    0
+                }
         };
         let mse = |p: &[u8]| {
             p.iter()

@@ -438,7 +438,7 @@ fn audio_mux_esds_descriptor_length_encoding() {
     // 14496-1. Pad the ASC with zeros past the initial audioObjectType
     // field so the descriptor-length branch fires.
     let mut big_asc = aac_lc_stereo_asc();
-    big_asc.extend(std::iter::repeat(0u8).take(200));
+    big_asc.extend(std::iter::repeat_n(0u8, 200));
     let mut muxer_b = Av1Mp4Muxer::new(320, 240, 30.0).expect("muxer");
     push_minimal_video(&mut muxer_b, 4);
     muxer_b
@@ -542,7 +542,7 @@ fn audio_mux_interleaved_chunks_offsets_correct() {
         total_chunk_boxes
     );
 
-    let all: Vec<usize> = stco_hits.into_iter().chain(co64_hits.into_iter()).collect();
+    let all: Vec<usize> = stco_hits.into_iter().chain(co64_hits).collect();
     let offsets_a = read_offsets(&out, all[0]);
     let offsets_b = read_offsets(&out, all[1]);
     assert_eq!(offsets_a.len(), 1, "video expected 1 chunk");

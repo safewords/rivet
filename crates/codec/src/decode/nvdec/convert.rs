@@ -226,7 +226,7 @@ pub fn deinterleave_p016_to_yuv420p10le(p016_bytes: &[u8], w: usize, h: usize) -
 
     // Y plane: u16 LE samples, right-shift by 6 and re-emit LE.
     let y_src = &p016_bytes[..y_bytes.min(p016_bytes.len())];
-    for chunk in y_src.chunks_exact(2) {
+    for chunk in y_src.as_chunks::<2>().0 {
         let sample = u16::from_le_bytes([chunk[0], chunk[1]]);
         out.extend_from_slice(&(sample >> 6).to_le_bytes());
     }

@@ -1827,22 +1827,22 @@ mod tests {
         };
         let cbr = EncodeOverrides {
             rate_mode: Some(RateMode::Constant),
-            ..avg.clone()
+            ..avg
         };
         assert!(software_only(&spec(
             VideoCodecPolicy::Vp9,
             EncodePolicy::AllGpus,
-            avg.clone()
+            avg
         )));
         assert!(software_only(&spec(
             VideoCodecPolicy::Vp9,
             EncodePolicy::PerRung,
-            avg.clone()
+            avg
         )));
         assert!(!software_only(&spec(
             VideoCodecPolicy::Vp9,
             EncodePolicy::Family(GpuFamily::Intel),
-            avg.clone()
+            avg
         )));
         assert!(!software_only(&spec(
             VideoCodecPolicy::Vp9,

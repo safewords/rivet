@@ -124,6 +124,8 @@ pub struct RungPackets {
 /// (a fresh stream per chunk on a pooled, reset session → first kept frame is
 /// an IDR); the finalizer concatenates them in chunk order into one ordered
 /// packet stream per rung.
+// `idx` names the rung to the ladder as well as indexing `rungs`.
+#[allow(clippy::needless_range_loop)]
 pub async fn run_multigpu_single_file(
     params: MultiGpuParams<'_>,
     sink: Arc<dyn ProgressSink>,

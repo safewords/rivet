@@ -122,11 +122,13 @@ fn a_slot_the_runtime_holds_is_never_chosen() {
 #[test]
 fn the_pool_is_larger_than_the_async_depth() {
     assert_eq!(ASYNC_DEPTH, 4, "upstream sample_encode's recommendation");
-    assert!(
-        POOL_SIZE > ASYNC_DEPTH,
-        "the pool must cover what the runtime retains beyond its async queue, \
-         or there is no free surface to write the next frame into"
-    );
+    const {
+        assert!(
+            POOL_SIZE > ASYNC_DEPTH,
+            "the pool must cover what the runtime retains beyond its async queue, \
+             or there is no free surface to write the next frame into"
+        )
+    };
 }
 
 /// `MFX_ERR_MORE_DATA` (-10) on EncodeFrameAsync means the
@@ -169,19 +171,16 @@ fn test_qsv_eof_drain_ends_cleanly() {
             err => Err(format!("flush failed: {err}")),
         }
     }
-    assert_eq!(
+    assert!(
         simulate_flush_tick(MFX_ERR_MORE_DATA).unwrap(),
-        true,
         "clean EOF: flush terminates on MORE_DATA without error"
     );
-    assert_eq!(
-        simulate_flush_tick(MFX_ERR_NONE).unwrap(),
-        false,
+    assert!(
+        !simulate_flush_tick(MFX_ERR_NONE).unwrap(),
         "NONE: flush has more output to drain"
     );
-    assert_eq!(
-        simulate_flush_tick(MFX_WRN_VIDEO_PARAM_CHANGED).unwrap(),
-        false,
+    assert!(
+        !simulate_flush_tick(MFX_WRN_VIDEO_PARAM_CHANGED).unwrap(),
         "warning: flush keeps looping to drain the bitstream"
     );
     assert!(

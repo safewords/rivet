@@ -83,7 +83,9 @@ const M_Y_CR_FULL: i32 = (-0.20793764_f64 * 224.0 / 219.0 * 32768.0).round() as 
 
 fn read_u16le(bytes: &[u8]) -> Vec<u16> {
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect()
 }
@@ -219,7 +221,12 @@ fn full_range_to_studio_10bit(frame: &VideoFrame) -> Result<VideoFrame> {
         );
     }
     let mut out = Vec::with_capacity(samples * 2);
-    for (i, pair) in frame.data[..samples * 2].chunks_exact(2).enumerate() {
+    for (i, pair) in frame.data[..samples * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .enumerate()
+    {
         let v = u16::from_le_bytes([pair[0], pair[1]]) as f32;
         let studio = if i < luma {
             64.0 + 876.0 * v / 1023.0

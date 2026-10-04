@@ -511,26 +511,23 @@ impl Metadata {
         if !stray.is_empty() {
             out.push(format!("carries {stray} metadata, which the job strips"));
         }
-        if keep.location == LocationKeep::Approximate {
-            if let Some(l) = &self.location {
-                let fine = |v: Option<f64>| v.is_some_and(|v| (v - round2(v)).abs() > 1e-6);
-                if fine(l.latitude) || fine(l.longitude) || l.altitude.is_some() || l.name.is_some()
-                {
-                    out.push("carries a location finer than approximate".into());
-                }
+        if keep.location == LocationKeep::Approximate
+            && let Some(l) = &self.location
+        {
+            let fine = |v: Option<f64>| v.is_some_and(|v| (v - round2(v)).abs() > 1e-6);
+            if fine(l.latitude) || fine(l.longitude) || l.altitude.is_some() || l.name.is_some() {
+                out.push("carries a location finer than approximate".into());
             }
         }
-        if keep.capture_time == TimeKeep::Date {
-            if let Some(t) = &self.capture_time {
-                if t.len() > 10
-                    && !t[10..].starts_with("T00:00:00")
-                    && !t[10..].starts_with(" 00:00:00")
-                {
-                    out.push(format!(
-                        "carries a time of day ({t}) where only the date is kept"
-                    ));
-                }
-            }
+        if keep.capture_time == TimeKeep::Date
+            && let Some(t) = &self.capture_time
+            && t.len() > 10
+            && !t[10..].starts_with("T00:00:00")
+            && !t[10..].starts_with(" 00:00:00")
+        {
+            out.push(format!(
+                "carries a time of day ({t}) where only the date is kept"
+            ));
         }
         if keep.device != DeviceKeep::All
             && (self.device.serial.is_some() || self.device.owner.is_some())
@@ -790,16 +787,15 @@ pub(crate) fn normalize_date(raw: &str) -> String {
                 if matches!(r.first(), Some(b'+' | b'-')) {
                     let hh = rest.get(1..3);
                     let mm = rest.get(3..).map(|m| m.trim_start_matches(':'));
-                    if let (Some(hh), Some(mm)) = (hh, mm) {
-                        if hh.len() == 2
-                            && mm.len() >= 2
-                            && hh
-                                .bytes()
-                                .chain(mm[..2].bytes())
-                                .all(|c| c.is_ascii_digit())
-                        {
-                            out.push_str(&format!("{}{hh}:{}", &rest[..1], &mm[..2]));
-                        }
+                    if let (Some(hh), Some(mm)) = (hh, mm)
+                        && hh.len() == 2
+                        && mm.len() >= 2
+                        && hh
+                            .bytes()
+                            .chain(mm[..2].bytes())
+                            .all(|c| c.is_ascii_digit())
+                    {
+                        out.push_str(&format!("{}{hh}:{}", &rest[..1], &mm[..2]));
                     }
                 }
             }
@@ -884,7 +880,9 @@ pub(crate) fn text(bytes: &[u8]) -> String {
 
 pub(crate) fn utf16(bytes: &[u8], big_endian: bool) -> String {
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| {
             if big_endian {
                 u16::from_be_bytes([c[0], c[1]])

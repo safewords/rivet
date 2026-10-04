@@ -432,14 +432,14 @@ pub fn build(m: &Metadata) -> Option<Vec<u8>> {
             exif.push(ascii_field(tag, v));
         }
     }
-    if let Some(t) = &m.capture_time {
-        if let Some((date, offset)) = exif_date(t) {
-            ifd0.push(ascii_field(TAG_DATE_TIME, &date));
-            exif.push(ascii_field(TAG_DATE_TIME_ORIGINAL, &date));
-            exif.push(ascii_field(TAG_DATE_TIME_DIGITIZED, &date));
-            if let Some(off) = offset {
-                exif.push(ascii_field(TAG_OFFSET_TIME_ORIGINAL, &off));
-            }
+    if let Some(t) = &m.capture_time
+        && let Some((date, offset)) = exif_date(t)
+    {
+        ifd0.push(ascii_field(TAG_DATE_TIME, &date));
+        exif.push(ascii_field(TAG_DATE_TIME_ORIGINAL, &date));
+        exif.push(ascii_field(TAG_DATE_TIME_DIGITIZED, &date));
+        if let Some(off) = offset {
+            exif.push(ascii_field(TAG_OFFSET_TIME_ORIGINAL, &off));
         }
     }
     for (key, tag) in [
@@ -550,8 +550,10 @@ mod tests {
 
     #[test]
     fn build_then_read_round_trips() {
-        let mut m = Metadata::default();
-        m.location = Some(Location::coordinates(37.3349, -122.009, Some(10.0)));
+        let mut m = Metadata {
+            location: Some(Location::coordinates(37.3349, -122.009, Some(10.0))),
+            ..Metadata::default()
+        };
         m.device.make = Some("Apple".into());
         m.device.model = Some("iPhone 15 Pro".into());
         m.device.lens = Some("iPhone 15 Pro back camera 6.765mm f/1.78".into());
@@ -607,8 +609,10 @@ mod tests {
 
     #[test]
     fn truncated_blocks_do_not_panic() {
-        let mut m = Metadata::default();
-        m.location = Some(Location::coordinates(1.0, 2.0, None));
+        let mut m = Metadata {
+            location: Some(Location::coordinates(1.0, 2.0, None)),
+            ..Metadata::default()
+        };
         m.device.make = Some("X".into());
         let tiff = build(&m).unwrap();
         for n in 0..tiff.len() {

@@ -195,7 +195,9 @@ pub(super) fn read_legacy_pth(bytes: &[u8]) -> Result<Vec<PthTensor>> {
             );
         }
         let data = bytes[start..end]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         cur.set_position(end as u64);

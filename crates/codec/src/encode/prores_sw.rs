@@ -160,8 +160,8 @@ impl ProresEncoder {
 /// Samples as u16: 8-bit bytes, or 16-bit little-endian pairs.
 fn widen(data: &[u8], ten: bool, out: &mut [u16]) {
     if ten {
-        for (o, pair) in out.iter_mut().zip(data.chunks_exact(2)) {
-            *o = u16::from_le_bytes([pair[0], pair[1]]);
+        for (o, pair) in out.iter_mut().zip(data.as_chunks::<2>().0) {
+            *o = u16::from_le_bytes(*pair);
         }
     } else {
         for (o, &b) in out.iter_mut().zip(data) {
@@ -204,12 +204,12 @@ fn upsample_chroma(
             let next = vertical[1..]
                 .iter()
                 .chain(std::iter::once(&vertical[cw - 1]));
-            let mut pairs = row.chunks_exact_mut(2);
-            for ((pair, &a), &b) in (&mut pairs).zip(&vertical).zip(next) {
+            let (pairs, rest) = row.as_chunks_mut::<2>();
+            for ((pair, &a), &b) in pairs.iter_mut().zip(&vertical).zip(next) {
                 pair[0] = a;
                 pair[1] = (u32::from(a) + u32::from(b)).div_ceil(2) as u16;
             }
-            if let [last] = pairs.into_remainder() {
+            if let [last] = rest {
                 *last = vertical[cw - 1];
             }
         } else {

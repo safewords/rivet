@@ -272,7 +272,7 @@ fn nvdec_disabled_for(codec_lower: &str) -> bool {
 /// decoder. Other codecs pass (VP9's odd sizes are the VP9 guard's).
 #[cfg(feature = "nvidia")]
 fn nvdec_takes_vp8(codec_lower: &str, info: &StreamInfo) -> bool {
-    codec_lower != "vp8" || (info.width % 2 == 0 && info.height % 2 == 0)
+    codec_lower != "vp8" || (info.width.is_multiple_of(2) && info.height.is_multiple_of(2))
 }
 
 /// Codecs the NVDEC streaming dispatch supports.

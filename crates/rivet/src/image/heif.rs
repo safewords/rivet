@@ -64,7 +64,7 @@ pub(crate) fn sniff(data: &[u8]) -> Option<SourceFormat> {
         return None;
     }
     let brands: Vec<&[u8]> = std::iter::once(&ftyp[..4])
-        .chain(ftyp[8..].chunks_exact(4))
+        .chain(ftyp[8..].as_chunks::<4>().0.iter().map(|b| &b[..]))
         .collect();
     let has = |names: &[&[u8; 4]]| brands.iter().any(|b| names.iter().any(|n| *b == &n[..]));
     let avif = has(&[b"avif", b"avis"]);

@@ -352,7 +352,7 @@ fn recover_index_on_grey_frame_returns_zero_with_no_confidence() {
     let y_size = w * h;
     let uv_size = y_size / 4;
     let mut buf = vec![128u8; y_size]; // mid-grey luma
-    buf.extend(std::iter::repeat(128u8).take(2 * uv_size));
+    buf.extend(std::iter::repeat_n(128u8, 2 * uv_size));
     let grey = VideoFrame::new(
         Bytes::from(buf),
         W,

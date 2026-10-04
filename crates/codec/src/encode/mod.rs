@@ -1167,7 +1167,8 @@ pub fn encode_capable(dev: &gpu::GpuDevice, codec: VideoCodec) -> bool {
 pub fn encode_capable_at(dev: &gpu::GpuDevice, codec: VideoCodec, ten_bit: bool) -> bool {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<(u32, VideoCodec, bool), bool>>> = OnceLock::new();
+    type Cache = Mutex<HashMap<(u32, VideoCodec, bool), bool>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let key = (dev.index, codec, ten_bit);
     if let Some(&cached) = cache.lock().unwrap().get(&key) {

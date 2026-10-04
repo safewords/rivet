@@ -387,7 +387,9 @@ pub(crate) fn frame_to_rgb8(frame: &VideoFrame, color: SourceColor) -> Result<(V
         // Already RGB — no matrix, just drop any alpha.
         PixelFormat::Rgb24 => data[..w * h * 3].to_vec(),
         PixelFormat::Rgba32 => data[..w * h * 4]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|px| [px[0], px[1], px[2]])
             .collect(),
     };
@@ -632,9 +634,9 @@ mod tests {
         assert_eq!(rgb.len(), 2 * 2 * 3, "{format:?} produced the wrong length");
 
         let want = expected_rgb();
-        for (i, px) in rgb.chunks_exact(3).enumerate() {
+        for (i, px) in rgb.as_chunks::<3>().0.iter().enumerate() {
             assert_eq!(
-                px, want,
+                *px, want,
                 "{format:?} pixel {i} disagrees with the 8-bit 4:2:0 baseline",
             );
         }

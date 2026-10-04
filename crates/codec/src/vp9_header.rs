@@ -372,7 +372,7 @@ mod tests {
             let mut n = 0usize;
             for &(v, len) in bits {
                 for i in (0..len).rev() {
-                    if n % 8 == 0 {
+                    if n.is_multiple_of(8) {
                         out.push(0);
                     }
                     if (v >> i) & 1 == 1 {

@@ -24,7 +24,6 @@
 //! generators.
 
 #[path = "../tests/common/synth.rs"]
-#[allow(dead_code)]
 mod synth;
 
 use h26x::ChromaFormat;

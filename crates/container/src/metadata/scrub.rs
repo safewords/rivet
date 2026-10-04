@@ -61,7 +61,7 @@ pub fn aac_frame(frame: &mut [u8]) -> bool {
     }
     // Only fill: an SBR, dynamic-range or other extension payload is audio.
     match bits(frame, at, 4) {
-        Some(0 | 1 | 2) => {}
+        Some(0..=2) => {}
         _ => return false,
     }
     let before = frame.to_vec();

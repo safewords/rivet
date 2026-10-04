@@ -45,6 +45,9 @@
 //! PSNR down N dB the assertion will fire with the actual measured
 //! number, making the regression diagnosis easy.
 
+// The metric kernels index several buffers by one position; the pattern table spells out its boxed generators.
+#![allow(clippy::needless_range_loop, clippy::type_complexity)]
+
 use bytes::Bytes;
 
 mod common;
@@ -372,9 +375,7 @@ fn round_trip_measure(reference_frames: &[VideoFrame], quantizer: u8) -> Option<
         keyframe_interval: 30,
         ..EncoderConfig::default()
     };
-    let Some(mut encoder) = common::try_av1_encoder(config) else {
-        return None;
-    };
+    let mut encoder = common::try_av1_encoder(config)?;
     let mut muxer = container::mux::Av1Mp4Muxer::new(W, H, FPS).expect("muxer");
 
     for f in reference_frames {
@@ -403,9 +404,7 @@ fn round_trip_measure(reference_frames: &[VideoFrame], quantizer: u8) -> Option<
         bitrate: 0,
         color_metadata: Default::default(),
     };
-    let Some(mut decoder) = common::try_av1_decoder(info) else {
-        return None;
-    };
+    let mut decoder = common::try_av1_decoder(info)?;
 
     let mut decoded: Vec<VideoFrame> = Vec::new();
     fn drain(dec: &mut Box<dyn Decoder>, out: &mut Vec<VideoFrame>) {

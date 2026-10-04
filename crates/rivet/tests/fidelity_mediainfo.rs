@@ -65,8 +65,8 @@ fn make_textured_frame(w: u32, h: u32, pts: u64) -> VideoFrame {
             buf.push(((r + c) as u8).wrapping_add(t));
         }
     }
-    buf.extend(std::iter::repeat(128u8.wrapping_add(t / 2)).take(uv_size));
-    buf.extend(std::iter::repeat(128u8.wrapping_add(t / 3)).take(uv_size));
+    buf.extend(std::iter::repeat_n(128u8.wrapping_add(t / 2), uv_size));
+    buf.extend(std::iter::repeat_n(128u8.wrapping_add(t / 3), uv_size));
     VideoFrame::new(
         Bytes::from(buf),
         w,

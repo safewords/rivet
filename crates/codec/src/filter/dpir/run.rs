@@ -48,6 +48,8 @@ struct Job {
 /// never runs that destructor (threads still alive at `ExitProcess` are
 /// terminated without it), so the tokio / pump threads that call
 /// [`PreparedDpir::apply`] never touch the device themselves.
+// One per prepared filter: boxing the network would buy nothing.
+#[allow(clippy::large_enum_variant)]
 enum Net {
     Local(DrUnet),
     Worker(mpsc::Sender<Job>),

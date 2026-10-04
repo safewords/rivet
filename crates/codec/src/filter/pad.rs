@@ -67,6 +67,7 @@ fn pad(frame: &VideoFrame, pw: u32, ph: u32, x: u32, y: u32) -> Result<VideoFram
 
 /// Place an `sw×sh` plane at `(ox, oy)` inside a `dw×dh` canvas pre-filled with
 /// `fill_sample` (`bps`-byte samples).
+#[allow(clippy::too_many_arguments)] // source, canvas and offset dimensions, one by one
 fn pad_plane(
     src: &[u8],
     sw: usize,

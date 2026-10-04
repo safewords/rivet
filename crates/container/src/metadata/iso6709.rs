@@ -19,9 +19,7 @@ pub fn parse(s: &str) -> Option<Location> {
             // A CRS suffix (`CRSWGS_84`) or trailing text ends the numbers.
             break;
         }
-        if start.is_none() {
-            return None;
-        }
+        start?;
     }
     let end = s
         .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '+' || c == '-'))

@@ -981,7 +981,9 @@ fn every_12bit_code_le() -> Vec<u8> {
 }
 
 fn le_u16s(b: &[u8]) -> Vec<u16> {
-    b.chunks_exact(2)
+    b.as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect()
 }
@@ -1742,7 +1744,9 @@ fn scale_region_pads_ten_bit_with_ten_bit_black() {
     );
     let out = super::scale_region(&src, (0, 0, 16, 16), (8, 8), (8, 16), (0, 4)).unwrap();
     let luma: Vec<u16> = out.data[..8 * 16 * 2]
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     assert_eq!(luma[0], 64, "top bar");

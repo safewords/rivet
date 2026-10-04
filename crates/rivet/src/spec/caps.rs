@@ -286,10 +286,10 @@ pub(crate) fn check_output_caps(
 /// `compiled` plus the backend `pinned` by name, listed once.
 fn with_pin(compiled: &[EncoderBackend], pinned: Option<EncoderBackend>) -> Vec<EncoderBackend> {
     let mut backends = compiled.to_vec();
-    if let Some(p) = pinned {
-        if !backends.contains(&p) {
-            backends.push(p);
-        }
+    if let Some(p) = pinned
+        && !backends.contains(&p)
+    {
+        backends.push(p);
     }
     backends
 }

@@ -10,6 +10,8 @@ use codec::colorspace::{
 };
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
+// Each plane is filled from its own index pattern.
+#[allow(clippy::needless_range_loop)]
 fn make_planes(w: usize, h: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut y = vec![0u8; w * h];
     let mut cb = vec![0u8; (w / 2) * (h / 2)];
@@ -24,6 +26,7 @@ fn make_planes(w: usize, h: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     (y, cb, cr)
 }
 
+#[allow(clippy::needless_range_loop)]
 fn make_planes_10bit(w: usize, h: usize) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
     // Limited 10-bit: luma [64, 940], chroma [64, 960]. Sweep both.
     let mut y = vec![0u16; w * h];

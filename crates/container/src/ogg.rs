@@ -89,9 +89,9 @@ pub fn write_audio(
         "vorbis" => {
             let headers = vorbis::split_xiph_lacing(&info.codec_private)
                 .map_err(|e| anyhow::anyhow!("the Vorbis headers: {e}"))?;
-            w.write_packet(&headers[0], 0, true, false)?;
-            w.write_packet(&headers[1], 0, false, false)?;
-            w.write_packet(&headers[2], 0, true, false)?;
+            w.write_packet(headers[0], 0, true, false)?;
+            w.write_packet(headers[1], 0, false, false)?;
+            w.write_packet(headers[2], 0, true, false)?;
             // Presentation from `media_time` on: a leading trim is a negative
             // start, which the granule positions of Vorbis I §A.2 express.
             (edit.media_time, edit.duration.map(|d| edit.media_time + d))

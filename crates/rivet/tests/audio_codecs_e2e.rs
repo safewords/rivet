@@ -16,6 +16,9 @@
 //! 5.1, one tone per speaker, at 48 kHz), and a synthetic H.264 clip with a
 //! stereo AAC track for the outputs that carry video.
 
+// Cross-correlation indexes two signals at an offset from one position.
+#![allow(clippy::needless_range_loop)]
+
 mod common;
 
 use std::sync::Arc;

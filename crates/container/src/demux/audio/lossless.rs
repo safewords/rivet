@@ -127,28 +127,26 @@ pub(crate) fn alac_frame_samples(frame: &[u8], frame_length: u32) -> u32 {
 /// A FLAC or ALAC track in an MP4, when the audio track's sample entry is
 /// `fLaC` (with `dfLa`) or `alac` (with its `alac` cookie box).
 pub(crate) fn extract_mp4_lossless(data: &[u8]) -> Option<AudioTrack> {
-    let (codec, private, rate, channels) = if let Some(dfla) =
-        super::ac3::extract_mp4_audio_config_body(data, b"fLaC", b"dfLa")
-    {
-        let blocks = normalize_flac_blocks(&dfla).or_else(|| {
-            tracing::warn!("MP4 fLaC: dfLa holds no STREAMINFO; dropping audio");
-            None
-        })?;
-        let (rate, channels, _, _) = flac_stream_params(&blocks)?;
-        ("flac", blocks, rate, channels)
-    } else if let Some(raw) = super::ac3::extract_mp4_audio_config_body(data, b"alac", b"alac") {
-        let cookie = normalize_alac_cookie(&raw).or_else(|| {
-            tracing::warn!(
-                len = raw.len(),
-                "MP4 alac: magic cookie is not 24 bytes; dropping audio"
-            );
-            None
-        })?;
-        let (rate, channels, _) = alac_stream_params(&cookie)?;
-        ("alac", cookie, rate, channels)
-    } else {
-        return None;
-    };
+    let (codec, private, rate, channels) =
+        if let Some(dfla) = super::ac3::extract_mp4_audio_config_body(data, b"fLaC", b"dfLa") {
+            let blocks = normalize_flac_blocks(&dfla).or_else(|| {
+                tracing::warn!("MP4 fLaC: dfLa holds no STREAMINFO; dropping audio");
+                None
+            })?;
+            let (rate, channels, _, _) = flac_stream_params(&blocks)?;
+            ("flac", blocks, rate, channels)
+        } else {
+            let raw = super::ac3::extract_mp4_audio_config_body(data, b"alac", b"alac")?;
+            let cookie = normalize_alac_cookie(&raw).or_else(|| {
+                tracing::warn!(
+                    len = raw.len(),
+                    "MP4 alac: magic cookie is not 24 bytes; dropping audio"
+                );
+                None
+            })?;
+            let (rate, channels, _) = alac_stream_params(&cookie)?;
+            ("alac", cookie, rate, channels)
+        };
     let size = data.len() as u64;
     let mut reader = Mp4Reader::read_header(Cursor::new(data), size).ok()?;
     let (track_id, timescale, sample_count) = reader

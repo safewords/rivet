@@ -879,7 +879,9 @@ fn scaling_from_the_planes_matches_converting_first() {
     }
     let rgba: Vec<u8> = frame::rgb8(&i420)
         .unwrap()
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .flat_map(|p| [p[0], p[1], p[2], 255])
         .collect();
     let rgba = VideoFrame::new(

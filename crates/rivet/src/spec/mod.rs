@@ -445,10 +445,10 @@ impl OutputSpec {
     /// unchanged — the default two seconds stays the default.
     pub fn with_gop_seconds_resolved(&self, frame_rate: f64) -> OutputSpec {
         let mut resolved = self.clone();
-        if let Some(seconds) = resolved.gop_seconds.take() {
-            if resolved.gop.is_none() {
-                resolved.gop = Some(gop_frames_for_seconds(seconds, frame_rate));
-            }
+        if let Some(seconds) = resolved.gop_seconds.take()
+            && resolved.gop.is_none()
+        {
+            resolved.gop = Some(gop_frames_for_seconds(seconds, frame_rate));
         }
         resolved
     }
@@ -825,10 +825,10 @@ impl OutputSpec {
         pinned: Option<codec::encode::EncoderBackend>,
     ) -> Result<()> {
         self.check_audio()?;
-        if let Some(seconds) = self.gop_seconds {
-            if !seconds.is_finite() || seconds <= 0.0 {
-                bail!("gop in seconds must be a positive number of seconds (got {seconds})");
-            }
+        if let Some(seconds) = self.gop_seconds
+            && (!seconds.is_finite() || seconds <= 0.0)
+        {
+            bail!("gop in seconds must be a positive number of seconds (got {seconds})");
         }
         if matches!(self.container, Container::WebM | Container::Ogg)
             && !self.metadata_keep.is_empty()
@@ -1159,10 +1159,8 @@ impl OutputSpec {
                         "an Ogg file holds Opus or Vorbis, not what audio={name} makes: use audio=opus or vorbis, \
                          or audio-container=mp4 for an .m4a"
                     ),
-                    (_, _, Container::Mp3) => format!(
-                        "audio-only output is an .mp3 file, which holds MP3 only: use audio=mp3 (or auto, which \
-                         means MP3 there), or audio-container=mp4 for an .m4a (or ogg for Opus and Vorbis)"
-                    ),
+                    (_, _, Container::Mp3) => "audio-only output is an .mp3 file, which holds MP3 only: use audio=mp3 (or auto, which \
+                         means MP3 there), or audio-container=mp4 for an .m4a (or ogg for Opus and Vorbis)".to_string(),
                     (_, _, Container::Flac) => format!(
                         "a native FLAC file holds FLAC only, not what audio={name} makes; use audio-container=mp4"
                     ),

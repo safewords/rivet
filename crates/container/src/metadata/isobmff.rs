@@ -186,14 +186,13 @@ fn read_trak(trak: &[u8], file: &[u8], m: &mut Metadata) {
     };
     // A FLAC track's `dfLa` holds the stream's metadata blocks, Vorbis
     // comments and pictures among them.
-    if &fourcc == b"fLaC" {
-        if let Some(blocks) = entry_body
+    if &fourcc == b"fLaC"
+        && let Some(blocks) = entry_body
             .get(28..)
             .and_then(|c| child(c, b"dfLa"))
             .and_then(|d| d.get(4..))
-        {
-            super::audio::read_flac_blocks(blocks, m);
-        }
+    {
+        super::audio::read_flac_blocks(blocks, m);
     }
     let track = match (&handler, &fourcc) {
         (_, b"mebx") => Some(mebx_track(entry_body)),

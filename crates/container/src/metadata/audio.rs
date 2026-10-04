@@ -175,8 +175,10 @@ fn id3_comment(body: &[u8]) -> String {
     };
     let wide = enc == 1 || enc == 2;
     let split = if wide {
-        rest.chunks_exact(2)
-            .position(|c| c == [0, 0])
+        rest.as_chunks::<2>()
+            .0
+            .iter()
+            .position(|c| *c == [0, 0])
             .map(|i| i * 2 + 2)
     } else {
         rest.iter().position(|&b| b == 0).map(|i| i + 1)

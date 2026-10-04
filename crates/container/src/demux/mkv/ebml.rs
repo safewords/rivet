@@ -106,17 +106,17 @@ pub(crate) fn scan_mkv_audio_trims(data: &[u8], track_number: u64) -> Option<Mkv
                 }
                 trims.last_padding_ns = 0;
             }
-            BLOCK_GROUP => {
-                if find_ebml_child(body, BLOCK).and_then(block_track) == Some(track_number) {
-                    let padding = find_ebml_child(body, DISCARD_PADDING)
-                        .and_then(read_signed)
-                        .unwrap_or(0);
-                    if !seen_block {
-                        seen_block = true;
-                        trims.first_padding_ns = padding;
-                    }
-                    trims.last_padding_ns = padding;
+            BLOCK_GROUP
+                if find_ebml_child(body, BLOCK).and_then(block_track) == Some(track_number) =>
+            {
+                let padding = find_ebml_child(body, DISCARD_PADDING)
+                    .and_then(read_signed)
+                    .unwrap_or(0);
+                if !seen_block {
+                    seen_block = true;
+                    trims.first_padding_ns = padding;
                 }
+                trims.last_padding_ns = padding;
             }
             _ => {}
         }

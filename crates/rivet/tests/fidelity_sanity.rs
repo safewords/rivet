@@ -42,8 +42,8 @@ fn make_yuv420p_frame(w: u32, h: u32, pts: u64) -> VideoFrame {
             buf.push(((r + c) as u8).wrapping_add(t));
         }
     }
-    buf.extend(std::iter::repeat(128u8.wrapping_add(t / 3)).take(uv_size));
-    buf.extend(std::iter::repeat(128u8.wrapping_add(t / 5)).take(uv_size));
+    buf.extend(std::iter::repeat_n(128u8.wrapping_add(t / 3), uv_size));
+    buf.extend(std::iter::repeat_n(128u8.wrapping_add(t / 5), uv_size));
     VideoFrame::new(
         Bytes::from(buf),
         w,
@@ -177,7 +177,7 @@ fn sanity_a_output_is_larger_than_skeleton() {
     // total. mp4 size > mdat_bytes means the skeleton exists; mp4 size
     // > 1024 means we wrote something meaningful.
     assert!(
-        mp4.len() as usize > mdat_bytes,
+        mp4.len() > mdat_bytes,
         "mp4 {}B <= mdat payload {}B — mux failed to wrap the payload",
         mp4.len(),
         mdat_bytes
