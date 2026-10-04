@@ -430,14 +430,7 @@ impl SdrToHdr {
             // The scalar pixel's constants, computed as it computes them.
             let (k_r, k_b, k_g) = (set(2.0 * (1.0 - kr)), set(2.0 * (1.0 - kb)), set(1.0 - kr - kb));
             let (zero, one) = (_mm256_setzero_ps(), set(1.0));
-            let lerp = |table: &[f32], x: __m256| -> __m256 {
-                let p = _mm256_mul_ps(_mm256_min_ps(_mm256_max_ps(x, zero), one), set(LUT_STEPS as f32));
-                let i = _mm256_min_epi32(_mm256_cvttps_epi32(p), _mm256_set1_epi32(LUT_STEPS as i32 - 1));
-                let f = _mm256_sub_ps(p, _mm256_cvtepi32_ps(i));
-                let a = _mm256_i32gather_ps::<4>(table.as_ptr(), i);
-                let b = _mm256_i32gather_ps::<4>(table.as_ptr().add(1), i);
-                _mm256_add_ps(a, _mm256_mul_ps(_mm256_sub_ps(b, a), f))
-            };
+            let lerp = |table: &[f32], x: __m256| lerp_avx2(table, x);
             let m = self.primaries;
             let (kr20, kg20, kb20) = (set(KR_2020), set(1.0 - KR_2020 - KB_2020), set(KB_2020));
             let (dcb, dcr) = (set(2.0 * (1.0 - KB_2020)), set(2.0 * (1.0 - KR_2020)));
@@ -484,6 +477,26 @@ impl SdrToHdr {
             }
             wide
         }
+    }
+}
+
+/// [`lerp_table`] on eight lanes: the same clamp, scale, truncation and
+/// `a + (b - a) * f`, the two entries gathered.
+///
+/// # Safety
+/// AVX2; `table` holds `LUT_STEPS + 1` entries.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn lerp_avx2(table: &[f32], x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
+    use std::arch::x86_64::*;
+    unsafe {
+        let p = _mm256_mul_ps(_mm256_min_ps(_mm256_max_ps(x, _mm256_setzero_ps()), _mm256_set1_ps(1.0)), _mm256_set1_ps(LUT_STEPS as f32));
+        let i = _mm256_min_epi32(_mm256_cvttps_epi32(p), _mm256_set1_epi32(LUT_STEPS as i32 - 1));
+        let f = _mm256_sub_ps(p, _mm256_cvtepi32_ps(i));
+        let a = _mm256_i32gather_ps::<4>(table.as_ptr(), i);
+        let b = _mm256_i32gather_ps::<4>(table.as_ptr().add(1), i);
+        _mm256_add_ps(a, _mm256_mul_ps(_mm256_sub_ps(b, a), f))
     }
 }
 

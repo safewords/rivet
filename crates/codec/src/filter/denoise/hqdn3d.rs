@@ -31,6 +31,7 @@ use anyhow::Result;
 
 use super::super::{assemble, planes_8bit};
 use super::for_row_bands;
+use super::simd::{Simd, Tier, round_clamp_u8, tiered};
 use crate::frame::VideoFrame;
 
 /// The documented defaults: `luma_spatial = 4`; the rest derive from it.
@@ -83,27 +84,52 @@ struct Curve {
 impl Curve {
     fn new(strength: f32) -> Self {
         if strength <= 0.0 || !strength.is_finite() {
-            return Curve { k: vec![0.0; CURVE_LEN] };
+            return Curve { k: vec![0.0; CURVE_LEN + 1] };
         }
         let k_max = strength / (strength + KNEE);
         let tau = EDGE * strength;
+        // One entry past the table, 0: what an index off its end reads as
+        // (`step`'s `unwrap_or`), so the vector kernels can clamp the index
+        // to it and gather in bounds.
         let k = (0..CURVE_LEN)
             .map(|i| {
                 let d = (i as f32 + 0.5) / STEPS;
                 k_max * (-(d / tau) * (d / tau)).exp()
             })
+            .chain([0.0])
             .collect();
         Curve { k }
     }
 
     /// One recursion step: the new state from the running `state` and the
     /// incoming sample `x`.
-    #[inline(always)]
+    #[cfg(test)]
     fn step(&self, state: f32, x: f32) -> f32 {
-        let diff = state - x;
-        // `as usize` saturates; |diff| ≤ 255 keeps it in the table anyway.
-        let k = self.k.get((diff.abs() * STEPS) as usize).copied().unwrap_or(0.0);
-        x + k * diff
+        step(&self.k, state, x)
+    }
+}
+
+/// One recursion step with the retention table `k`.
+#[inline(always)]
+fn step(k: &[f32], state: f32, x: f32) -> f32 {
+    let diff = state - x;
+    // `as usize` saturates; |diff| ≤ 255 keeps it in the table anyway.
+    let k = k.get((diff.abs() * STEPS) as usize).copied().unwrap_or(0.0);
+    x + k * diff
+}
+
+/// [`step`] lane-wise, bit-exact with it: `max(d, 0 - d)` is `|d|`, an index
+/// at or past the table's end is clamped to its trailing 0 (which `step`
+/// reads as 0 too), and `k * d` is added to `x` after rounding, as `step`
+/// does it — no fused multiply-add.
+#[inline(always)]
+unsafe fn step_v<S: Simd>(k: &[f32], state: S::F, x: S::F) -> S::F {
+    unsafe {
+        let d = S::sub_f32(state, x);
+        let a = S::max_f32(d, S::sub_f32(S::set1_f32(0.0), d));
+        let p = S::min_f32(S::mul_f32(a, S::set1_f32(STEPS)), S::set1_f32(CURVE_LEN as f32));
+        let kv = S::lookup_f32(k, S::trunc_f32_i32(p));
+        S::add_f32(x, S::mul_f32(kv, d))
     }
 }
 
@@ -147,7 +173,9 @@ impl Prepared {
             if let Some(prev) = state.as_ref().map(|s| &s.planes[i]) {
                 temporal(&mut cur, prev, pw, &self.temporal[c]);
             }
-            out[i] = cur.iter().map(|&v| v.round().clamp(0.0, 255.0) as u8).collect();
+            let mut o = vec![0u8; cur.len()];
+            to_u8(Tier::detect(), &cur, &mut o);
+            out[i] = o;
             next[i] = cur;
         }
         *state = Some(State { w, h, planes: next });
@@ -162,37 +190,93 @@ fn spatial(src: &[u8], w: usize, h: usize, curve: &Curve) -> Vec<f32> {
     if w == 0 || h == 0 {
         return buf;
     }
-    for_row_bands(&mut buf, w, MIN_BAND_ROWS, |_, rows| {
-        for row in rows.chunks_exact_mut(w) {
-            sweep_row(row, curve);
-        }
-    });
-    columns(&mut buf, w, h, curve);
+    let tier = Tier::detect();
+    for_row_bands(&mut buf, w, MIN_BAND_ROWS, |_, rows| sweep_rows(tier, rows, w, &curve.k));
+    columns(tier, &mut buf, w, h, &curve.k);
     buf
 }
 
 /// Forward then backward recursion along one row, in place.
-fn sweep_row(row: &mut [f32], curve: &Curve) {
+fn sweep_row(row: &mut [f32], k: &[f32]) {
     let mut s = row[0];
     for v in row.iter_mut() {
-        s = curve.step(s, *v);
+        s = step(k, s, *v);
         *v = s;
     }
     let mut s = *row.last().unwrap();
     for v in row.iter_mut().rev() {
-        s = curve.step(s, *v);
+        s = step(k, s, *v);
         *v = s;
+    }
+}
+
+/// [`sweep_row`] over every row of `rows` (whole rows of `w`).
+fn sweep_rows_scalar(rows: &mut [f32], w: usize, k: &[f32]) {
+    for row in rows.chunks_exact_mut(w) {
+        sweep_row(row, k);
+    }
+}
+
+tiered!(fn sweep_rows(rows: &mut [f32], w: usize, k: &[f32]) => sweep_rows_body, scalar sweep_rows_scalar);
+
+/// The row recursion is serial along a row, so the vectors run `LANES` rows
+/// side by side instead: a group of rows is transposed into a scratch block
+/// (sample `x` of row `r` at `x * LANES + r`, gathered), each row's
+/// recursion runs as one lane of [`step_v`], and the block is transposed
+/// back. Rows left over after the last full group take [`sweep_row`].
+#[inline(always)]
+unsafe fn sweep_rows_body<S: Simd>(rows: &mut [f32], w: usize, k: &[f32]) {
+    unsafe {
+        let l = S::LANES;
+        let n = rows.len() / w;
+        let full = n - n % l;
+        if full > 0 && w > 0 {
+            let mut t = vec![0f32; w * l];
+            let down: Vec<i32> = (0..l).map(|r| (r * w) as i32).collect();
+            let across: Vec<i32> = (0..l).map(|j| (j * l) as i32).collect();
+            let (down, across) = (S::load_i32(down.as_ptr()), S::load_i32(across.as_ptr()));
+            let wide = w - w % l;
+            for g in (0..full).step_by(l) {
+                let block = &mut rows[g * w..(g + l) * w];
+                for x in 0..w {
+                    S::store_f32(t.as_mut_ptr().add(x * l), S::lookup_f32(block, S::add_i32(down, S::set1_i32(x as i32))));
+                }
+                let tp = t.as_mut_ptr();
+                let mut s = S::load_f32(tp);
+                for x in 0..w {
+                    s = step_v::<S>(k, s, S::load_f32(tp.add(x * l)));
+                    S::store_f32(tp.add(x * l), s);
+                }
+                let mut s = S::load_f32(tp.add((w - 1) * l));
+                for x in (0..w).rev() {
+                    s = step_v::<S>(k, s, S::load_f32(tp.add(x * l)));
+                    S::store_f32(tp.add(x * l), s);
+                }
+                for r in 0..l {
+                    let row = &mut block[r * w..(r + 1) * w];
+                    let mut x = 0;
+                    while x < wide {
+                        S::store_f32(row.as_mut_ptr().add(x), S::lookup_f32(&t, S::add_i32(across, S::set1_i32((x * l + r) as i32))));
+                        x += l;
+                    }
+                    for x in wide..w {
+                        row[x] = t[x * l + r];
+                    }
+                }
+            }
+        }
+        sweep_rows_scalar(&mut rows[full * w..], w, k);
     }
 }
 
 /// Downward then upward recursion along every column, in place. The state
 /// is one row wide, so the sweep walks memory row by row.
-fn columns(buf: &mut [f32], w: usize, h: usize, curve: &Curve) {
+fn columns_scalar(buf: &mut [f32], w: usize, h: usize, k: &[f32]) {
     let mut s = buf[..w].to_vec();
     for y in 0..h {
         let row = &mut buf[y * w..][..w];
         for (st, v) in s.iter_mut().zip(row.iter_mut()) {
-            *st = curve.step(*st, *v);
+            *st = step(k, *st, *v);
             *v = *st;
         }
     }
@@ -200,8 +284,48 @@ fn columns(buf: &mut [f32], w: usize, h: usize, curve: &Curve) {
     for y in (0..h).rev() {
         let row = &mut buf[y * w..][..w];
         for (st, v) in s.iter_mut().zip(row.iter_mut()) {
-            *st = curve.step(*st, *v);
+            *st = step(k, *st, *v);
             *v = *st;
+        }
+    }
+}
+
+tiered!(fn columns(buf: &mut [f32], w: usize, h: usize, k: &[f32]) => columns_body, scalar columns_scalar);
+
+/// [`columns_scalar`] with the columns side by side in the lanes (they are
+/// independent), the last `w % LANES` scalar.
+#[inline(always)]
+unsafe fn columns_body<S: Simd>(buf: &mut [f32], w: usize, h: usize, k: &[f32]) {
+    unsafe {
+        let wide = w - w % S::LANES;
+        let mut s = buf[..w].to_vec();
+        for y in 0..h {
+            column_step::<S>(&mut s, &mut buf[y * w..][..w], wide, k);
+        }
+        s.copy_from_slice(&buf[(h - 1) * w..][..w]);
+        for y in (0..h).rev() {
+            column_step::<S>(&mut s, &mut buf[y * w..][..w], wide, k);
+        }
+    }
+}
+
+/// One row of [`columns_body`]: the state `s` stepped by `row`, both
+/// updated. A function rather than a closure so that it inlines into the
+/// `#[target_feature]` caller (a closure is compiled without the feature,
+/// and its intrinsics became calls: 25 ms a plane against 1.4).
+#[inline(always)]
+unsafe fn column_step<S: Simd>(s: &mut [f32], row: &mut [f32], wide: usize, k: &[f32]) {
+    unsafe {
+        let mut x = 0;
+        while x < wide {
+            let v = step_v::<S>(k, S::load_f32(s.as_ptr().add(x)), S::load_f32(row.as_ptr().add(x)));
+            S::store_f32(s.as_mut_ptr().add(x), v);
+            S::store_f32(row.as_mut_ptr().add(x), v);
+            x += S::LANES;
+        }
+        for x in wide..row.len() {
+            s[x] = step(k, s[x], row[x]);
+            row[x] = s[x];
         }
     }
 }
@@ -211,11 +335,58 @@ fn temporal(cur: &mut [f32], prev: &[f32], w: usize, curve: &Curve) {
     if w == 0 {
         return;
     }
+    let tier = Tier::detect();
     for_row_bands(cur, w, MIN_BAND_ROWS, |y0, rows| {
-        for (c, &p) in rows.iter_mut().zip(&prev[y0 * w..]) {
-            *c = curve.step(p, *c);
-        }
+        temporal_rows(tier, rows, &prev[y0 * w..y0 * w + rows.len()], &curve.k);
     });
+}
+
+fn temporal_rows_scalar(cur: &mut [f32], prev: &[f32], k: &[f32]) {
+    for (c, &p) in cur.iter_mut().zip(prev) {
+        *c = step(k, p, *c);
+    }
+}
+
+tiered!(fn temporal_rows(cur: &mut [f32], prev: &[f32], k: &[f32]) => temporal_rows_body, scalar temporal_rows_scalar);
+
+#[inline(always)]
+unsafe fn temporal_rows_body<S: Simd>(cur: &mut [f32], prev: &[f32], k: &[f32]) {
+    unsafe {
+        let l = S::LANES;
+        let wide = cur.len() - cur.len() % l;
+        let mut i = 0;
+        while i < wide {
+            let v = step_v::<S>(k, S::load_f32(prev.as_ptr().add(i)), S::load_f32(cur.as_ptr().add(i)));
+            S::store_f32(cur.as_mut_ptr().add(i), v);
+            i += l;
+        }
+        temporal_rows_scalar(&mut cur[wide..], &prev[wide..], k);
+    }
+}
+
+/// The output: each state rounded half away from zero and clamped to a
+/// byte (the states are never negative: every step lands between its two
+/// inputs).
+fn to_u8_scalar(src: &[f32], out: &mut [u8]) {
+    for (o, &v) in out.iter_mut().zip(src) {
+        *o = v.round().clamp(0.0, 255.0) as u8;
+    }
+}
+
+tiered!(fn to_u8(src: &[f32], out: &mut [u8]) => to_u8_body, scalar to_u8_scalar);
+
+#[inline(always)]
+unsafe fn to_u8_body<S: Simd>(src: &[f32], out: &mut [u8]) {
+    unsafe {
+        let l = S::LANES;
+        let wide = src.len() - src.len() % l;
+        let mut i = 0;
+        while i < wide {
+            S::store_f32_u8(out.as_mut_ptr().add(i), round_clamp_u8::<S>(S::load_f32(src.as_ptr().add(i))));
+            i += l;
+        }
+        to_u8_scalar(&src[wide..], &mut out[wide..]);
+    }
 }
 
 #[cfg(test)]
@@ -254,6 +425,57 @@ mod tests {
         assert_eq!(Curve::new(0.0).step(7.0, 3.0), 3.0);
     }
 
+    /// Every SIMD tier the host has computes the scalar reference's states
+    /// bit for bit — the row sweeps (whole groups of rows and a remainder,
+    /// widths with a tail), the column sweeps, the temporal blend and the
+    /// output rounding — at several strengths, on noise, rails and flats.
+    #[test]
+    fn every_tier_matches_the_scalar_stages() {
+        let mut seed = 0x4d_u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as u32
+        };
+        for &(w, h) in &[(1usize, 1usize), (7, 3), (16, 8), (19, 13), (33, 9), (64, 17)] {
+            for kind in 0..3 {
+                let src: Vec<u8> = (0..w * h)
+                    .map(|_| match kind {
+                        0 => next() as u8,
+                        1 => [0u8, 255][(next() & 1) as usize],
+                        _ => 100 + (next() % 3) as u8,
+                    })
+                    .collect();
+                let prev: Vec<f32> = (0..w * h).map(|_| (next() % 2560) as f32 / 10.0).collect();
+                for strength in [0.0f32, 1.0, 4.0, 12.0] {
+                    let c = Curve::new(strength);
+                    let base: Vec<f32> = src.iter().map(|&v| v as f32).collect();
+                    let mut want_rows = base.clone();
+                    sweep_rows_scalar(&mut want_rows, w, &c.k);
+                    let mut want_cols = want_rows.clone();
+                    columns_scalar(&mut want_cols, w, h, &c.k);
+                    let mut want_t = want_cols.clone();
+                    temporal_rows_scalar(&mut want_t, &prev, &c.k);
+                    let mut want_u8 = vec![0u8; w * h];
+                    to_u8_scalar(&want_t, &mut want_u8);
+                    for tier in Tier::available() {
+                        let mut rows = base.clone();
+                        sweep_rows(tier, &mut rows, w, &c.k);
+                        assert!(rows == want_rows, "rows {tier:?} {w}x{h} kind {kind} S {strength}");
+                        let mut cols = want_rows.clone();
+                        columns(tier, &mut cols, w, h, &c.k);
+                        assert!(cols == want_cols, "columns {tier:?} {w}x{h} kind {kind} S {strength}");
+                        let mut t = want_cols.clone();
+                        temporal_rows(tier, &mut t, &prev, &c.k);
+                        assert!(t == want_t, "temporal {tier:?} {w}x{h} kind {kind} S {strength}");
+                        let mut o = vec![0u8; w * h];
+                        to_u8(tier, &want_t, &mut o);
+                        assert_eq!(o, want_u8, "to_u8 {tier:?} {w}x{h}");
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn the_spatial_sweeps_are_symmetric() {
         // A centred impulse spreads the same amount left and right, up and
@@ -267,6 +489,40 @@ mod tests {
             let (u, b) = (out[(7 - d) * w + 7], out[(7 + d) * w + 7]);
             assert!((l - r).abs() < 0.05, "row asymmetry at {d}: {l} vs {r}");
             assert!((u - b).abs() < 0.05, "column asymmetry at {d}: {u} vs {b}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod stage_bench {
+    use super::*;
+
+    /// ms per 1080p luma plane for each stage at each tier.
+    /// `cargo test --release -p rivet-codec hqdn3d_stage_bench -- --ignored --nocapture`
+    #[test]
+    #[ignore = "timing, not a check"]
+    fn hqdn3d_stage_bench() {
+        let (w, h) = (1920usize, 1080usize);
+        let base: Vec<f32> = (0..w * h).map(|i| ((i * 37) % 251) as f32).collect();
+        let c = Curve::new(4.0);
+        for tier in Tier::available() {
+            let t = std::time::Instant::now();
+            let mut b = base.clone();
+            for _ in 0..5 {
+                sweep_rows(tier, &mut b, w, &c.k);
+            }
+            let rows = t.elapsed().as_secs_f64() * 200.0;
+            let t = std::time::Instant::now();
+            for _ in 0..5 {
+                columns(tier, &mut b, w, h, &c.k);
+            }
+            let cols = t.elapsed().as_secs_f64() * 200.0;
+            let t = std::time::Instant::now();
+            for _ in 0..5 {
+                temporal_rows(tier, &mut b, &base, &c.k);
+            }
+            let temp = t.elapsed().as_secs_f64() * 200.0;
+            eprintln!("{tier:?}: rows {rows:.2} ms, columns {cols:.2} ms, temporal {temp:.2} ms");
         }
     }
 }

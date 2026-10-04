@@ -153,6 +153,16 @@ pub(crate) trait Simd: Copy {
     unsafe fn i32_to_f32(a: Self::I) -> Self::F;
     /// `table[idx]` per lane. Every index must be in bounds.
     unsafe fn gather_f32(table: &[f32], idx: Self::I) -> Self::F;
+    /// `table[idx]` per lane like [`Self::gather_f32`], by scalar loads:
+    /// for a lookup on a loop-carried dependency chain, where `vgatherdps`'s
+    /// latency (not its throughput) is what the loop waits on.
+    unsafe fn lookup_f32(table: &[f32], idx: Self::I) -> Self::F;
+    /// f32 → i32 lanes truncated toward zero (`as i32` for in-range values).
+    unsafe fn trunc_f32_i32(a: Self::F) -> Self::I;
+    /// `LANES` i32 at `p`.
+    unsafe fn load_i32(p: *const i32) -> Self::I;
+    unsafe fn set1_i32(x: i32) -> Self::I;
+    unsafe fn add_i32(a: Self::I, b: Self::I) -> Self::I;
 
     // ── i32 ────────────────────────────────────────────────────────────────
     /// `LANES` bytes → i32 lanes.
@@ -327,6 +337,37 @@ mod avx2_impl {
         unsafe fn gather_f32(table: &[f32], idx: __m256i) -> __m256 {
             unsafe { _mm256_i32gather_ps::<4>(table.as_ptr(), idx) }
         }
+        #[inline(always)]
+        unsafe fn lookup_f32(table: &[f32], idx: __m256i) -> __m256 {
+            unsafe {
+                let (lo, hi) = (_mm256_castsi256_si128(idx), _mm256_extracti128_si256::<1>(idx));
+                let half = |v: __m128i| {
+                    _mm_set_ps(
+                        *table.get_unchecked(_mm_extract_epi32::<3>(v) as usize),
+                        *table.get_unchecked(_mm_extract_epi32::<2>(v) as usize),
+                        *table.get_unchecked(_mm_extract_epi32::<1>(v) as usize),
+                        *table.get_unchecked(_mm_cvtsi128_si32(v) as usize),
+                    )
+                };
+                _mm256_set_m128(half(hi), half(lo))
+            }
+        }
+        #[inline(always)]
+        unsafe fn trunc_f32_i32(a: __m256) -> __m256i {
+            unsafe { _mm256_cvttps_epi32(a) }
+        }
+        #[inline(always)]
+        unsafe fn load_i32(p: *const i32) -> __m256i {
+            unsafe { _mm256_loadu_si256(p as *const __m256i) }
+        }
+        #[inline(always)]
+        unsafe fn set1_i32(x: i32) -> __m256i {
+            unsafe { _mm256_set1_epi32(x) }
+        }
+        #[inline(always)]
+        unsafe fn add_i32(a: __m256i, b: __m256i) -> __m256i {
+            unsafe { _mm256_add_epi32(a, b) }
+        }
 
         #[inline(always)]
         unsafe fn load_u8_i32(p: *const u8) -> __m256i {
@@ -500,6 +541,26 @@ mod sse41_impl {
                     *table.get_unchecked(i0),
                 )
             }
+        }
+        #[inline(always)]
+        unsafe fn lookup_f32(table: &[f32], idx: __m128i) -> __m128 {
+            unsafe { Self::gather_f32(table, idx) }
+        }
+        #[inline(always)]
+        unsafe fn trunc_f32_i32(a: __m128) -> __m128i {
+            unsafe { _mm_cvttps_epi32(a) }
+        }
+        #[inline(always)]
+        unsafe fn load_i32(p: *const i32) -> __m128i {
+            unsafe { _mm_loadu_si128(p as *const __m128i) }
+        }
+        #[inline(always)]
+        unsafe fn set1_i32(x: i32) -> __m128i {
+            unsafe { _mm_set1_epi32(x) }
+        }
+        #[inline(always)]
+        unsafe fn add_i32(a: __m128i, b: __m128i) -> __m128i {
+            unsafe { _mm_add_epi32(a, b) }
         }
 
         #[inline(always)]
