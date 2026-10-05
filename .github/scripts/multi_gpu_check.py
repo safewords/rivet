@@ -15,6 +15,10 @@ card of its host, however many that is.
     multi_gpu_check.py chunks LOG CARDS.json
         rivet's log: the ladder workers' `rung chunk done` lines name every
         card.
+    multi_gpu_check.py reuse LOG
+        rivet's log: every card that encoded built one encoder session and
+        reused it (reset) for each further chunk it took, no reset failed or
+        was unsupported, and at least one session was reused.
     multi_gpu_check.py faster LABEL SECONDS BASELINE_SECONDS MAX_RATIO
         SECONDS <= BASELINE_SECONDS * MAX_RATIO.
     multi_gpu_check.py timings CARDS.json OUT.json
@@ -105,6 +109,38 @@ def chunks(log, cards_json):
         fail(f"{log}: no chunk was encoded on card(s) {missing}: {counts}")
 
 
+def reuse(log):
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    chunks, slots = {}, {}
+    with open(log, errors="replace") as f:
+        for line in f:
+            line = ansi.sub("", line)
+            if "rung chunk done" in line:
+                m = re.search(r"gpu_index=Some\((\d+)\)", line)
+                key = m.group(1) if m else "none"
+                chunks[key] = chunks.get(key, 0) + 1
+            elif "built vs reused" in line:
+                fields = dict(re.findall(r"(\w+)=(\S+)", line.split("built vs reused", 1)[1]))
+                slots[fields["slot"]] = fields
+    print(f"chunks per card: {chunks}")
+    if not slots:
+        fail(f"{log}: no `built vs reused` line")
+    reused = 0
+    for slot, f in sorted(slots.items()):
+        gpu = f["gpu_index"]
+        built, used = int(f["built"]), int(f["reused"])
+        print(f"slot {slot} (gpu {gpu}): {chunks.get(gpu, 0)} chunk(s), built {built}, reused {used}")
+        for bad in ("reset_failed", "reset_unsupported", "evicted"):
+            if int(f[bad]) != 0:
+                fail(f"{log}: slot {slot} (gpu {gpu}) {bad}={f[bad]}")
+        if built + used != chunks.get(gpu, 0) or built > 1:
+            fail(f"{log}: slot {slot} (gpu {gpu}) took {chunks.get(gpu, 0)} chunk(s) "
+                 f"with {built} session(s) built and {used} reused: each card builds one and reuses it")
+        reused += used
+    if reused < 1:
+        fail(f"{log}: no encoder session was reused: {slots}")
+
+
 def faster(label, seconds, baseline, ratio):
     seconds, baseline, ratio = float(seconds), float(baseline), float(ratio)
     print(f"{label}: {seconds:.1f}s against {baseline:.1f}s, {baseline / seconds:.2f}x")
@@ -133,7 +169,7 @@ def timings(cards_json, out_json):
         print(f"| {name} | {r['wall_s']} | " + " | ".join(str(r["video_busy_s"][i]) for i in order) + " |")
 
 
-COMMANDS = {"devices": devices, "pinned": pinned, "all": every, "chunks": chunks, "faster": faster, "timings": timings}
+COMMANDS = {"devices": devices, "pinned": pinned, "all": every, "chunks": chunks, "reuse": reuse, "faster": faster, "timings": timings}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
