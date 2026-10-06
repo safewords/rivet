@@ -63,6 +63,11 @@ tiff = { workspace = true, optional = true }
 webp = { workspace = true, optional = true }
 moxcms = { version = "0.8", optional = true }
 
+# Optional — only for the `ndi` feature: NDI receive and send, through the
+# workspace's own `rivet-ndi` (a submodule), which loads the NDI runtime at
+# run time — nothing about NDI is needed to build.
+ndi = { workspace = true, optional = true }
+
 # Optional — only for the `server` feature: an HTTP transcode API so another
 # application can signal rivet to transcode over the network.
 axum = { version = "0.8", optional = true }
@@ -139,6 +144,10 @@ server = ["dep:axum", "dep:serde", "dep:uuid", "tokio/net", "codec/serde"]
 # Windows the command exists but reports use `pipe`/`serve`). The `pipe`
 # stdin/stdout streaming path is always available and needs no feature.
 ipc = []
+# NDI (`rivet ndi sources | record | send`): record an NDI source into a
+# file, and play a file out as an NDI source. The NDI runtime is loaded when
+# an NDI command first runs (https://ndi.video/tools/); see docs/ndi.md.
+ndi = ["dep:ndi", "tokio/signal"]
 # `rivet batch`: a YAML/JSON manifest DSL for converting many files in one run.
 # Pulls serde + a YAML/JSON parser + glob. See docs/batch.md.
 batch = ["dep:serde", "dep:serde_yaml_ng", "dep:glob", "codec/serde"]

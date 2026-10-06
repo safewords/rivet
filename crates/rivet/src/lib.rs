@@ -64,6 +64,9 @@ pub mod ladder;
 #[cfg(feature = "batch")]
 pub mod manifest;
 pub mod multigpu;
+/// NDI in and out (opt-in `ndi` feature).
+#[cfg(feature = "ndi")]
+pub mod ndi;
 pub mod output_dir;
 pub mod output_guard;
 pub mod per_title;
@@ -89,6 +92,8 @@ pub(crate) mod synth;
 
 // Re-export the component crates so downstream consumers can depend on a
 // single `rivet` crate and still reach the full lower-level API.
+#[cfg(feature = "ndi")]
+pub use ::ndi as ndi_sys;
 pub use codec;
 pub use container;
 

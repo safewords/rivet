@@ -21,9 +21,12 @@ from one engine:
 - a **library** (`rivet::transcode_file`, `rivet::run_job`,
   `rivet::run_splice_job`, and `rivet::image::run_image_job` with `image`),
 - a **CLI** (`rivet transcode | splice | image | probe | devices | capabilities |
-  pipe | ipc | batch | serve`; `image`, `ipc` and `batch` need the feature of
-  the same name, `serve` the `server` feature),
-- an **HTTP API** and a **Unix-socket IPC** server.
+  pipe | ipc | batch | ndi | serve`; `image`, `ipc`, `batch` and `ndi` need
+  the feature of the same name, `serve` the `server` feature),
+- an **HTTP API** and a **Unix-socket IPC** server,
+- and, with the `ndi` feature, **NDI** in and out (`rivet ndi record` encodes a
+  live NDI source into a file; `rivet ndi send` plays a file out as one) — see
+  [ndi.md](ndi.md).
 
 Every job can run caller-supplied **hooks** at fixed points (the source, the
 probe, decoded and encoder frames, stills, each output, completion and
@@ -62,9 +65,9 @@ is in [decisions.md](decisions.md)):
 
 ## The crates
 
-The workspace is seventeen crates (plus the `examples/yolo` example crate).
-Three carry the transcoder; fourteen underneath them hold shared types and the
-codecs written in Rust here, thirteen of them git submodules.
+The workspace is eighteen crates (plus the `examples/yolo` example crate).
+Three carry the transcoder; fifteen underneath them hold shared types, the
+codecs written in Rust here and the NDI bindings, fourteen of them git submodules.
 
 ```mermaid
 flowchart TD
@@ -104,6 +107,7 @@ flowchart TD
     rivet --> png
     rivet --> jpeg
     rivet --> imagecodecs
+    rivet --> ndi
     container --> frame
     container --> h26x
     container --> vorbis
@@ -125,6 +129,7 @@ flowchart TD
     png["png (submodule) — PNG/APNG codec"]
     jpeg["jpeg (submodule) — JPEG codec"]
     imagecodecs["imagecodecs (submodule) — GIF/BMP/TIFF codecs"]
+    ndi["ndi (submodule) — NDI discovery, receive, send"]
 ```
 
 | Crate | Responsibility | Reads bytes? | Touches pixels? | Deep-dive |
@@ -132,6 +137,7 @@ flowchart TD
 | [`container`](../crates/container/) | Demux input containers → samples; mux video/audio → MP4 / WebM / CMAF / HLS and bare `.mp3` / `.flac` / `.ogg`; read a source's identifying metadata and write a kept subset. Clean-room, no FFmpeg. | ✅ | ❌ | [container.md](container.md) |
 | [`codec`](../crates/codec/) | Decode samples → frames (H.264 / HEVC / AV1 / VP8 / VP9 / MPEG-1 / MPEG-2 / MPEG-4 Part 2 / ProRes); encode frames → AV1 / H.264 / H.265, and in software VP9 / VP8 / MPEG-2 / MPEG-4 Part 2 / ProRes; colorspace, scaling, tonemap, video filters, audio decode/encode, GPU detection, probe. Hand-rolled GPU FFI. | ❌ | ✅ | [codec-decode.md](codec-decode.md) · [codec-encode.md](codec-encode.md) |
 | [`rivet`](../crates/rivet/) | The configurable job engine, the reactive multi-GPU scheduler, hooks, the still-image path (with its own AVIF / HEIF writer, `avif.rs`), and the CLI / HTTP / IPC front-ends. | — | — | [engine.md](engine.md) |
+| [`ndi`](../crates/ndi/) | Git submodule (package `rivet-ndi`): NDI discovery, receive and send through hand-rolled FFI that loads the NDI runtime at run time; pictures as planar YUV / RGBA. The `rivet` crate's `ndi` feature. | ✅ (network) | ✅ | [ndi.md](ndi.md) |
 | [`frame`](../crates/frame/) | The value types `codec` and `container` share (`StreamInfo`, `VideoFrame`, colour metadata, `EncodedPacket`) and bitstream introspection. Depends on nothing but `bytes`; builds for wasm32. `codec` re-exports it at `codec::frame`. | — | — | [README](../crates/frame/README.md) |
 | [`h26x`](../crates/h26x/) | Git submodule: native H.264 / H.265 decoders and encoders, and the SPS parsers the demuxers use. | — | ✅ | — |
 | [`aac`](../crates/aac/) | Git submodule: the AAC-LC, HE-AAC and HE-AAC v2 encoder and decoder. | — | ✅ | — |

@@ -14,6 +14,8 @@ pub mod batch;
 pub mod image;
 #[cfg(feature = "ipc")]
 pub mod ipc;
+#[cfg(feature = "ndi")]
+pub mod ndi;
 #[cfg(feature = "server")]
 pub mod serve;
 

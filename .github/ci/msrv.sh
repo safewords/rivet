@@ -6,4 +6,4 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export CARGO_TERM_COLOR=always
 export CARGO_PROFILE_DEV_DEBUG=line-tables-only
-cargo check --workspace --all-targets --locked --features rivet-transcoder/server,rivet-transcoder/batch,rivet-transcoder/image
+cargo check --workspace --all-targets --locked --features rivet-transcoder/server,rivet-transcoder/batch,rivet-transcoder/image,rivet-transcoder/ndi

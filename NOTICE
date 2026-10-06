@@ -286,3 +286,16 @@ png, jpeg-decoder, gif, tiff and WebP decoders), jpeg-encoder, the webp crate
 with Google's libwebp, and openh264 (Cisco's H.264 decoder, which was the
 optional `openh264-fallback` tier). No build of rivet links FFmpeg or any
 of its libraries.
+
+------------------------------------------------------------------------------
+NDI
+------------------------------------------------------------------------------
+
+NDI® is a registered trademark of Vizrt NDI AB. The `ndi` feature talks to
+the NDI runtime through hand-rolled FFI in the rivet-ndi crate (crates/ndi,
+a submodule of this repository), declared against the NDI SDK's public C
+headers and loading the runtime library dynamically at run time via dlopen.
+The NDI SDK and runtime are proprietary to Vizrt NDI AB, are not
+redistributed with this software, and are installed by the user under NDI's
+own licence (https://ndi.video/tools/). This software is not affiliated with
+or endorsed by Vizrt.

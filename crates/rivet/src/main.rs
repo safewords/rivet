@@ -574,6 +574,13 @@ enum Command {
         #[arg(long)]
         stop_on_error: bool,
     },
+    /// NDI: list sources, record a source into a file, or send a file as a
+    /// source (needs the `ndi` feature and, at run time, the NDI runtime).
+    #[cfg(feature = "ndi")]
+    Ndi {
+        #[command(subcommand)]
+        command: commands::ndi::NdiCommand,
+    },
     /// Run the HTTP transcode API server so another app can signal transcodes
     /// over the network (needs the `server` feature).
     #[cfg(feature = "server")]
@@ -792,6 +799,8 @@ fn run() -> Result<()> {
             dry_run,
             stop_on_error,
         } => commands::batch::run(&manifest, dry_run, stop_on_error),
+        #[cfg(feature = "ndi")]
+        Command::Ndi { command } => commands::ndi::run(command),
         #[cfg(feature = "server")]
         Command::Serve { addr, jobs } => {
             commands::serve::run(addr, jobs.map(std::num::NonZeroUsize::get))

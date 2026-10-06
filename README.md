@@ -45,7 +45,7 @@ workspace's own as well. See [No FFmpeg](#no-ffmpeg).
 [container](docs/container.md) · [engine](docs/engine.md)), and the usage guides
 ([OutputSpec](docs/output-spec.md) · [Batch manifest](docs/batch.md) ·
 [CLI](docs/cli.md) · [HTTP API](docs/api.md) · [Hooks](docs/hooks.md) ·
-[Lossless audio](docs/lossless-audio.md)). The full index is
+[Lossless audio](docs/lossless-audio.md) · [NDI](docs/ndi.md)). The full index is
 [docs/README.md](docs/README.md). This README is the quick tour.
 
 ## Why "rivet"
@@ -986,6 +986,7 @@ source encoder's name cleared without its audio changing.
 | `imagecodecs` | **GIF, BMP and TIFF decoders and encoders** (`rivet-gif`, `rivet-bmp`, `rivet-tiff`: BigTIFF, LZW / Deflate / PackBits / CCITT), pure Rust, written from GIF89a, Microsoft's BMP documentation and TIFF 6.0. rivet's GIF, BMP and TIFF input (feature `image`). A separate cargo workspace, not a member of rivet's (its crates are path dependencies); a **git submodule** of [safewords/rivet-imagecodecs](https://github.com/safewords/rivet-imagecodecs); changed there the same way as `h26x`. Its own [README](crates/imagecodecs/README.md). |
 | `mpeg2`     | **MPEG-2 Video (H.262) and MPEG-1 video decoder, Main Profile encoder**, pure Rust, written from ITU-T H.262: the decoder takes every main- and 4:2:2-profile stream of the ISO/IEC 13818-4 conformance suite. rivet's software MPEG-1 / MPEG-2 decode tier, behind NVDEC; the encoder is rivet's output encoder for the codec. A **git submodule** of [safewords/rivet-mpeg2](https://github.com/safewords/rivet-mpeg2) (published as `rivet-mpeg2`); changed there the same way as `h26x`. Its own [README](crates/mpeg2/README.md). |
 | `mpeg4`     | **MPEG-4 Part 2 Visual decoder and encoder**, pure Rust, written from ISO/IEC 14496-2: Simple and Advanced Simple Profile and the H.263 short header (reversible VLCs refused). rivet's software MPEG-4 Part 2 decode tier, behind NVDEC; the encoder is rivet's output encoder for the codec. A **git submodule** of [safewords/rivet-mpeg4](https://github.com/safewords/rivet-mpeg4) (published as `rivet-mpeg4`); changed there the same way as `h26x`. Its own [README](crates/mpeg4/README.md). |
+| `ndi`       | **NDI® discovery, receive and send**, through FFI written by hand against the NDI SDK's public headers, loading the NDI runtime at run time (no SDK, bindgen or link step); received pictures as planar YUV / RGBA, audio as float. rivet's `ndi` feature. A **git submodule** of [safewords/rivet-ndi](https://github.com/safewords/rivet-ndi) (published as `rivet-ndi`); changed there the same way as `h26x`. Its own [README](crates/ndi/README.md). See [docs/ndi.md](docs/ndi.md). |
 | `frame`     | The value types the codec and container layers share (`StreamInfo`, `VideoFrame`, `PixelFormat`, colour metadata, `EncodedPacket`) and the bitstream pixel-format probe, so `container` needs nothing from `codec`. |
 | `codec`     | GPU detection (with PCI BAR / Resizable BAR reporting), decode (NVDEC / AMF / QSV / native H.264+HEVC, AV1, ProRes, VP8, VP9, MPEG-1/2, MPEG-4 Part 2), **AV1 / H.264 / H.265** encode (NVENC / AMF / QSV / software) and **VP9 / VP8 / MPEG-2 / MPEG-4 / ProRes** encode (the submodules' encoders, every build), colorspace + HDR→SDR tonemap, video and audio filters, audio decode/encode (Opus, AAC / HE-AAC, MP3, Vorbis, AC-3, E-AC-3, DTS, FLAC, ALAC, and decode of MP2 / PCM), probe. The H.264 / HEVC, AV1, ProRes, VP8, VP9, MPEG-2, MPEG-4, Opus, MPEG audio, Vorbis, AAC, AC-3, DTS, FLAC and ALAC codecs themselves are the submodules above, behind adapters here. Re-exports `frame`'s types at their old paths. |
 | `container` | Demuxers (MP4/MOV/MKV/WebM/TS/MPEG-PS/AVI, bare MP3, FLAC and Ogg), MP4 / QuickTime muxer (AV1/H.264/H.265/VP9/VP8/MPEG-2/MPEG-4/ProRes) with audio and subtitles, a WebM muxer (VP8/VP9 + Opus or Vorbis), fragmented-MP4 (CMAF) writers, HLS playlist generation, `.mp3` / `.flac` / `.m4a` / `.ogg` writers, identifying-metadata read and write, bounded-RSS streaming demuxer. |
@@ -1008,6 +1009,13 @@ workspace crate — so it needs:
 
 On Windows the project links the static MSVC CRT (see `.cargo/config.toml`).
 
+The codec crates (and `rivet-ndi`) are git submodules: clone with
+`--recurse-submodules`, or let the [`Makefile`](Makefile) fetch them. `make`
+fetches any missing submodule and makes a release build; `make FEATURES=ndi,qsv`
+adds features, `make check` runs the lint and unit-test gate CI runs,
+`make submodules-update` moves every submodule to its branch tip, and
+`make help` lists the rest. Plain cargo works as well:
+
 ```sh
 cargo build --release
 cargo build --release --features qsv
@@ -1029,6 +1037,7 @@ cargo build --release --features av1-sw-fallback
 | `batch`     | `rivet batch` — a YAML/JSON **manifest DSL** to convert many files in one run (pulls serde + a YAML/JSON parser + glob). See [docs/batch.md](docs/batch.md). |
 | `server`    | HTTP transcode API (`rivet serve`) — an axum webserver so another app can signal transcodes over the network. See [HTTP API](#http-api-server-feature). |
 | `ipc`       | `rivet ipc` — a Unix-domain-socket server for streaming media in/out (Unix only at runtime). `rivet pipe` needs no feature. See [CLI](docs/cli.md#rivet-ipc). |
+| `ndi`       | **NDI®** in and out (`rivet ndi sources | record | send`): record a live NDI source into an MP4 / MOV / WebM file with any encoder rivet has, kept in step by the source's timestamps, and play a file out as an NDI source. The workspace's own [`ndi`](crates/ndi) crate, hand-rolled FFI that loads the NDI runtime at run time — nothing about NDI is needed to build. See [docs/ndi.md](docs/ndi.md). |
 
 Hooks need no feature. The YOLO example's own features (`cuda`, `directml`,
 `openvino`, `image-jobs`) are in [`examples/yolo/Cargo.toml`](examples/yolo/Cargo.toml).

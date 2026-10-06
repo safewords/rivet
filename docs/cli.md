@@ -860,6 +860,29 @@ rivet serve --addr 0.0.0.0:8080 --jobs 2   # at most two at once; the rest wait 
 
 ---
 
+## `rivet ndi`
+
+```
+rivet ndi sources [--wait S] [--groups G] [--extra-ips IPS] [--json]
+rivet ndi record SOURCE -o OUT [--duration D] [--frames N] [--codec C] [--audio opus|aac|he-aac|none] ...
+rivet ndi send INPUT [--name NAME] [--loop] [--ten-bit] [--no-audio] [--groups G]
+```
+
+NDI in and out (requires a `--features ndi` build and, at run time, the NDI
+runtime). `sources` lists the sources on the network; `record` encodes a live
+source into an MP4 / MOV / WebM file until `--duration`, `--frames`, the
+source going away or Ctrl+C, keeping audio and pictures in step by the
+source's timestamps; `send` plays a file out as a source. Every flag, and how
+the recording stays in step, is in **[ndi.md](ndi.md)**.
+
+```sh
+rivet ndi sources
+rivet ndi record "Camera 1" -o cam1.mp4 --codec h264 --duration 1h
+rivet ndi send programme.mkv --name Playout --loop
+```
+
+---
+
 ## Environment variables
 
 | Variable | Effect |
@@ -875,4 +898,6 @@ rivet serve --addr 0.0.0.0:8080 --jobs 2   # at most two at once; the rest wait 
 | `DISABLE_NVDEC_<CODEC>` | Skip NVDEC for one family, e.g. `DISABLE_NVDEC_AV1=1`. |
 | `RIVET_AV1_DECODE_THREAD` | `0` makes the software AV1 decoder decode on the caller's thread instead of its own worker, which otherwise runs a few frames ahead so the rest of the pipeline overlaps the decode. |
 | `RIVET_AV1_DECODE_THREADS` | Threads each software AV1 decoder uses for its tiles and post-filters (default: up to four). |
+| `RIVET_NDI_LIB` | `rivet ndi`: the NDI runtime library to load (a full path), before the `NDI_RUNTIME_DIR_V*` directories and the platform's search. |
+| `RIVET_REQUIRE_NDI` | Tests: `1` makes the NDI loopback test fail, rather than skip, without a runtime. |
 | `RIVET_TEST_MEDIA` | Integration tests: directory of real media to run against. |
