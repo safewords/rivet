@@ -609,7 +609,7 @@ pub(super) fn encode_rung_single_file(
 /// The thread budget each of `rungs` concurrent serial encoders gets: this
 /// job's share of the machine ([`crate::thread_budget::per_job`]) divided by
 /// the rung count, never below one.
-fn serial_threads_per_rung(rungs: usize) -> usize {
+pub(super) fn serial_threads_per_rung(rungs: usize) -> usize {
     divide_threads(crate::thread_budget::per_job(), rungs)
 }
 
@@ -632,7 +632,7 @@ pub(super) fn encoder_backend_override() -> Option<EncoderBackend> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn report(
+pub(super) fn report(
     sink: &dyn ProgressSink,
     rung_index: usize,
     rung: &Rung,

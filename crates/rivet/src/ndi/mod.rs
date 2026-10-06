@@ -1,30 +1,27 @@
-//! NDI® in and out (opt-in `ndi` feature): record an NDI source into a
-//! file, and play a file out as an NDI source.
+//! NDI® in and out (opt-in `ndi` feature).
 //!
-//! The NDI protocol is the [`ndi`] crate's (`rivet-ndi`): hand-rolled FFI
-//! that loads the NDI runtime when first used, so a build with the feature
-//! needs nothing from NDI, and a host without the runtime is told how to
-//! get it the first time an NDI command runs.
+//! An NDI source is a job's input, and an NDI stream its output, by URI —
+//! `ndi://NAME` wherever a path goes — and the job is the same job any input
+//! gets: the [`OutputSpec`](crate::spec::OutputSpec) the settings build, run
+//! by the job engine's live path ([`crate::job::run_live_job`]). This module
+//! is the NDI side of that: the receiver as a [`LiveSource`](crate::live::LiveSource)
+//! ([`NdiSource`]), the sender a live job's NDI rungs write to ([`NdiSink`]),
+//! and discovery ([`list_sources`]).
 //!
-//! - [`record()`] — an NDI source (or any [`LiveSource`]) → the job engine's
-//!   per-frame normalisation (colour, tonemap, depth, filters) → any video
-//!   encoder rivet has, GPU first → MP4 / QuickTime / WebM, with the audio
-//!   in Opus or AAC, kept in step by the source's timestamps.
-//! - [`send_file`] — a file → decode → NDI (I420, or P216 at 10 bits),
-//!   paced at the file's frame rate, its audio alongside.
-//! - [`list_sources`] — the sources discovery sees.
+//! The protocol is the [`ndi`] crate's (`rivet-ndi`): hand-rolled FFI that
+//! loads the NDI runtime when first used, so a build with the feature needs
+//! nothing from NDI, and a host without the runtime is told how to get it
+//! the first time an NDI job runs.
 //!
 //! NDI® is a registered trademark of Vizrt NDI AB.
 
-pub mod live;
-pub mod record;
-pub mod send;
+mod sink;
+mod source;
 
 use std::time::Duration;
 
-pub use live::{LiveAudio, LiveEvent, LiveSource, LiveVideo, NdiSource, SourceLost};
-pub use record::{EndReason, RecordAudio, RecordOptions, RecordOutcome, RecordProgress, record};
-pub use send::{SendOptions, SendOutcome, send_file};
+pub use sink::NdiSink;
+pub use source::{NdiSource, ndi_color, picture_to_frame};
 
 /// Every NDI source seen within `wait`.
 pub fn list_sources(

@@ -945,3 +945,44 @@ pub enum BitDepth {
     /// encoder). See [`CodecOutputCaps`](super::CodecOutputCaps).
     TenBit,
 }
+
+/// How a job with a live end runs (settings keys `duration`,
+/// `start-timeout`, `idle-timeout`, `loop`). A live source has no length, so
+/// a recording runs until [`duration`](Self::duration), the source going
+/// away, no picture for [`idle_timeout`](Self::idle_timeout), or the caller
+/// stopping it; whatever was recorded is written in every case.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LiveSettings {
+    /// Stop after this many seconds of output. `None`: until stopped.
+    pub duration: Option<f64>,
+    /// Seconds to wait for the source to appear and send its first picture.
+    pub start_timeout: f64,
+    /// End when no picture arrives for this many seconds; `0` waits for ever.
+    pub idle_timeout: f64,
+    /// A file played out live (to `ndi://…`): start again at its end, until
+    /// stopped or `duration`.
+    pub repeat: bool,
+}
+
+impl LiveSettings {
+    /// The default start timeout, seconds.
+    pub const DEFAULT_START_TIMEOUT: f64 = 15.0;
+    /// The default idle timeout, seconds.
+    pub const DEFAULT_IDLE_TIMEOUT: f64 = 10.0;
+
+    /// Whether anything differs from the defaults.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl Default for LiveSettings {
+    fn default() -> Self {
+        Self {
+            duration: None,
+            start_timeout: Self::DEFAULT_START_TIMEOUT,
+            idle_timeout: Self::DEFAULT_IDLE_TIMEOUT,
+            repeat: false,
+        }
+    }
+}

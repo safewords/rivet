@@ -81,8 +81,8 @@ like `crff: 24` fails loudly instead of being silently ignored.
 
 | Key | Values | Notes |
 |-----|--------|-------|
-| `input` | path or glob | **Required.** A literal file (must exist: a missing one fails the run before any job starts), or a glob (`*` `?` `[…]`) that expands to one job per match. |
-| `output` | path | File or directory — see [output rules](#output-rules). Optional (derived from `output_dir`). |
+| `input` | path, glob or `ndi://` | **Required.** A literal file (must exist: a missing one fails the run before any job starts), a glob (`*` `?` `[…]`) that expands to one job per match, or a live NDI source, `"ndi://NAME"` (see [live jobs](#live-jobs)). |
+| `output` | path or `ndi://` | File or directory — see [output rules](#output-rules). Optional (derived from `output_dir`; for a live input, named after the source). `ndi://NAME` sends the output live as an NDI stream. |
 | `mode` | `single` \| `hls` \| `audio` | Output shape (default `single`). `audio` writes the audio alone as `<stem>.mp3` (`.flac`, `.m4a`, `.opus` / `.ogg` as the codec or `audio_container` has it), as does a `single` job whose input has no video. `image` is refused: stills are [`rivet image`](cli.md#rivet-image). |
 | `codec` | `av1` \| `h264` \| `h265` \| `vp9` \| `vp8` \| `mpeg2` \| `mpeg4` \| `prores` \| `prores-<profile>` | Output video codec (default `av1`). The last five are rivet's own software encoders; see [output spec](output-spec.md#the-other-codecs-vp9-vp8-mpeg-2-mpeg-4-part-2-prores). |
 | `container` | `mp4` \| `mov` \| `webm` | The file of a single-file output (default: the codec's own — `mov` for ProRes, `webm` for VP8 / VP9, `mp4` otherwise); a multi-rung directory gets `<label>.<ext>`. |
@@ -186,6 +186,40 @@ replaced only whole, once the job has succeeded.
 
 ---
 
+## Live jobs
+
+A job whose `input` or `output` is an `ndi://` URI is live (the `ndi`
+feature; see [ndi.md](ndi.md)): every key above applies, and four more:
+
+| Key | Values | Notes |
+|-----|--------|-------|
+| `duration` | `90`, `"90s"`, `"15m"`, `"1h30m"` | Stop after this much output. Absent: until the source ends or the run is stopped. |
+| `start_timeout` | as `duration` | How long to wait for a live source (default `15s`). |
+| `idle_timeout` | as `duration` | End when no picture comes for this long (default `10s`; `0` waits for ever). |
+| `loop` | `true` \| `false` | A file played out to `ndi://`: start again at its end. |
+
+**Live jobs run side by side.** They all start together when the run starts,
+each on its own, while the file jobs go one by one beside them — several
+sources recorded at once is a manifest with several `ndi://` jobs. Their
+rungs share the cards ([encode devices](ndi.md#encode-devices)). Ctrl+C ends
+every live job (each writing what it made) and starts no further file job.
+
+```yaml
+defaults:
+  codec: h264
+  duration: 2h
+jobs:
+  - input: "ndi://STUDIO (Camera 1)"
+    output: rec/cam1.mp4
+  - input: "ndi://STUDIO (Camera 2)"
+    output: rec/cam2/
+    mode: hls
+    ladder: true
+  - input: promo.mp4
+    output: ndi://Promo
+    loop: true
+```
+
 ## How it runs
 
 - **Defaults merge per field.** A job inherits every `defaults` value it doesn't
@@ -197,7 +231,8 @@ replaced only whole, once the job has succeeded.
   a `filter` overlay's `image` path all resolve against the manifest file's
   directory, so a manifest + its media (including overlay logos) move together.
   Absolute paths pass through.
-- **Sequential, fail-soft.** Jobs run one at a time (the GPU is the bottleneck and
+- **Sequential, fail-soft.** File jobs run one at a time (live jobs run side by
+  side: [live jobs](#live-jobs)) (the GPU is the bottleneck and
   the [GPU pool](pipeline.md#4-the-multi-gpu-lease-engine--the-rung-benefit)
   already parallelizes a single job across devices). A failed job is recorded and
   — unless `on_error: stop` — the run continues; the command exits non-zero if any

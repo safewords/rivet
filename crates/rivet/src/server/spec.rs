@@ -124,6 +124,19 @@ pub(super) struct TranscodeParams {
     pub(super) decode: Option<String>,
     /// Video filter chain, e.g. `crop=1280:720,hflip`.
     pub(super) filter: Option<String>,
+    /// A live job (an `ndi://` input or output): stop after this long —
+    /// `90`, `90s`, `15m`, `1h30m`. Absent: until stopped
+    /// (`POST /v1/jobs/{id}/stop`) or the source ends.
+    pub(super) duration: Option<SettingValue>,
+    /// A live input: how long to wait for the source (default `15s`).
+    pub(super) start_timeout: Option<SettingValue>,
+    /// A live input: end when no picture comes for this long (default
+    /// `10s`; `0` waits for ever).
+    pub(super) idle_timeout: Option<SettingValue>,
+    /// A file played out live (`output.path: ndi://NAME`): start again at
+    /// its end.
+    #[serde(rename = "loop")]
+    pub(super) repeat: Option<bool>,
     /// Block until the job finishes and return the artifact directly.
     pub(super) sync: Option<bool>,
     /// Optional hooks this job runs besides the required ones, by name,
@@ -257,6 +270,19 @@ impl TranscodeParams {
         if let Some(f) = &self.filter {
             s.filters = codec::filter::parse_chain(f).context("parsing filter")?;
         }
+        for (key, value) in [
+            ("duration", &self.duration),
+            ("start-timeout", &self.start_timeout),
+            ("idle-timeout", &self.idle_timeout),
+        ] {
+            if let Some(v) = value {
+                s.apply_kv(key, v.as_str())
+                    .with_context(|| key.replace('-', "_"))?;
+            }
+        }
+        if self.repeat == Some(true) {
+            s.apply_kv("loop", "true")?;
+        }
         Ok(s)
     }
 }
@@ -299,6 +325,13 @@ pub(super) struct InputSource {
     /// The media inline, base64-encoded (standard alphabet).
     #[serde(default)]
     base64: Option<String>,
+}
+
+impl InputSource {
+    /// The live source this input names (`path: "ndi://NAME"`), if it does.
+    pub(super) fn live_uri(&self) -> Option<&str> {
+        self.path.as_deref().filter(|p| crate::live::is_live_uri(p))
+    }
 }
 
 /// Where to write the result of a JSON request.
@@ -387,6 +420,15 @@ pub(super) struct SpecBody {
     /// Video filters — a chain string (`"crop=1280:720,hflip"`) or a structured
     /// list of objects (`[{"crop":{"w":1280,"h":720}},"hflip"]`).
     filter: Option<codec::filter::FilterSpec>,
+    /// A live job: stop after this long (`"90s"`, `"1h30m"`).
+    duration: Option<SettingValue>,
+    /// A live input: how long to wait for the source (`"15s"`).
+    start_timeout: Option<SettingValue>,
+    /// A live input: end when no picture comes for this long (`"10s"`).
+    idle_timeout: Option<SettingValue>,
+    /// A file played out live: start again at its end.
+    #[serde(rename = "loop")]
+    repeat: Option<bool>,
 }
 
 impl SpecBody {
@@ -438,6 +480,10 @@ impl SpecBody {
             // (TranscodeParams is the string-keyed query form; to_settings
             // re-parses it). Round-trips losslessly via Display.
             filter: self.filter.map(|f| f.to_chain()),
+            duration: self.duration,
+            start_timeout: self.start_timeout,
+            idle_timeout: self.idle_timeout,
+            repeat: self.repeat,
             sync: None,
             hooks: None,
         }

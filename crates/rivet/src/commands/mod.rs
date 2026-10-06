@@ -2,6 +2,7 @@
 
 pub mod capabilities;
 pub mod devices;
+pub mod live;
 pub mod pipe;
 pub mod probe;
 pub mod progress;
@@ -65,6 +66,79 @@ impl FitArgs {
         settings.upscale = self.upscale;
         Ok(())
     }
+}
+
+/// A live job's flags — `--duration`, `--start-timeout`, `--idle-timeout`,
+/// `--loop` — for a job whose input or output is `ndi://…`. Placed in the
+/// settings under the keys every surface uses (`duration`, `start-timeout`,
+/// `idle-timeout`, `loop`); a file-to-file job refuses them.
+#[derive(clap::Args, Debug, Default, Clone)]
+pub(crate) struct LiveArgs {
+    /// A live job: stop after this long — `90`, `90s`, `15m`, `2h`, `1h30m`.
+    /// Without it the job runs until the source goes away or Ctrl+C.
+    #[arg(long, value_name = "DURATION")]
+    pub duration: Option<String>,
+    /// A live input: how long to wait for the source to appear and send a
+    /// picture (default 15s).
+    #[arg(long = "start-timeout", value_name = "DURATION")]
+    pub start_timeout: Option<String>,
+    /// A live input: end when no picture arrives for this long (default
+    /// 10s; `0` waits for ever).
+    #[arg(long = "idle-timeout", value_name = "DURATION")]
+    pub idle_timeout: Option<String>,
+    /// A file played out live (`-o ndi://NAME`): start again at its end,
+    /// until Ctrl+C or `--duration`.
+    #[arg(long = "loop")]
+    pub repeat: bool,
+}
+
+impl LiveArgs {
+    pub(crate) fn apply(&self, settings: &mut TranscodeSettings) -> Result<()> {
+        for (key, value) in [
+            ("duration", &self.duration),
+            ("start-timeout", &self.start_timeout),
+            ("idle-timeout", &self.idle_timeout),
+        ] {
+            if let Some(v) = value {
+                settings
+                    .apply_kv(key, v)
+                    .with_context(|| format!("parsing --{key}"))?;
+            }
+        }
+        if self.repeat {
+            settings.apply_kv("loop", "true")?;
+        }
+        Ok(())
+    }
+}
+
+/// A flag Ctrl+C sets, for the jobs that run until stopped (a live input).
+/// A second Ctrl+C exits at once.
+pub(crate) fn ctrl_c_flag() -> Arc<std::sync::atomic::AtomicBool> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let flag = Arc::new(AtomicBool::new(false));
+    let set = Arc::clone(&flag);
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        rt.block_on(async {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                set.store(true, Ordering::Relaxed);
+                eprintln!(
+                    "
+stopping: finishing the output (Ctrl+C again to abandon it)…"
+                );
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    std::process::exit(130);
+                }
+            }
+        });
+    });
+    flag
 }
 
 /// The file a single-file output is — `--container`, `--prores-profile` —

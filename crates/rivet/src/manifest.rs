@@ -23,7 +23,20 @@
 //!     ladder: true
 //!   - input: "clips/*.mp4"   # glob -> one job per match
 //!     output: out/           # directory: each file -> out/<stem>.mp4
+//!   - input: "ndi://STUDIO (Camera 1)"   # a live NDI source (`ndi` feature)
+//!     output: out/cam1.mp4
+//!     codec: h264
+//!     duration: 1h           # live: stop after an hour (else until stopped)
+//!   - input: promo.mp4
+//!     output: ndi://Promo    # a file played out live as an NDI source
+//!     loop: true
 //! ```
+//!
+//! Live jobs (an `ndi://` input or output) run side by side, all started at
+//! once, while the file jobs run one after another beside them: a live
+//! source does not wait its turn. They end at their `duration`, when their
+//! source goes away, or when the run is stopped ([`run_manifest_with_stop`]),
+//! each writing what it made.
 //!
 //! Relative `input`/`output`/`output_dir` paths are resolved **relative to the
 //! manifest file's directory**, so a manifest plus its media is portable. The
@@ -32,6 +45,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -168,6 +182,19 @@ pub struct JobSpec {
     /// (`"crop=1280:720,hflip"`) or a structured list of objects
     /// (`[{crop: {w: 1280, h: 720}}, hflip]`). See [`codec::filter::FilterSpec`].
     pub filter: Option<codec::filter::FilterSpec>,
+    /// A live job (an `ndi://` input or output): stop after this long —
+    /// `90`, `"90s"`, `"15m"`, `"1h30m"`. Absent: until the source ends or
+    /// the run is stopped.
+    pub duration: Option<SettingValue>,
+    /// A live input: how long to wait for the source (default `"15s"`).
+    pub start_timeout: Option<SettingValue>,
+    /// A live input: end when no picture comes for this long (default
+    /// `"10s"`; `0` waits for ever).
+    pub idle_timeout: Option<SettingValue>,
+    /// A file played out live (`output: ndi://NAME`): start again at its
+    /// end, until `duration` or the run is stopped.
+    #[serde(rename = "loop")]
+    pub repeat: Option<bool>,
 }
 
 impl JobSpec {
@@ -228,6 +255,10 @@ impl JobSpec {
             width: pick!(width),
             height: pick!(height),
             filter: pick!(filter),
+            duration: pick!(duration),
+            start_timeout: pick!(start_timeout),
+            idle_timeout: pick!(idle_timeout),
+            repeat: pick!(repeat),
         }
     }
 
@@ -352,7 +383,26 @@ impl JobSpec {
         if let Some(f) = &self.filter {
             s.filters = f.resolve().context("resolving filter")?;
         }
+        for (key, value) in [
+            ("duration", &self.duration),
+            ("start-timeout", &self.start_timeout),
+            ("idle-timeout", &self.idle_timeout),
+        ] {
+            if let Some(v) = value {
+                s.apply_kv(key, v.as_str())
+                    .with_context(|| key.replace('-', "_"))?;
+            }
+        }
+        if self.repeat == Some(true) {
+            s.apply_kv("loop", "true")?;
+        }
         Ok(s)
+    }
+
+    /// Whether this job has a live end: an `ndi://` input or output.
+    fn is_live(&self, input: &Path) -> bool {
+        crate::live::is_live_uri(&input.to_string_lossy())
+            || self.output.as_deref().is_some_and(crate::live::is_live_uri)
     }
 }
 
@@ -487,54 +537,228 @@ pub fn run_manifest_file(path: &Path) -> Result<BatchReport> {
 
 /// Run an already-parsed manifest, resolving relative paths against `base_dir`.
 pub fn run_manifest(manifest: &Manifest, base_dir: &Path) -> Result<BatchReport> {
+    run_manifest_with_stop(manifest, base_dir, None)
+}
+
+/// [`run_manifest`] with a stop flag: setting it ends every live job (each
+/// writing what it made) and starts no further file job.
+pub fn run_manifest_with_stop(
+    manifest: &Manifest,
+    base_dir: &Path,
+    stop: Option<Arc<AtomicBool>>,
+) -> Result<BatchReport> {
     let stop_on_error = matches!(manifest.on_error.as_deref(), Some("stop"));
     let manifest_out_dir = manifest.output_dir.as_ref().map(|d| base_dir.join(d));
 
     let planned = plan_manifest(manifest, base_dir)?;
     tracing::info!(jobs = planned.len(), "batch: starting");
 
-    let mut report = BatchReport::default();
+    // The live jobs start together, each on a thread of its own, and run
+    // while the file jobs go one by one beside them.
+    let stop = stop.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let mut live = Vec::new();
     for (i, job) in planned.iter().enumerate() {
+        if !job.spec.is_live(&job.input) {
+            continue;
+        }
+        let (input, spec, out_dir, base) = (
+            job.input.clone(),
+            job.spec.clone(),
+            manifest_out_dir.clone(),
+            base_dir.to_path_buf(),
+        );
+        let stop = Arc::clone(&stop);
+        tracing::info!(
+            "batch: [{}/{}] {} -> live",
+            i + 1,
+            planned.len(),
+            input.display()
+        );
+        live.push((
+            i,
+            std::thread::spawn(move || {
+                run_one_live(&input, &spec, out_dir.as_deref(), &base, stop)
+            }),
+        ));
+    }
+
+    let mut outcomes: Vec<Option<JobOutcome>> = (0..planned.len()).map(|_| None).collect();
+    let mut stopped_early = false;
+    for (i, job) in planned.iter().enumerate() {
+        if job.spec.is_live(&job.input) {
+            continue;
+        }
+        if stopped_early || stop.load(Ordering::Relaxed) {
+            outcomes[i] = Some(failed(
+                &job.input,
+                "not started: the run was stopped".into(),
+            ));
+            continue;
+        }
         let n = i + 1;
         let total = planned.len();
         tracing::info!("batch: [{n}/{total}] {} -> converting", job.input.display());
-        let outcome = match run_one(&job.input, &job.spec, manifest_out_dir.as_deref(), base_dir) {
-            Ok((output, frames, bytes)) => {
-                tracing::info!(
-                    "batch: [{n}/{total}] {} -> {} ({} frames, {} bytes)",
-                    job.input.display(),
-                    output.display(),
-                    frames,
-                    bytes
-                );
-                JobOutcome {
-                    input: job.input.clone(),
-                    output: Some(output),
-                    frames,
-                    bytes,
-                    status: JobStatus::Ok,
-                }
-            }
-            Err(e) => {
-                let msg = format!("{e:#}");
-                tracing::error!("batch: [{n}/{total}] {} FAILED: {msg}", job.input.display());
-                JobOutcome {
-                    input: job.input.clone(),
-                    output: None,
-                    frames: 0,
-                    bytes: 0,
-                    status: JobStatus::Failed(msg),
-                }
-            }
-        };
-        let failed = !outcome.status.is_ok();
-        report.outcomes.push(outcome);
-        if failed && stop_on_error {
+        let outcome = outcome_of(
+            &job.input,
+            run_one(&job.input, &job.spec, manifest_out_dir.as_deref(), base_dir),
+            n,
+            total,
+        );
+        let failed_now = !outcome.status.is_ok();
+        outcomes[i] = Some(outcome);
+        if failed_now && stop_on_error {
             tracing::warn!("batch: on_error=stop — aborting after a failed job");
-            break;
+            stopped_early = true;
+            stop.store(true, Ordering::Relaxed);
         }
     }
-    Ok(report)
+    for (i, handle) in live {
+        let result = handle
+            .join()
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("the live job panicked")));
+        outcomes[i] = Some(outcome_of(&planned[i].input, result, i + 1, planned.len()));
+    }
+    Ok(BatchReport {
+        outcomes: outcomes.into_iter().flatten().collect(),
+    })
+}
+
+fn failed(input: &Path, msg: String) -> JobOutcome {
+    JobOutcome {
+        input: input.to_path_buf(),
+        output: None,
+        frames: 0,
+        bytes: 0,
+        status: JobStatus::Failed(msg),
+    }
+}
+
+fn outcome_of(
+    input: &Path,
+    result: Result<(PathBuf, u64, u64)>,
+    n: usize,
+    total: usize,
+) -> JobOutcome {
+    match result {
+        Ok((output, frames, bytes)) => {
+            tracing::info!(
+                "batch: [{n}/{total}] {} -> {} ({} frames, {} bytes)",
+                input.display(),
+                output.display(),
+                frames,
+                bytes
+            );
+            JobOutcome {
+                input: input.to_path_buf(),
+                output: Some(output),
+                frames,
+                bytes,
+                status: JobStatus::Ok,
+            }
+        }
+        Err(e) => {
+            let msg = format!("{e:#}");
+            tracing::error!("batch: [{n}/{total}] {} FAILED: {msg}", input.display());
+            failed(input, msg)
+        }
+    }
+}
+
+/// Run one live job: an `ndi://` input recorded to its output, or a file
+/// played out to an `ndi://` output. Returns `(output, frames, bytes)`.
+fn run_one_live(
+    input: &Path,
+    spec: &JobSpec,
+    manifest_out_dir: Option<&Path>,
+    base_dir: &Path,
+    stop: Arc<AtomicBool>,
+) -> Result<(PathBuf, u64, u64)> {
+    use crate::live::{FileSource, LiveUri, is_live_uri};
+    let settings = spec.to_settings()?;
+    let wait = std::time::Duration::from_secs_f64(settings.live.start_timeout.max(0.0));
+    let input_str = input.to_string_lossy().into_owned();
+    let sink = Arc::new(crate::fn_sink(|_p| {}));
+    let target_of =
+        |output_spec: &crate::spec::OutputSpec, stem_path: &Path| -> Result<crate::LiveTarget> {
+            if let Some(o) = spec.output.as_deref().filter(|o| is_live_uri(o)) {
+                return Ok(match LiveUri::parse(o)? {
+                    LiveUri::Ndi(e) => crate::LiveTarget::Ndi(e),
+                });
+            }
+            let is_hls = matches!(output_spec.mode, OutputMode::Hls { .. });
+            let multi = output_spec.rungs.len() > 1;
+            Ok(
+                match resolve_output(
+                    spec.output.as_deref(),
+                    manifest_out_dir,
+                    base_dir,
+                    stem_path,
+                    is_hls,
+                    multi,
+                    output_spec.file_extension(),
+                ) {
+                    OutputPlan::SingleFile(p) => {
+                        if let Some(parent) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
+                            fs::create_dir_all(parent)
+                                .with_context(|| format!("creating {}", parent.display()))?;
+                        }
+                        crate::LiveTarget::File(p)
+                    }
+                    OutputPlan::Directory(d) => crate::LiveTarget::Dir(d),
+                },
+            )
+        };
+    let fix_overlays = |s: &mut crate::spec::OutputSpec| {
+        for f in &mut s.filters {
+            if let codec::filter::VideoFilter::Overlay { image, .. } = f {
+                *image = join_rel(base_dir, image).to_string_lossy().into_owned();
+            }
+        }
+    };
+    let out = if is_live_uri(&input_str) {
+        let uri = LiveUri::parse(&input_str)?;
+        let source = crate::live::open_source(&input_str, wait)?;
+        let (info, source) = crate::live::probe_source(source, wait)?;
+        let mut output_spec = settings
+            .into_spec_for(&info)
+            .context("building output spec")?;
+        fix_overlays(&mut output_spec);
+        // Default outputs are named after the source, beside the manifest.
+        let stem_path = base_dir.join(uri.file_stem());
+        let target = target_of(&output_spec, &stem_path)?;
+        crate::run_live_job_blocking(source, &output_spec, target, sink, Some(stop))
+            .with_context(|| format!("recording {uri}"))?
+    } else {
+        let bytes = bytes::Bytes::from(
+            fs::read(input).with_context(|| format!("reading {}", input.display()))?,
+        );
+        let info = crate::probe_bytes_shared(bytes.clone()).context("probing input")?;
+        let mut output_spec = settings
+            .into_spec_for(&info)
+            .context("building output spec")?;
+        fix_overlays(&mut output_spec);
+        let stem = input
+            .file_stem()
+            .map_or("rivet".into(), |s| s.to_string_lossy().into_owned());
+        let source = FileSource::new(stem, bytes, output_spec.live.repeat)?;
+        let target = target_of(&output_spec, input)?;
+        crate::run_live_job_blocking(source, &output_spec, target, sink, Some(stop))
+            .with_context(|| format!("sending {}", input.display()))?
+    };
+    let frames = out.rungs.iter().map(|r| r.frames).max().unwrap_or(0);
+    let bytes = out.rungs.iter().map(|r| r.bytes).sum();
+    let output = match (&out.hls_root, out.rungs.first().map(|r| &r.artifact)) {
+        (Some(root), _) => root.clone(),
+        (None, Some(crate::job::RungArtifact::Written(p))) if out.rungs.len() == 1 => p.clone(),
+        (None, Some(crate::job::RungArtifact::Written(p))) => {
+            p.parent().map(Path::to_path_buf).unwrap_or_default()
+        }
+        (None, Some(crate::job::RungArtifact::Ndi { source })) => {
+            PathBuf::from(format!("ndi://{source}"))
+        }
+        _ => PathBuf::new(),
+    };
+    Ok((output, frames, bytes))
 }
 
 /// Convert a single input file. Returns `(output_path, frames, bytes)`.
@@ -703,6 +927,11 @@ fn join_rel(base_dir: &Path, p: &str) -> PathBuf {
 /// the manifest dir. A literal path must exist; a glob may match zero files
 /// (returns empty, the caller treats it as nothing to do).
 fn expand_input(input: &str, base_dir: &Path) -> Result<Vec<PathBuf>> {
+    // A live source is a URI, taken as it is.
+    if crate::live::is_live_uri(input) {
+        crate::live::LiveUri::parse(input)?;
+        return Ok(vec![PathBuf::from(input)]);
+    }
     let has_glob = input.contains(['*', '?', '[']);
     if !has_glob {
         let p = join_rel(base_dir, input);
@@ -1064,5 +1293,49 @@ jobs:
             json.jobs.len(),
             "the samples describe different job counts"
         );
+    }
+
+    /// A live job's keys read as every surface reads them, and an `ndi://`
+    /// input planned as it is — a URI, not a file to find.
+    #[test]
+    fn a_live_job_is_planned_with_its_live_keys() {
+        let yaml = "defaults:
+  duration: 1h30m
+  idle_timeout: 0
+jobs:
+  - input: \"ndi://STUDIO (Camera 1)?bandwidth=lowest\"
+    output: cam1.mp4
+  - input: promo.mp4
+    output: ndi://Promo
+    loop: true
+    start_timeout: 5s
+";
+        let m = parse_manifest(yaml, Format::Yaml).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("promo.mp4"), b"x").unwrap();
+        let planned = plan_manifest(&m, dir.path()).unwrap();
+        assert_eq!(planned.len(), 2);
+        assert_eq!(
+            planned[0].input,
+            PathBuf::from("ndi://STUDIO (Camera 1)?bandwidth=lowest")
+        );
+        assert!(planned[0].spec.is_live(&planned[0].input));
+        assert!(
+            planned[1].spec.is_live(&planned[1].input),
+            "an ndi:// output"
+        );
+        let live = planned[0].spec.to_settings().unwrap().live;
+        assert_eq!((live.duration, live.idle_timeout), (Some(5400.0), 0.0));
+        let live = planned[1].spec.to_settings().unwrap().live;
+        assert!(live.repeat);
+        assert_eq!(live.start_timeout, 5.0);
+        let bad = parse_manifest(
+            "jobs:
+  - input: \"ndi://\"
+",
+            Format::Yaml,
+        )
+        .unwrap();
+        assert!(plan_manifest(&bad, dir.path()).is_err());
     }
 }

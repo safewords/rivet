@@ -51,7 +51,10 @@ pub(crate) fn run(manifest_path: &Path, dry_run: bool, stop_on_error: bool) -> R
         return Ok(());
     }
 
-    let report = manifest::run_manifest(&m, &base)?;
+    // Ctrl+C ends the live jobs (each writing what it made) and starts no
+    // further file job.
+    let stop = super::ctrl_c_flag();
+    let report = manifest::run_manifest_with_stop(&m, &base, Some(stop))?;
 
     println!(
         "\nbatch: {} ok, {} failed (of {})",

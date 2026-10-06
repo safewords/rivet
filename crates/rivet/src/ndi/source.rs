@@ -1,76 +1,17 @@
-//! A live source of pictures and sound, and the NDI receiver as one.
-//!
-//! The recorder ([`super::record`]) reads a [`LiveSource`], not NDI, so it
-//! is tested on synthetic sources and the NDI specifics stay here: turning
-//! a received frame into a [`VideoFrame`] in one of the planar layouts the
-//! colorspace layer normalises, deciding the colour NDI implies, and
-//! putting every event on one clock.
+//! The NDI receiver as a [`LiveSource`]: a received frame turned into a
+//! [`VideoFrame`] in one of the planar layouts the colorspace layer
+//! normalises, the colour NDI implies decided, and every event put on one
+//! clock (the sender's timestamps; this machine's for a sender that stamps
+//! none).
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use codec::frame::{ColorMetadata, ColorSpace, PixelFormat, TransferFn, VideoFrame};
 
-/// 100 ns ticks per second: NDI's time unit.
-pub const TICKS_PER_SECOND: i64 = 10_000_000;
-
-/// One picture from a live source.
-#[derive(Debug, Clone)]
-pub struct LiveVideo {
-    /// The picture, in any layout the colorspace layer takes (4:2:0, 4:2:2,
-    /// NV12, RGBA; 8 or 10 bits). Its `pts` is ignored.
-    pub frame: VideoFrame,
-    /// The colour the source declares for it.
-    pub color: ColorMetadata,
-    /// `(numerator, denominator)`; `(0, _)` when the source does not say.
-    pub frame_rate: (u32, u32),
-    /// When it was taken, in 100 ns ticks on a clock every event of the
-    /// source shares (NDI: the sender's, since the Unix epoch).
-    pub time: i64,
-}
-
-/// A run of sound from a live source.
-#[derive(Debug, Clone)]
-pub struct LiveAudio {
-    /// Interleaved samples, nominal level ±1.0.
-    pub samples: Vec<f32>,
-    pub sample_rate: u32,
-    pub channels: u8,
-    /// When its first sample was taken, on the same clock as the video.
-    pub time: i64,
-}
-
-/// What a source yields.
-#[derive(Debug, Clone)]
-pub enum LiveEvent {
-    Video(LiveVideo),
-    Audio(LiveAudio),
-    /// The source has ended (a finite source; NDI never says this).
-    End,
-}
-
-/// A live source the recorder pulls from on a thread of its own.
-pub trait LiveSource: Send {
-    /// The next event, waiting up to `timeout`; `None` when nothing came.
-    /// An error ends the recording: [`SourceLost`] as the source going
-    /// away (what was recorded is kept), anything else as a failure.
-    fn next_event(&mut self, timeout: Duration) -> Result<Option<LiveEvent>>;
-
-    /// The source's name, for messages.
-    fn name(&self) -> String;
-}
-
-/// The error a [`LiveSource`] returns when its source went away.
-#[derive(Debug, Clone, Copy)]
-pub struct SourceLost;
-
-impl std::fmt::Display for SourceLost {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the source went away")
-    }
-}
-
-impl std::error::Error for SourceLost {}
+use crate::live::{
+    LiveAudio, LiveEvent, LiveSource, LiveVideo, NdiBandwidth, NdiEndpoint, SourceLost,
+};
 
 /// The NDI receiver as a [`LiveSource`].
 pub struct NdiSource {
@@ -78,19 +19,32 @@ pub struct NdiSource {
 }
 
 impl NdiSource {
-    /// Find the source `query` names (see [`ndi::Ndi::find_source`]) and
-    /// connect to it.
-    pub fn connect(
-        query: &str,
-        find: &ndi::FindOptions,
-        options: &ndi::ReceiverOptions,
-        wait: Duration,
-    ) -> Result<Self> {
+    /// Find the source `endpoint` names (see [`ndi::Ndi::find_source`]),
+    /// waiting up to `wait` for it, and connect to it as the endpoint asks.
+    pub fn open(endpoint: &NdiEndpoint, wait: Duration) -> Result<Self> {
         let runtime = ndi::Ndi::load()?;
         tracing::info!(runtime = %runtime.version(), path = %runtime.path().display(), "NDI runtime loaded");
-        let source = runtime.find_source(query, find, wait)?;
+        let find = ndi::FindOptions {
+            groups: endpoint.groups.clone(),
+            extra_ips: endpoint.extra_ips.clone(),
+            ..Default::default()
+        };
+        let source = runtime.find_source(&endpoint.name, &find, wait)?;
         tracing::info!(source = %source.name, url = ?source.url, "NDI source found");
-        let receiver = runtime.receiver(&source, options)?;
+        let options = ndi::ReceiverOptions {
+            color_format: if endpoint.high_bit_depth {
+                ndi::ColorFormat::Best
+            } else {
+                ndi::ColorFormat::Fastest
+            },
+            bandwidth: match endpoint.bandwidth {
+                NdiBandwidth::Highest => ndi::Bandwidth::Highest,
+                NdiBandwidth::Lowest => ndi::Bandwidth::Lowest,
+            },
+            name: Some("rivet".into()),
+            ..Default::default()
+        };
+        let receiver = runtime.receiver(&source, &options)?;
         Ok(Self { receiver })
     }
 }
@@ -134,6 +88,10 @@ impl LiveSource for NdiSource {
 
     fn name(&self) -> String {
         self.receiver.source().name.clone()
+    }
+
+    fn kind(&self) -> &'static str {
+        "ndi"
     }
 }
 

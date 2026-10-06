@@ -217,6 +217,9 @@ pub struct TranscodeSettings {
     pub trim_start: Option<f64>,
     /// Splice **trim out-point** in seconds (`None` = end of input).
     pub trim_end: Option<f64>,
+    /// A job with a live end (`ndi://…` in or out): `duration`,
+    /// `start-timeout`, `idle-timeout`, `loop`. See [`crate::spec::LiveSettings`].
+    pub live: crate::spec::LiveSettings,
     /// `mode=image`: the formats every rendition is made in (`image-format`).
     #[cfg(feature = "image")]
     pub image_formats: Vec<crate::image::ImageFormat>,
@@ -390,6 +393,7 @@ impl TranscodeSettings {
         spec = spec.with_rung_policy(policy);
         spec = spec.with_filters(self.filters);
         spec = spec.with_trim(self.trim_start, self.trim_end);
+        spec.live = self.live;
         if let Some(c) = self.video_codec {
             spec = spec.with_video_codec(c);
         }
@@ -683,6 +687,14 @@ impl TranscodeSettings {
             "height" => self.height = Some(val.parse().context("height")?),
             "filter" => self.filters = codec::filter::parse_chain(val)?,
             "codec" => self.video_codec = Some(parse_video_codec(val)?),
+            "duration" => self.live.duration = Some(parse_duration_seconds(val)?),
+            "start-timeout" | "live-wait" => {
+                self.live.start_timeout = parse_duration_seconds(val).context("start-timeout")?
+            }
+            "idle-timeout" => {
+                self.live.idle_timeout = parse_duration_seconds(val).context("idle-timeout")?
+            }
+            "loop" => self.live.repeat = parse_bool(val),
             "prores-profile" => self.prores_profile = Some(parse_prores_profile(val)?),
             "container" => self.container = Some(parse_container(val)?),
             #[cfg(feature = "image")]
@@ -850,6 +862,7 @@ impl TranscodeSettings {
             && self.video_codec.is_none()
             && self.prores_profile.is_none()
             && self.container.is_none()
+            && self.live.is_default()
             && self.image_is_empty()
     }
 
@@ -1436,6 +1449,47 @@ pub fn parse_rung(s: &str) -> Result<RungArg> {
         }
     }
     Ok(rung)
+}
+
+/// A length of time in seconds: `90`, `90s`, `1.5m`, `2h`, `1h30m`,
+/// `1h2m3s`, `500ms`. The vocabulary of `duration`, `start-timeout` and
+/// `idle-timeout`.
+pub fn parse_duration_seconds(s: &str) -> Result<f64> {
+    let t = s.trim().to_ascii_lowercase();
+    let bad = || anyhow::anyhow!("'{s}' is not a length of time (90, 90s, 500ms, 15m, 2h, 1h30m)");
+    if let Ok(secs) = t.parse::<f64>() {
+        if !(secs.is_finite() && secs >= 0.0) {
+            return Err(bad());
+        }
+        return Ok(secs);
+    }
+    if let Some(ms) = t.strip_suffix("ms") {
+        let v: f64 = ms.trim().parse().map_err(|_| bad())?;
+        if !(v.is_finite() && v >= 0.0) {
+            return Err(bad());
+        }
+        return Ok(v / 1000.0);
+    }
+    let (mut total, mut number) = (0.0f64, String::new());
+    for c in t.chars() {
+        if c.is_ascii_digit() || c == '.' {
+            number.push(c);
+            continue;
+        }
+        let unit = match c {
+            'h' => 3600.0,
+            'm' => 60.0,
+            's' => 1.0,
+            _ => return Err(bad()),
+        };
+        let n: f64 = number.parse().map_err(|_| bad())?;
+        total += n * unit;
+        number.clear();
+    }
+    if !number.is_empty() || !total.is_finite() {
+        return Err(bad());
+    }
+    Ok(total)
 }
 
 fn parse_bool(s: &str) -> bool {

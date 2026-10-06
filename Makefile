@@ -86,10 +86,10 @@ run: build ## Build, then run rivet with ARGS (make run ARGS="probe in.mp4").
 test: ## The transcoder's unit tests, every hardware-free feature.
 	$(CARGO) test -p rivet-transcoder --lib --features $(TEST_FEATURES) --locked
 
-test-ndi: ## rivet-ndi's tests and the NDI loopback (SKIPs without a runtime).
+test-ndi: ## Live and NDI tests: rivet-ndi, the live path, and NDI through the runtime (SKIPs without one).
 	$(CARGO) test -p rivet-ndi --locked
-	$(CARGO) test -p rivet-transcoder --features ndi --lib --locked ndi::
-	$(CARGO) test -p rivet-transcoder --features ndi --test ndi_loopback --locked
+	$(CARGO) test -p rivet-transcoder --features ndi,batch,server --lib --locked live
+	$(CARGO) test -p rivet-transcoder --features ndi,batch,server --test ndi_loopback --locked
 
 test-all: ## Every CI test group (.github/ci/tests.sh; slow, needs CI's tools).
 	.github/ci/tests.sh

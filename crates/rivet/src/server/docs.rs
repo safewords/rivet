@@ -164,6 +164,10 @@ pub fn openapi_spec() -> Value {
                             qp("input_fps", "string", "The frame rate of a raw video elementary stream input (.h264, .hevc, .obu, .m2v), which states none or one to replace."),
                             qp("gpu", "integer", "Pin encode/decode to this GPU index."),
                             qp("filter", "string", "Video filter chain, e.g. crop=1280:720,hflip."),
+                            qp("duration", "string", "A live job (JSON body with an ndi:// input.path or output.path): stop after this long, e.g. 90s, 1h30m. Absent: until POST /v1/jobs/{id}/stop or the source ends."),
+                            qp("start_timeout", "string", "A live input: how long to wait for the source (default 15s)."),
+                            qp("idle_timeout", "string", "A live input: end when no picture comes for this long (default 10s; 0 waits for ever)."),
+                            qp("loop", "boolean", "A file played out live (output.path ndi://NAME): start again at its end."),
                             qp("sync", "boolean", "Block until done. One single-file rung: the file itself; several rungs, output.path or HLS: the job status JSON (each rung's artifacts[].url)."),
                             qp("hooks", "string", "Optional hooks this job runs besides the required ones, by name, comma-separated (GET /v1/hooks lists them).")
                         ],
@@ -202,6 +206,18 @@ pub fn openapi_spec() -> Value {
                             "200": { "description": "job status",
                                      "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobStatus" } } } },
                             "404": { "$ref": "#/components/responses/Error" }
+                        }
+                    }
+                },
+                "/v1/jobs/{id}/stop": {
+                    "post": {
+                        "tags": ["jobs"],
+                        "summary": "End a live job (an ndi:// input or output); its output is written and it completes",
+                        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } } ],
+                        "responses": {
+                            "202": { "description": "stopping; poll GET /v1/jobs/{id} for the outcome" },
+                            "404": { "$ref": "#/components/responses/Error" },
+                            "409": { "description": "not a live job: a file job ends by itself" }
                         }
                     }
                 },
@@ -269,14 +285,14 @@ pub fn openapi_spec() -> Value {
                         "type": "object",
                         "description": "Media source — set exactly one of path / base64.",
                         "properties": {
-                            "path": { "type": "string", "description": "Server-side file path to read the media from." },
+                            "path": { "type": "string", "description": "Server-side file path to read the media from, or a live NDI source: ndi://NAME (the job runs until spec.duration, the source ending, or POST /v1/jobs/{id}/stop; output.path is required)." },
                             "base64": { "type": "string", "description": "The media inline, base64-encoded." }
                         }
                     },
                     "OutputTarget": {
                         "type": "object", "required": ["path"],
                         "properties": {
-                            "path": { "type": "string", "description": "Server path to write the result (file for single-file single-rung; directory for multi-rung/HLS)." }
+                            "path": { "type": "string", "description": "Server path to write the result (file for single-file single-rung; directory for multi-rung/HLS), or ndi://NAME to send it live as an NDI source (one per rung)." }
                         }
                     },
                     "SpecBody": {
@@ -319,7 +335,11 @@ pub fn openapi_spec() -> Value {
                             "max_fps": { "oneOf": [ { "type": "number" }, { "type": "string", "enum": ["source"] } ] },
                             "input_fps": { "type": "number" },
                             "gpu": { "type": "integer" },
-                            "filter": { "type": "string", "example": "crop=1280:720,hflip" }
+                            "filter": { "type": "string", "example": "crop=1280:720,hflip" },
+                            "duration": { "type": "string", "example": "1h30m", "description": "A live job: stop after this long." },
+                            "start_timeout": { "type": "string", "example": "15s" },
+                            "idle_timeout": { "type": "string", "example": "10s" },
+                            "loop": { "type": "boolean", "description": "A file played out live: start again at its end." }
                         }
                     },
                     "Health": { "type": "object", "properties": {

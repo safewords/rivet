@@ -97,7 +97,7 @@ group_transcoder_lib() {
   # NDI: the FFI layouts and pixel conversions, and the loopback through the
   # runtime, which says SKIP on a runner without one.
   t -p rivet-ndi --locked
-  t -p rivet-transcoder --test ndi_loopback --features ndi --locked
+  t -p rivet-transcoder --test ndi_loopback --features ndi,batch,server --locked
 }
 
 # End-to-end jobs on synthetic sources. Inputs made by rivet's own encoders

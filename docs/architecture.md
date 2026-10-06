@@ -24,8 +24,9 @@ from one engine:
   pipe | ipc | batch | ndi | serve`; `image`, `ipc`, `batch` and `ndi` need
   the feature of the same name, `serve` the `server` feature),
 - an **HTTP API** and a **Unix-socket IPC** server,
-- and, with the `ndi` feature, **NDI** in and out (`rivet ndi record` encodes a
-  live NDI source into a file; `rivet ndi send` plays a file out as one) — see
+- and **live jobs**: with the `ndi` feature, `ndi://NAME` is an input or an
+  output wherever a path goes, and the job engine's live path
+  (`rivet::job::run_live_job`) runs the same spec in real time — see
   [ndi.md](ndi.md).
 
 Every job can run caller-supplied **hooks** at fixed points (the source, the

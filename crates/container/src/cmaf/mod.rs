@@ -870,6 +870,22 @@ impl CmafAudioMuxer {
         self.pending.iter().map(|s| s.duration as u64).sum()
     }
 
+    /// The segments flushed so far, in order — what a live playlist lists
+    /// while the track is still being written.
+    pub fn segments(&self) -> &[SegmentInfo] {
+        &self.segments
+    }
+
+    /// The track's timescale (its `AudioInfo::timescale`).
+    pub fn timescale(&self) -> u32 {
+        self.info.timescale
+    }
+
+    /// Where the init segment is (written with the first segment).
+    pub fn init_path(&self) -> &Path {
+        &self.init_path
+    }
+
     pub fn flush_segment(&mut self) -> Result<Option<SegmentInfo>> {
         if self.pending.is_empty() {
             return Ok(None);

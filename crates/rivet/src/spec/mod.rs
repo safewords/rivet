@@ -205,6 +205,11 @@ pub struct OutputSpec {
     /// frames, each artifact, and the end. See [`crate::hooks`]. Empty by
     /// default, which costs nothing.
     pub hooks: crate::hooks::Hooks,
+    /// How a job with a **live** end runs — a live input (`ndi://…`) or a
+    /// live output (a file played out to `ndi://…`): when it stops, how
+    /// long it waits for the source. See [`LiveSettings`]. A file-to-file
+    /// job refuses any of it set.
+    pub live: LiveSettings,
 }
 
 impl Default for OutputSpec {
@@ -247,6 +252,7 @@ impl Default for OutputSpec {
             trim_start: None,
             trim_end: None,
             hooks: crate::hooks::Hooks::default(),
+            live: LiveSettings::default(),
         }
     }
 }

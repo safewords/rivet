@@ -334,7 +334,7 @@ pub(super) fn build_video_variant_spec(
 /// and its stereo downmix) and any one subtitle rendition, so each adds the
 /// largest audio rendition's rates and the largest subtitle rendition's. The video rates alone let a player pick a
 /// variant its link could not carry once the audio was added.
-fn add_rendition_rates(
+pub(super) fn add_rendition_rates(
     video: &mut [VideoVariantSpec],
     audio: &[AudioVariantSpec],
     subtitles: &[SubtitleVariantSpec],

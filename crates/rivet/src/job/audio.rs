@@ -862,7 +862,7 @@ fn opus_pre_skip_edit(codec: &str, track: &AudioTrack) -> Option<container::edit
 /// The encoder side of a transcode, built on the first frame: the layout the
 /// source turns out to have decides the output's, and the rate it decodes
 /// at is the encoder's input.
-struct EncodeState<'a> {
+pub(super) struct EncodeState<'a> {
     req: AudioRequest<'a>,
     codec: AudioCodec,
     enc: Option<Box<dyn codec::audio::AudioEncoder>>,
@@ -881,20 +881,20 @@ struct EncodeState<'a> {
 }
 
 /// A finished transcode.
-struct Encoded {
-    info: AudioInfo,
+pub(super) struct Encoded {
+    pub(super) info: AudioInfo,
     in_layout: ChannelLayout,
     out_layout: ChannelLayout,
-    in_rate: u32,
-    out_rate: u32,
-    pre_skip: u16,
-    encoded_samples: u64,
+    pub(super) in_rate: u32,
+    pub(super) out_rate: u32,
+    pub(super) pre_skip: u16,
+    pub(super) encoded_samples: u64,
     /// The encoder's bare-file header (MP3's tag frame).
     file_header: Option<Vec<u8>>,
 }
 
 impl<'a> EncodeState<'a> {
-    fn new(req: AudioRequest<'a>, codec: AudioCodec) -> Self {
+    pub(super) fn new(req: AudioRequest<'a>, codec: AudioCodec) -> Self {
         Self {
             req,
             codec,
@@ -938,7 +938,7 @@ impl<'a> EncodeState<'a> {
 
     /// Filter, remix and encode one decoded frame whose speakers are
     /// `layout` (`None`: the default for its width).
-    fn encode(
+    pub(super) fn encode(
         &mut self,
         frame: &codec::audio::AudioFrame,
         layout: Option<ChannelLayout>,
@@ -1051,10 +1051,64 @@ impl<'a> EncodeState<'a> {
         }
     }
 
+    /// The track the encoder writes, once it exists: what a muxer is given
+    /// before its first packet. AC-3, E-AC-3 and DTS are described by their
+    /// `first` packet's header, so they wait for one (`None` until then).
+    pub(super) fn describe(&self, first: Option<&[u8]>) -> Result<Option<AudioInfo>> {
+        let Some(enc) = self.enc.as_ref() else {
+            return Ok(None);
+        };
+        if matches!(
+            self.codec,
+            AudioCodec::Ac3 | AudioCodec::Eac3 | AudioCodec::Dts
+        ) && first.is_none()
+        {
+            return Ok(None);
+        }
+        let out = first.map(|p| vec![(p.to_vec(), 0u32)]).unwrap_or_default();
+        self.info_of(enc.as_ref(), &out).map(Some)
+    }
+
+    /// The encoder's pre-skip and coded rate, once it exists.
+    pub(super) fn timing(&self) -> Option<(u16, u32)> {
+        self.enc.as_ref().map(|e| (e.pre_skip(), e.sample_rate()))
+    }
+
+    fn info_of(
+        &self,
+        enc: &dyn codec::audio::AudioEncoder,
+        out: &[(Vec<u8>, u32)],
+    ) -> Result<AudioInfo> {
+        let out_layout = self.out_layout.as_ref().expect("set with the encoder");
+        let channels = out_layout.len() as u16;
+        let rate = enc.sample_rate();
+        let first = || {
+            out.first()
+                .map(|(p, _)| p.as_slice())
+                .context("the encoder wrote no packet")
+        };
+        Ok(match self.codec {
+            AudioCodec::Opus => AudioInfo::opus(self.in_rate, channels, enc.extra_data()),
+            AudioCodec::Mp3 => AudioInfo::mp3(rate, channels),
+            AudioCodec::Aac | AudioCodec::HeAac | AudioCodec::HeAacV2 => {
+                AudioInfo::aac_lc(rate, channels, enc.extra_data())
+            }
+            AudioCodec::Vorbis => AudioInfo::vorbis(rate, channels, enc.extra_data()),
+            AudioCodec::Ac3 | AudioCodec::Eac3 => {
+                AudioInfo::from_ac3_frame(first()?).context("describing the AC-3 stream written")?
+            }
+            AudioCodec::Dts => {
+                AudioInfo::from_dts_frame(first()?).context("describing the DTS stream written")?
+            }
+            AudioCodec::Flac { .. } => AudioInfo::flac(rate, channels, enc.extra_data()),
+            AudioCodec::Alac { .. } => AudioInfo::alac(rate, channels, enc.extra_data()),
+        })
+    }
+
     /// Flush the encoder and describe the track. `out` holds this
     /// transcode's packets alone: AC-3, E-AC-3 and DTS are described by the
     /// first one's header, as a demuxer describes such a track.
-    fn finish(mut self, out: &mut Vec<(Vec<u8>, u32)>) -> Result<Option<Encoded>> {
+    pub(super) fn finish(mut self, out: &mut Vec<(Vec<u8>, u32)>) -> Result<Option<Encoded>> {
         let Some(mut enc) = self.enc.take() else {
             return Ok(None);
         };
@@ -1064,29 +1118,9 @@ impl<'a> EncodeState<'a> {
         {
             out.push((pkt.data, pkt.duration as u32));
         }
-        let out_layout = self.out_layout.expect("set with the encoder");
-        let channels = out_layout.len() as u16;
+        let info = self.info_of(enc.as_ref(), out)?;
+        let out_layout = self.out_layout.clone().expect("set with the encoder");
         let rate = enc.sample_rate();
-        let first = || {
-            out.first()
-                .map(|(p, _)| p.as_slice())
-                .context("the encoder wrote no packet")
-        };
-        let info =
-            match self.codec {
-                AudioCodec::Opus => AudioInfo::opus(self.in_rate, channels, enc.extra_data()),
-                AudioCodec::Mp3 => AudioInfo::mp3(rate, channels),
-                AudioCodec::Aac | AudioCodec::HeAac | AudioCodec::HeAacV2 => {
-                    AudioInfo::aac_lc(rate, channels, enc.extra_data())
-                }
-                AudioCodec::Vorbis => AudioInfo::vorbis(rate, channels, enc.extra_data()),
-                AudioCodec::Ac3 | AudioCodec::Eac3 => AudioInfo::from_ac3_frame(first()?)
-                    .context("describing the AC-3 stream written")?,
-                AudioCodec::Dts => AudioInfo::from_dts_frame(first()?)
-                    .context("describing the DTS stream written")?,
-                AudioCodec::Flac { .. } => AudioInfo::flac(rate, channels, enc.extra_data()),
-                AudioCodec::Alac { .. } => AudioInfo::alac(rate, channels, enc.extra_data()),
-            };
         Ok(Some(Encoded {
             info,
             in_layout: self.in_layout.expect("set with the encoder"),

@@ -167,13 +167,18 @@ struct Cli {
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
-    /// Transcode an input file to AV1.
+    /// Transcode an input file to AV1 — or a live NDI source (`ndi://NAME`),
+    /// or a file out to NDI (`-o ndi://NAME`).
     Transcode {
-        /// Input media file (any supported container/codec).
+        /// Input media file (any supported container/codec), or a live source
+        /// as a URI: `"ndi://STUDIO (Camera 1)"`, any unique part of the
+        /// name, with `?bandwidth=lowest`, `?groups=…`, `?extra-ips=…`,
+        /// `?high-bit-depth` (NDI needs the `ndi` feature).
         input: PathBuf,
         /// Output path: a file (single mode, one rung) or a directory
         /// (single mode multi-rung, or HLS). Defaults to `<input>.av1.mp4`
-        /// for the simple single-rung case.
+        /// for the simple single-rung case. `ndi://NAME` sends the output
+        /// live as an NDI source (one per rung: `NAME (LABEL)`).
         #[arg(short, long)]
         output: Option<PathBuf>,
         /// Output mode.
@@ -415,6 +420,10 @@ enum Command {
         /// Splice: trim the input, keeping until this time (seconds).
         #[arg(long)]
         trim_end: Option<f64>,
+        /// `--duration`, `--start-timeout`, `--idle-timeout`, `--loop`: a
+        /// live job's (an `ndi://` input or output).
+        #[command(flatten)]
+        live: commands::LiveArgs,
     },
     /// Splice: concatenate (and per-clip trim) several inputs into one MP4.
     ///
@@ -431,7 +440,8 @@ enum Command {
     Image(commands::image::ImageArgs),
     /// Inspect an input file without transcoding it.
     Probe {
-        /// Input media file.
+        /// Input media file, or a live source (`ndi://NAME`): described by
+        /// its first picture and sound.
         input: PathBuf,
         /// Emit machine-readable JSON instead of a human summary.
         #[arg(long)]
@@ -682,6 +692,7 @@ fn run() -> Result<()> {
             file,
             trim_start,
             trim_end,
+            live,
             fitting,
         } => commands::transcode::run(commands::transcode::TranscodeArgs {
             input,
@@ -727,6 +738,7 @@ fn run() -> Result<()> {
             codec,
             trim_start,
             trim_end,
+            live,
             fitting,
             file,
         }),

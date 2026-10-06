@@ -24,7 +24,9 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
-tokio.workspace = true
+# `signal`: Ctrl+C ends a live job (an `ndi://` input runs until stopped)
+# with its output written.
+tokio = { workspace = true, features = ["signal"] }
 bytes.workspace = true
 tempfile.workspace = true
 # Whether an output path is the input file (`src/output_guard.rs`): file
@@ -147,7 +149,7 @@ ipc = []
 # NDI (`rivet ndi sources | record | send`): record an NDI source into a
 # file, and play a file out as an NDI source. The NDI runtime is loaded when
 # an NDI command first runs (https://ndi.video/tools/); see docs/ndi.md.
-ndi = ["dep:ndi", "tokio/signal"]
+ndi = ["dep:ndi"]
 # `rivet batch`: a YAML/JSON manifest DSL for converting many files in one run.
 # Pulls serde + a YAML/JSON parser + glob. See docs/batch.md.
 batch = ["dep:serde", "dep:serde_yaml_ng", "dep:glob", "codec/serde"]
