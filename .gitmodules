@@ -74,3 +74,7 @@
 	path = crates/ndi
 	url = https://github.com/safewords/rivet-ndi.git
 	branch = develop
+[submodule "crates/jpegxl"]
+	path = crates/jpegxl
+	url = https://github.com/safewords/rivet-jpegxl.git
+	branch = develop

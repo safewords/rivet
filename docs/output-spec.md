@@ -892,6 +892,7 @@ knob on a video job is refused.
 | AVIF | rivet's HEIF reader → the AV1 decode dispatch (NVDEC / AMF / QSV, else rivet's own `av1` decoder, in every build) |
 | WebP (a still, or an animation's first frame, composited; ICC) | rivet's own `crates/webp` |
 | HEIC / HEIF | rivet's HEIF reader → the HEVC decode dispatch (GPU, else rivet's own `h26x`) |
+| JPEG XL (bare codestream or container; an animation's first frame; orientation, ICC; 16-bit and float brought to 8 bits) | `crates/jpegxl` (rivet-jpegxl) over jxl-rs, the JPEG XL project's own decoder |
 | a video | the thumbnail path's decoder: the stills `frames-at` / `frames-count` pick |
 
 | Output | Encoder | Notes |

@@ -35,7 +35,8 @@ encoders (`h26x-fallback`). ProRes, VP8, VP9, MPEG-1 / MPEG-2 and MPEG-4 Part 2
 sources decode on any host too, through decoders this workspace wrote
 clean-room from each format's specification (always in), and the still-image
 codecs (PNG, JPEG, GIF, BMP, TIFF; AVIF through the AV1 crate) are the
-workspace's own as well. See [No FFmpeg](#no-ffmpeg).
+workspace's own as well — all but JPEG XL input, which is the JPEG XL
+project's own pure-Rust decoder, jxl-rs. See [No FFmpeg](#no-ffmpeg).
 
 📖 **Detailed docs** live in [`docs/`](docs/). Start with
 [Architecture](docs/architecture.md) (the codebase map) and
@@ -852,7 +853,7 @@ shows it), and a job refuses it rather than dropping it — see
 [Audio](#audio). The details of each reader are in
 [container.md](docs/container.md).
 
-Still images (JPEG, PNG, WebP, AVIF, GIF, TIFF, BMP, HEIC in; AVIF, WebP,
+Still images (JPEG, PNG, WebP, AVIF, GIF, TIFF, BMP, HEIC, JPEG XL in; AVIF, WebP,
 JPEG, PNG out) are the `image` feature's, every codec the workspace's own — see
 [output-spec.md §11](docs/output-spec.md#11-still-images--modeimage).
 
@@ -983,6 +984,7 @@ source encoder's name cleared without its audio changing.
 | `png`       | **PNG and APNG decoder and encoder**, with its own DEFLATE / zlib, pure Rust, written from the W3C PNG specification (third edition) and RFCs 1950 / 1951. rivet's PNG input and output (feature `image`) and the `overlay` filter's PNG reader. A **git submodule** of [safewords/rivet-png](https://github.com/safewords/rivet-png) (library `rpng`); changed there the same way as `h26x`. Its own [README](crates/png/README.md). |
 | `jpeg`      | **JPEG decoder and encoder**, pure Rust, written from ITU-T T.81 and T.871: baseline, extended, progressive and lossless, Huffman and arithmetic coding, CMYK / YCCK. rivet's JPEG input and output (feature `image`). A **git submodule** of [safewords/rivet-jpeg](https://github.com/safewords/rivet-jpeg); changed there the same way as `h26x`. Its own [README](crates/jpeg/README.md). |
 | `webp`      | **WebP decoder and encoder**, pure Rust, written from RFC 9649: lossy (VP8, through `vp8`), lossless (VP8L), alpha (`ALPH`), animation, ICC / EXIF / XMP. rivet's WebP input and output (feature `image`). A **git submodule** of [safewords/rivet-webp](https://github.com/safewords/rivet-webp) (library `webp`; its git dependency on rivet-vp8 is patched to `crates/vp8`); changed there the same way as `h26x`. Its own [README](crates/webp/README.md). |
+| `jpegxl`    | **JPEG XL decoding**: a small, typed wrapper (probe, decode, frames; 8-bit, 16-bit or float pixels; the pixels' ICC profile, orientation, Exif, HDR intensity) over [jxl-rs](https://github.com/libjxl/jxl-rs), the JPEG XL project's own pure-Rust decoder (BSD-3-Clause). rivet's JPEG XL input (feature `image`); decode only. The one still-image codec that is not this workspace's own (see [decisions §45](docs/decisions.md#45-jpeg-xl-input-is-jxl-rs-the-one-codec-rivet-did-not-write)). A **git submodule** of [safewords/rivet-jpegxl](https://github.com/safewords/rivet-jpegxl) (published as `rivet-jpegxl`, library `jpegxl`); changed there the same way as `h26x`. Its own [README](crates/jpegxl/README.md). |
 | `imagecodecs` | **GIF, BMP and TIFF decoders and encoders** (`rivet-gif`, `rivet-bmp`, `rivet-tiff`: BigTIFF, LZW / Deflate / PackBits / CCITT), pure Rust, written from GIF89a, Microsoft's BMP documentation and TIFF 6.0. rivet's GIF, BMP and TIFF input (feature `image`). A separate cargo workspace, not a member of rivet's (its crates are path dependencies); a **git submodule** of [safewords/rivet-imagecodecs](https://github.com/safewords/rivet-imagecodecs); changed there the same way as `h26x`. Its own [README](crates/imagecodecs/README.md). |
 | `mpeg2`     | **MPEG-2 Video (H.262) and MPEG-1 video decoder, Main Profile encoder**, pure Rust, written from ITU-T H.262: the decoder takes every main- and 4:2:2-profile stream of the ISO/IEC 13818-4 conformance suite. rivet's software MPEG-1 / MPEG-2 decode tier, behind NVDEC; the encoder is rivet's output encoder for the codec. A **git submodule** of [safewords/rivet-mpeg2](https://github.com/safewords/rivet-mpeg2) (published as `rivet-mpeg2`); changed there the same way as `h26x`. Its own [README](crates/mpeg2/README.md). |
 | `mpeg4`     | **MPEG-4 Part 2 Visual decoder and encoder**, pure Rust, written from ISO/IEC 14496-2: Simple and Advanced Simple Profile and the H.263 short header (reversible VLCs refused). rivet's software MPEG-4 Part 2 decode tier, behind NVDEC; the encoder is rivet's output encoder for the codec. A **git submodule** of [safewords/rivet-mpeg4](https://github.com/safewords/rivet-mpeg4) (published as `rivet-mpeg4`); changed there the same way as `h26x`. Its own [README](crates/mpeg4/README.md). |
@@ -1033,7 +1035,7 @@ cargo build --release --features av1-sw-fallback
 | `h26x-fallback` | Lets the encoder chain fall back to **software H.264 / H.265 encode** — this workspace's own [`h26x`](crates/h26x) crate (pure Rust, 4:2:0 at 8 and 10 bits, HDR10 / HLG signalled in the SPS VUI and the HDR10 static-metadata SEIs; SSE2→AVX-512 + NEON kernels). The matching **decoders** need no feature: they are always in the decode chain. |
 | `dpir` / `dpir-cuda` / `dpir-cudnn` | `--filter denoise=dpir[:SIGMA]` — deep denoise with DPIR's DRUNet on [candle](https://crates.io/crates/candle-core) (CPU; `dpir-cuda` needs nvcc at build time, `dpir-cudnn` adds cuDNN). A 130 MB model is downloaded once. See [docs/filters/denoise.md](docs/filters/denoise.md#dpir--deep-denoise). |
 | `thumbnail` | `rivet::thumbnail::generate_thumbnail` — capture a frame and encode an AVIF still (pulls the `av1` crate; rivet writes the AVIF container itself). |
-| `image` | Still images (`rivet image`, `rivet::image::run_image_job`, `mode=image` in settings): JPEG / PNG / WebP / AVIF / GIF / TIFF / BMP / HEIC in, AVIF / WebP / JPEG / PNG out at several sizes, and stills from a video. Implies `thumbnail`; adds the workspace's `png`, `jpeg`, `webp`, GIF, BMP and TIFF crates and `moxcms` (ICC colour management). See [output-spec.md](docs/output-spec.md#11-still-images--modeimage). |
+| `image` | Still images (`rivet image`, `rivet::image::run_image_job`, `mode=image` in settings): JPEG / PNG / WebP / AVIF / GIF / TIFF / BMP / HEIC / JPEG XL in, AVIF / WebP / JPEG / PNG out at several sizes, and stills from a video. Implies `thumbnail`; adds the workspace's `png`, `jpeg`, `webp`, GIF, BMP, TIFF and `jpegxl` crates and `moxcms` (ICC colour management). See [output-spec.md](docs/output-spec.md#11-still-images--modeimage). |
 | `batch`     | `rivet batch` — a YAML/JSON **manifest DSL** to convert many files in one run (pulls serde + a YAML/JSON parser + glob). See [docs/batch.md](docs/batch.md). |
 | `server`    | HTTP transcode API (`rivet serve`) — an axum webserver so another app can signal transcodes over the network. See [HTTP API](#http-api-server-feature). |
 | `ipc`       | `rivet ipc` — a Unix-domain-socket server for streaming media in/out (Unix only at runtime). `rivet pipe` needs no feature. See [CLI](docs/cli.md#rivet-ipc). |

@@ -999,3 +999,97 @@ fn place_aligned_to_one_pixel_keeps_odd_sizes_and_to_two_is_place() {
     );
     assert_eq!(two.canvas, (640, 480));
 }
+
+/// JPEG XL is sniffed (bare codestream and container), probed and decoded
+/// through rivet-jpegxl, and its pixels reach the output as the decoder
+/// made them, by way of the colour step (this file's colour space is a gamma
+/// 2.2 one, converted to sRGB).
+#[test]
+fn jpeg_xl_is_decoded_through_rivet_jpegxl() {
+    let jxl = include_bytes!("testdata/small_rgb.jxl");
+    assert_eq!(sniff(jxl), Some(SourceFormat::JpegXl));
+    let info = probe(jxl).unwrap().unwrap();
+    assert_eq!(
+        (info.container.as_str(), info.video_codec.as_str()),
+        ("jxl", "jxl")
+    );
+    assert_eq!((info.width, info.height), (3, 3));
+    assert_eq!(info.pixel_format, "Rgb8");
+
+    let picture = decode::decode(jxl, SourceFormat::JpegXl).unwrap();
+    assert_eq!(picture.rgba.dimensions(), (3, 3));
+    assert!(!picture.alpha);
+    assert!(picture.profile.is_some(), "tagged with its colour space");
+
+    let out = run(jxl.to_vec(), &spec_of(&[ImageFormat::Png])).unwrap();
+    assert_eq!(
+        (out.source_container.as_str(), out.decoded.as_str()),
+        ("jxl", "jxl")
+    );
+    let back = read_back(&out.artifacts[0].bytes);
+    assert_eq!(back.dimensions(), (3, 3));
+    // The decoder's own pixels, through a gamma 2.2 to sRGB conversion: close.
+    let direct = ::jpegxl::decode(jxl).unwrap();
+    let ::jpegxl::Pixels::U8(samples) = direct.pixels else {
+        panic!("8-bit")
+    };
+    for y in 0..3 {
+        for x in 0..3 {
+            let i = ((y * 3 + x) * 3) as usize;
+            let want = [samples[i], samples[i + 1], samples[i + 2]];
+            assert!(
+                near(px(&back, x, y), want, 12),
+                "({x},{y}): {:?} vs {want:?}",
+                px(&back, x, y)
+            );
+        }
+    }
+}
+
+#[test]
+fn jpeg_xl_keeps_its_alpha_and_an_animation_gives_its_first_frame() {
+    let rgba = include_bytes!("testdata/small_rgba.jxl");
+    assert_eq!(probe(rgba).unwrap().unwrap().pixel_format, "Rgba8");
+    let picture = decode::decode(rgba, SourceFormat::JpegXl).unwrap();
+    assert!(picture.alpha, "transparent pixels kept");
+
+    let animated = include_bytes!("testdata/animated.jxl");
+    let info = probe(animated).unwrap().unwrap();
+    let picture = decode::decode(animated, SourceFormat::JpegXl).unwrap();
+    assert_eq!(picture.rgba.dimensions(), (info.width, info.height));
+    let first = ::jpegxl::Decoder::new(animated)
+        .unwrap()
+        .frames()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (first.image.width, first.image.height),
+        picture.rgba.dimensions()
+    );
+    // A file cut inside its first frame is an error, not a panic (cut
+    // after it, the first frame is all there and decodes).
+    assert!(decode::decode(&animated[..200], SourceFormat::JpegXl).is_err());
+    assert!(decode::decode(&animated[..animated.len() / 2], SourceFormat::JpegXl).is_ok());
+}
+
+#[test]
+fn jpeg_xl_can_be_denied_by_name() {
+    let jxl = include_bytes!("testdata/small_rgb.jxl").to_vec();
+    for word in ["jxl", "jpegxl", "JPEG-XL"] {
+        assert_eq!(
+            ImageDecodeDeny::parse(word).unwrap().0,
+            vec![SourceFormat::JpegXl],
+            "{word}"
+        );
+    }
+    let spec = ImageSpec {
+        decode_deny: ImageDecodeDeny::parse("jxl").unwrap(),
+        ..spec_of(&[ImageFormat::Png])
+    };
+    let err = run(jxl, &spec).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "decoding jxl images is denied by the image-decode-deny setting"
+    );
+}

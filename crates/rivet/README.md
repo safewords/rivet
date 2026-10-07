@@ -812,7 +812,7 @@ supports AV1 plays.
 | M4A                   | ✅ (as MP4) | ✅ (audio-only output) |
 | Ogg (`.ogg` / `.opus`) | ✅ (Opus, Vorbis; audio only) | ✅ (Opus, Vorbis; audio-only output) |
 
-Still images (JPEG, PNG, WebP, AVIF, GIF, TIFF, BMP, HEIC in; AVIF, WebP,
+Still images (JPEG, PNG, WebP, AVIF, GIF, TIFF, BMP, HEIC, JPEG XL in; AVIF, WebP,
 JPEG, PNG out) are the `image` feature's, every codec the workspace's own — see
 [output-spec.md §11](https://github.com/safewords/rivet/blob/HEAD/docs/output-spec.md#11-still-images--modeimage).
 
@@ -982,7 +982,7 @@ cargo build --release --features av1-sw-fallback
 | `h26x-fallback` | Lets the encoder chain fall back to **software H.264 / H.265 encode** — this workspace's own [`h26x`](https://github.com/safewords/rivet/tree/HEAD/crates/h26x) crate (pure Rust, 4:2:0 at 8 and 10 bits, HDR10 / HLG signalled in the SPS VUI and the HDR10 static-metadata SEIs; SSE2→AVX-512 + NEON kernels). The matching **decoders** need no feature: they are always in the decode chain. |
 | `dpir` / `dpir-cuda` / `dpir-cudnn` | `--filter denoise=dpir[:SIGMA]` — deep denoise with DPIR's DRUNet on [candle](https://crates.io/crates/candle-core) (CPU; `dpir-cuda` needs nvcc at build time, `dpir-cudnn` adds cuDNN). A 130 MB model is downloaded once. See [docs/filters/denoise.md](https://github.com/safewords/rivet/blob/HEAD/docs/filters/denoise.md#dpir--deep-denoise). |
 | `thumbnail` | `rivet::thumbnail::generate_thumbnail` — capture a frame and encode an AVIF still (pulls the `av1` crate; rivet writes the AVIF container itself). |
-| `image` | Still images (`rivet image`, `rivet::image::run_image_job`, `mode=image` in settings): JPEG / PNG / WebP / AVIF / GIF / TIFF / BMP / HEIC in, AVIF / WebP / JPEG / PNG out at several sizes, and stills from a video. Implies `thumbnail`; adds the workspace's `png`, `jpeg`, `webp`, GIF, BMP and TIFF crates and `moxcms` (ICC colour management). See [output-spec.md](https://github.com/safewords/rivet/blob/HEAD/docs/output-spec.md#11-still-images--modeimage). |
+| `image` | Still images (`rivet image`, `rivet::image::run_image_job`, `mode=image` in settings): JPEG / PNG / WebP / AVIF / GIF / TIFF / BMP / HEIC / JPEG XL in, AVIF / WebP / JPEG / PNG out at several sizes, and stills from a video. Implies `thumbnail`; adds the workspace's `png`, `jpeg`, `webp`, GIF, BMP, TIFF and `jpegxl` crates and `moxcms` (ICC colour management). See [output-spec.md](https://github.com/safewords/rivet/blob/HEAD/docs/output-spec.md#11-still-images--modeimage). |
 | `batch`     | `rivet batch` — a YAML/JSON **manifest DSL** to convert many files in one run (pulls serde + a YAML/JSON parser + glob). See [docs/batch.md](https://github.com/safewords/rivet/blob/HEAD/docs/batch.md). |
 | `server`    | HTTP transcode API (`rivet serve`) — an axum webserver so another app can signal transcodes over the network. See [HTTP API](#http-api-server-feature). |
 | `ipc`       | `rivet ipc` — a Unix-domain-socket server for streaming media in/out (Unix only at runtime). `rivet pipe` needs no feature. See [CLI](https://github.com/safewords/rivet/blob/HEAD/docs/cli.md#rivet-ipc). |

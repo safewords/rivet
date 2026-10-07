@@ -594,10 +594,10 @@ rivet image <INPUT> -o <DIR> [--format avif,jpeg,png] [--rung WxH[:fit]]...
 | `--frames poster` | the default | States the default selection: a still image as it is, one frame 10% into a video. |
 | `--frames-at <SECONDS>` | comma list | A video input: stills at these times. |
 | `--frames-count <N>` | — | A video input: N evenly spaced stills. |
-| `--image-decode-deny <FORMATS>` | e.g. `heic` | Still-image input formats not to decode. |
+| `--image-decode-deny <FORMATS>` | e.g. `heic` | Still-image input formats not to decode (`jpeg`, `png`, `webp`, `avif`, `gif`, `tiff`, `bmp`, `heic`, `jxl`). |
 
 Inputs: JPEG, PNG, WebP (an animation's first frame), AVIF, GIF (first
-frame), TIFF, BMP, HEIC — or a video,
+frame), TIFF, BMP, HEIC, JPEG XL (an animation's first frame) — or a video,
 whose stills `--frames-at` / `--frames-count` pick (one frame 10% in without
 either). Each `--rung` is a box, fitted as a video rung is but to the pixel;
 without one, the output is the picture's own size. Files are `<W>x<H>.<ext>`,

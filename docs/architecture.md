@@ -52,7 +52,8 @@ is in [decisions.md](decisions.md)):
   `mp3`, `vorbis`, `aac`, `ac3`, `dts`, `lossless`: no libopus, LAME, minimp3
   or lewton), software AV1 its own `av1` crate (no rav1e or rav1d), and every
   still-image codec its own crate (`png`, `jpeg`, `webp`, `imagecodecs`; no
-  `image` crate, no libwebp).
+  `image` crate, no libwebp) — except JPEG XL input, decoded by jxl-rs, the
+  JPEG XL project's own pure-Rust decoder, through `jpegxl`.
   There is no feature that adds libavcodec; the opt-in decode tier that did
   was removed on 2026-10-02 (see
   [`crates/codec/Cargo.toml`](../crates/codec/Cargo.toml)). See also
@@ -108,6 +109,7 @@ flowchart TD
     rivet --> png
     rivet --> jpeg
     rivet --> imagecodecs
+    rivet --> jpegxl
     rivet --> ndi
     container --> frame
     container --> h26x
@@ -130,6 +132,7 @@ flowchart TD
     png["png (submodule) — PNG/APNG codec"]
     jpeg["jpeg (submodule) — JPEG codec"]
     imagecodecs["imagecodecs (submodule) — GIF/BMP/TIFF codecs"]
+    jpegxl["jpegxl (submodule) — JPEG XL decoding (jxl-rs)"]
     ndi["ndi (submodule) — NDI discovery, receive, send"]
 ```
 
@@ -157,6 +160,7 @@ flowchart TD
 | [`png`](../crates/png/) | Git submodule (library `rpng`): the PNG / APNG decoder and encoder, with its own DEFLATE; still images and the `overlay` filter's PNG. | — | ✅ | [output-spec.md](output-spec.md#11-still-images--modeimage) |
 | [`jpeg`](../crates/jpeg/) | Git submodule: the JPEG decoder and encoder; still images. | — | ✅ | [output-spec.md](output-spec.md#11-still-images--modeimage) |
 | [`webp`](../crates/webp/) | Git submodule (package `rivet-webp`): the WebP decoder and encoder (lossy through `vp8`, lossless, alpha, animation); still images. | — | ✅ | [output-spec.md](output-spec.md#11-still-images--modeimage) |
+| [`jpegxl`](../crates/jpegxl/) | Git submodule (package `rivet-jpegxl`): JPEG XL decoding, a typed wrapper over jxl-rs (the JPEG XL project's decoder, BSD-3-Clause); still-image input. | — | ✅ | [output-spec.md](output-spec.md#11-still-images--modeimage) |
 | [`imagecodecs`](../crates/imagecodecs/) | Git submodule, a cargo workspace of its own (not a member of rivet's): the GIF, BMP and TIFF decoders and encoders (`rivet-gif`, `rivet-bmp`, `rivet-tiff`); still-image input. | — | ✅ | [output-spec.md](output-spec.md#11-still-images--modeimage) |
 
 `container` and `codec` are deliberately generic and depend on nothing rivet-specific — they were extracted so the transcoding core is reusable. `container` no longer depends on `codec` at all (only on `frame`, `h26x` and, for Vorbis packet durations and Ogg pages, `vorbis`), which is what lets it build for wasm32. `rivet` is the application that wires them into jobs, schedules them across GPUs, and exposes them over three interfaces.

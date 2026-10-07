@@ -4,7 +4,9 @@
 //! its format's specification: rivet-jpeg (`jpeg`), rivet-png (`rpng`),
 //! rivet-gif, rivet-bmp and rivet-tiff (`gif`, `bmp`, `tiff`), and for AVIF and
 //! HEIC rivet's HEIF reader ([`heif`]) in front of the AV1 and HEVC decoders,
-//! and rivet-webp for WebP ([`webp`](super::webp)).
+//! and rivet-webp for WebP ([`webp`](super::webp)) — except JPEG XL, read by
+//! rivet-jpegxl over jxl-rs, the JPEG XL project's own pure-Rust decoder
+//! ([`jpegxl`](super::jpegxl); see NOTICE).
 
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
@@ -64,6 +66,10 @@ pub(crate) fn sniff(data: &[u8]) -> Option<SourceFormat> {
     }
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Some(SourceFormat::Png);
+    }
+    // The bare codestream (`FF 0A`) or the container's `JXL ` signature box.
+    if jpegxl::is_jxl(data) {
+        return Some(SourceFormat::JpegXl);
     }
     if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
         return Some(SourceFormat::Gif);
@@ -234,6 +240,10 @@ pub(crate) fn read_header(data: &[u8], format: SourceFormat) -> Result<Header> {
             let (w, h) = super::webp::read_header(data)?;
             header(w, h, 1, "Rgba8")
         }
+        SourceFormat::JpegXl => {
+            let (w, h, orientation, format) = super::jpegxl::read_header(data)?;
+            header(w, h, orientation, format)
+        }
     })
 }
 
@@ -266,6 +276,8 @@ pub(crate) fn decode(data: &[u8], format: SourceFormat) -> Result<Picture> {
     let (rgba, icc, orientation) = match format {
         SourceFormat::Avif | SourceFormat::Heic => return heif::decode(data, format),
         SourceFormat::Webp => return super::webp::decode(data),
+        // Upright already: the decoder applies the codestream's orientation.
+        SourceFormat::JpegXl => return super::jpegxl::decode(data),
         SourceFormat::Jpeg => {
             let options = jpeg::DecodeOptions {
                 max_pixels: Some(limit),

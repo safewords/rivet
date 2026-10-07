@@ -433,7 +433,7 @@ enum Command {
     /// `rivet splice -o out.mp4 a.mp4@0-5 b.mp4@10-20 c.mp4`.
     Splice(commands::splice::SpliceArgs),
     /// Still images: AVIF / WebP / JPEG / PNG of an image (JPEG, PNG, WebP,
-    /// AVIF, GIF, TIFF, BMP, HEIC), at several sizes, or stills from a video
+    /// AVIF, GIF, TIFF, BMP, HEIC, JPEG XL), at several sizes, or stills from a video
     /// (needs the `image` feature). E.g.
     /// `rivet image photo.heic -o out --format avif,jpeg --rung 1920x1920,640x640`.
     #[cfg(feature = "image")]

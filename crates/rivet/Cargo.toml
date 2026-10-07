@@ -63,6 +63,10 @@ gif = { workspace = true, optional = true }
 bmp = { workspace = true, optional = true }
 tiff = { workspace = true, optional = true }
 webp = { workspace = true, optional = true }
+# JPEG XL input: rivet-jpegxl (`crates/jpegxl`), a typed wrapper over jxl-rs,
+# the JPEG XL project's own pure-Rust decoder (BSD-3-Clause). The one still-
+# image codec that is not this workspace's own; see NOTICE.
+jpegxl = { workspace = true, optional = true }
 moxcms = { version = "0.8", optional = true }
 
 # Optional — only for the `ndi` feature: NDI receive and send, through the
@@ -132,10 +136,10 @@ dpir-cudnn = ["codec/dpir-cudnn"]
 # HEIF writer (`src/avif.rs`).
 thumbnail = ["dep:av1"]
 # Still images (`mode=image`, `rivet image`): JPEG / PNG / WebP / AVIF / GIF /
-# TIFF / BMP / HEIC in; AVIF / WebP / JPEG / PNG out, at several sizes; and
+# TIFF / BMP / HEIC / JPEG XL in; AVIF / WebP / JPEG / PNG out, at several sizes; and
 # stills from a video. Builds on `thumbnail` (the AVIF encoder and the frame
 # capture). See docs/output-spec.md → Image output.
-image = ["thumbnail", "dep:rpng", "dep:jpeg", "dep:gif", "dep:bmp", "dep:tiff", "dep:webp", "dep:moxcms"]
+image = ["thumbnail", "dep:rpng", "dep:jpeg", "dep:gif", "dep:bmp", "dep:tiff", "dep:webp", "dep:jpegxl", "dep:moxcms"]
 # HTTP transcode API (`rivet serve`): an axum webserver that accepts media +
 # an output spec and runs transcode jobs, so another application can signal
 # rivet to transcode over the network. Pairs naturally with the hardware

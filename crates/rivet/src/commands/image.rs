@@ -11,7 +11,7 @@ use super::FitArgs;
 /// from a video.
 #[derive(clap::Args, Debug)]
 pub(crate) struct ImageArgs {
-    /// Input: an image (JPEG, PNG, WebP, AVIF, GIF, TIFF, BMP, HEIC) or a
+    /// Input: an image (JPEG, PNG, WebP, AVIF, GIF, TIFF, BMP, HEIC, JPEG XL) or a
     /// video to take stills from.
     pub input: PathBuf,
     /// Output directory. Files are `<W>x<H>.<ext>`, or `<W>x<H>-<nnn>.<ext>`

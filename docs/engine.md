@@ -990,9 +990,10 @@ go through `run_job`: there are no rungs, decode pump or GPU pool.
 → completed / failed).
 
 **How.** It sniffs the input. A still image (JPEG, PNG, WebP — an animation's
-first frame — AVIF, GIF's first frame, TIFF, BMP, HEIC/HEIF) is decoded by
-`image::decode` on the workspace's own codecs (`crates/jpeg`, `crates/png`,
-`crates/webp` through `image/webp.rs`, `crates/imagecodecs`); HEIC and AVIF go
+first frame — AVIF, GIF's first frame, TIFF, BMP, HEIC/HEIF, JPEG XL) is
+decoded by `image::decode` on the workspace's own codecs (`crates/jpeg`,
+`crates/png`, `crates/webp` through `image/webp.rs`, `crates/imagecodecs`) —
+JPEG XL on `crates/jpegxl` (jxl-rs) through `image/jpegxl.rs`; HEIC and AVIF go
 through `image::heif` and the same HEVC / AV1 decoder dispatch as video.
 `ImageDecodeDeny` (`image-decode-deny`) refuses a format by name. A video gives
 stills per `FrameSelection` (a poster 10% in, N evenly spaced, or at given

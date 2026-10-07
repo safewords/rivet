@@ -155,7 +155,7 @@ group_av1() {
 # (its committed corpus), and GIF, BMP and TIFF (crates/imagecodecs, a
 # workspace of its own with its own lock file).
 group_images() {
-  t -p rivet-png -p rivet-jpeg -p rivet-webp --release --locked
+  t -p rivet-png -p rivet-jpeg -p rivet-webp -p rivet-jpegxl --release --locked
   t --manifest-path crates/imagecodecs/Cargo.toml --workspace --release --locked
 }
 
@@ -172,7 +172,7 @@ declare -A PKGS=(
   [audio]="rivet-aac rivet-ac3 rivet-dts rivet-opus rivet-mp3 rivet-vorbis rivet-lossless"
   [video]="rivet-h26x rivet-prores rivet-vp8 rivet-vp9 rivet-mpeg2 rivet-mpeg4"
   [av1]="rivet-av1"
-  [images]="rivet-png rivet-jpeg rivet-webp @imagecodecs"
+  [images]="rivet-png rivet-jpeg rivet-webp rivet-jpegxl @imagecodecs"
 )
 if [ -n "$AFFECTED_BY" ]; then
   for g in "${ALL[@]}"; do
