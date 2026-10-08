@@ -248,12 +248,49 @@ fn write_media_playlist(
     manifest: &CmafTrackManifest,
     target_duration_seconds: u32,
 ) -> Result<()> {
+    write_media_playlist_of(path, manifest, target_duration_seconds, false)
+}
+
+/// A media playlist for a rendition still being written: an `EVENT`
+/// playlist (RFC 8216 §4.3.3.5) of the segments so far, with no
+/// `EXT-X-ENDLIST`, so a player keeps polling it for more. A live job
+/// rewrites it after every segment; when the job ends,
+/// [`write_hls_package`] writes the finished `VOD` form over it.
+pub fn write_live_media_playlist(
+    path: &Path,
+    manifest: &CmafTrackManifest,
+    target_duration_seconds: u32,
+) -> Result<()> {
+    write_media_playlist_of(path, manifest, target_duration_seconds, true)
+}
+
+/// The master playlist of a package still being written (a live job's,
+/// once every rendition has its first segment); [`write_hls_package`]
+/// writes it again at the end.
+pub fn write_live_master_playlist(
+    path: &Path,
+    video_variants: &[VideoVariantSpec],
+    audio: &[AudioVariantSpec],
+) -> Result<()> {
+    write_master_playlist(path, video_variants, audio, &[])
+}
+
+fn write_media_playlist_of(
+    path: &Path,
+    manifest: &CmafTrackManifest,
+    target_duration_seconds: u32,
+    live: bool,
+) -> Result<()> {
     let mut w = AtomicFile::create(path)?;
 
     writeln!(w, "#EXTM3U")?;
     writeln!(w, "#EXT-X-VERSION:7")?;
     writeln!(w, "#EXT-X-TARGETDURATION:{}", target_duration_seconds)?;
-    writeln!(w, "#EXT-X-PLAYLIST-TYPE:VOD")?;
+    writeln!(
+        w,
+        "#EXT-X-PLAYLIST-TYPE:{}",
+        if live { "EVENT" } else { "VOD" }
+    )?;
     writeln!(
         w,
         "#EXT-X-MAP:URI=\"{}\"",
@@ -278,7 +315,9 @@ fn write_media_playlist(
         writeln!(w, "{name}")?;
     }
 
-    writeln!(w, "#EXT-X-ENDLIST")?;
+    if !live {
+        writeln!(w, "#EXT-X-ENDLIST")?;
+    }
     w.commit()?;
     Ok(())
 }

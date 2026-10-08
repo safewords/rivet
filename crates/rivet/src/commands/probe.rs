@@ -5,7 +5,18 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 pub(crate) fn run(input: PathBuf, json: bool) -> Result<()> {
-    let info = rivet::probe_file(&input).with_context(|| format!("probing {}", input.display()))?;
+    let name = input.to_string_lossy();
+    let info = if rivet::live::is_live_uri(&name) {
+        // A live source is described by its first picture (and sound).
+        let wait =
+            std::time::Duration::from_secs_f64(rivet::spec::LiveSettings::DEFAULT_START_TIMEOUT);
+        let source = rivet::live::open_source(&name, wait)?;
+        rivet::live::probe_source(source, wait)
+            .with_context(|| format!("probing {name}"))?
+            .0
+    } else {
+        rivet::probe_file(&input).with_context(|| format!("probing {}", input.display()))?
+    };
     if json {
         println!("{}", probe_json(&info));
     } else {

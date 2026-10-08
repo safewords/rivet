@@ -269,6 +269,25 @@ GIF and TIFF compression have expired.
 
 ------------------------------------------------------------------------------
 
+The JPEG XL decoding (crates/jpegxl, the rivet-jpegxl repository,
+https://github.com/safewords/rivet-jpegxl) is a wrapper by the same author
+around jxl-rs (https://github.com/libjxl/jxl-rs, the `jxl` crate), the JPEG
+XL project's own Rust decoder, which is not original to this software and is
+used under its BSD-3-Clause licence:
+
+    Copyright (c) the JPEG XL Project Authors. All rights reserved.
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the conditions of the
+    BSD-3-Clause licence are met (the full text is in
+    crates/jpegxl/tests/data/LICENSE.jxl-rs).
+
+jxl-rs carries a PATENTS file granting a royalty-free patent licence from
+Google for JPEG XL. The JPEG XL test files in crates/jpegxl/tests/data and
+crates/rivet/src/image/testdata (`*.jxl`) are jxl-rs's test data, under the
+same licence. JPEG XL is decoded only; rivet writes none.
+
+------------------------------------------------------------------------------
+
 This software also uses a number of additional open-source Rust crates from
 the broader ecosystem, distributed under permissive licenses (predominantly
 MIT and/or Apache-2.0; some BSD/ISC). A full machine-readable inventory of
@@ -279,10 +298,24 @@ rubato (MIT, sample-rate conversion), md5 (MIT/Apache-2.0, through
 rivet-lossless); moxcms (BSD-3-Clause OR Apache-2.0, ICC colour management
 for still images, with the `image` feature; not a codec). Every audio, video
 and still-image codec rivet itself decodes or encodes in software is one of
-the original crates above. No third-party codec library or crate is used:
+the original crates above, except JPEG XL decoding, which is jxl-rs (above).
+No other third-party codec library or crate is used:
 libopus / audiopus, minimp3, lewton and the run-time-loaded LAME were removed
 on 2026-10-03, and so were rav1e, rav1d, ravif, the `image` crate (with its
 png, jpeg-decoder, gif, tiff and WebP decoders), jpeg-encoder, the webp crate
 with Google's libwebp, and openh264 (Cisco's H.264 decoder, which was the
 optional `openh264-fallback` tier). No build of rivet links FFmpeg or any
 of its libraries.
+
+------------------------------------------------------------------------------
+NDI
+------------------------------------------------------------------------------
+
+NDI® is a registered trademark of Vizrt NDI AB. The `ndi` feature talks to
+the NDI runtime through hand-rolled FFI in the rivet-ndi crate (crates/ndi,
+a submodule of this repository), declared against the NDI SDK's public C
+headers and loading the runtime library dynamically at run time via dlopen.
+The NDI SDK and runtime are proprietary to Vizrt NDI AB, are not
+redistributed with this software, and are installed by the user under NDI's
+own licence (https://ndi.video/tools/). This software is not affiliated with
+or endorsed by Vizrt.

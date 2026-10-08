@@ -139,6 +139,58 @@ impl FileMuxer {
         }
     }
 
+    /// Take an audio track described by `info`, its packets to follow one
+    /// at a time ([`Self::add_audio_sample`]) — a live job's, encoded as the
+    /// source sends it. A track the file refuses is an error naming why.
+    pub(super) fn with_audio(&mut self, info: container::AudioInfo) -> Result<()> {
+        match self {
+            FileMuxer::Mp4(m) => m.with_audio(info).map(|_| ()),
+            FileMuxer::WebM(m) => m.with_audio(info).map(|_| ()),
+        }
+    }
+
+    /// One audio packet, `duration` ticks of the track's timescale long.
+    pub(super) fn add_audio_sample(&mut self, sample: &[u8], duration: u32) -> Result<()> {
+        match self {
+            FileMuxer::Mp4(m) => m.add_audio_sample(sample, 0, duration),
+            FileMuxer::WebM(m) => m.add_audio_sample(sample, duration),
+        }
+    }
+
+    /// The audio track's presentation edit (encoder priming hidden, the end).
+    pub(super) fn set_audio_edit(&mut self, edit: container::edit::TrackEdit) {
+        match self {
+            FileMuxer::Mp4(m) => {
+                m.set_audio_edit(edit);
+            }
+            FileMuxer::WebM(m) => {
+                m.set_audio_edit(edit);
+            }
+        }
+    }
+
+    /// Write the file to `path`: spooled beside it (`<path>.partial`) and
+    /// renamed into place, so a reader never sees half a file. An MP4 goes
+    /// from the muxer's tempfiles to disk without passing through memory.
+    pub(super) fn finalize_to(self, path: &std::path::Path) -> Result<u64> {
+        let mut spool = path.as_os_str().to_owned();
+        spool.push(".partial");
+        let spool = std::path::PathBuf::from(spool);
+        let written = match self {
+            FileMuxer::Mp4(m) => m.finalize_to_file(&spool),
+            FileMuxer::WebM(m) => m
+                .finalize()
+                .and_then(|bytes| std::fs::write(&spool, bytes).map_err(Into::into)),
+        };
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&spool);
+            return Err(e.context(format!("writing {}", path.display())));
+        }
+        std::fs::rename(&spool, path)
+            .with_context(|| format!("moving the output into place at {}", path.display()))?;
+        Ok(std::fs::metadata(path).map(|m| m.len()).unwrap_or(0))
+    }
+
     pub(super) fn finalize(self) -> Result<Vec<u8>> {
         match self {
             FileMuxer::Mp4(m) => Ok(m.finalize().context("finalize")?.to_vec()),

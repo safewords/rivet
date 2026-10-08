@@ -21,9 +21,13 @@ from one engine:
 - a **library** (`rivet::transcode_file`, `rivet::run_job`,
   `rivet::run_splice_job`, and `rivet::image::run_image_job` with `image`),
 - a **CLI** (`rivet transcode | splice | image | probe | devices | capabilities |
-  pipe | ipc | batch | serve`; `image`, `ipc` and `batch` need the feature of
-  the same name, `serve` the `server` feature),
-- an **HTTP API** and a **Unix-socket IPC** server.
+  pipe | ipc | batch | ndi | serve`; `image`, `ipc`, `batch` and `ndi` need
+  the feature of the same name, `serve` the `server` feature),
+- an **HTTP API** and a **Unix-socket IPC** server,
+- and **live jobs**: with the `ndi` feature, `ndi://NAME` is an input or an
+  output wherever a path goes, and the job engine's live path
+  (`rivet::job::run_live_job`) runs the same spec in real time — see
+  [ndi.md](ndi.md).
 
 Every job can run caller-supplied **hooks** at fixed points (the source, the
 probe, decoded and encoder frames, stills, each output, completion and
@@ -48,7 +52,8 @@ is in [decisions.md](decisions.md)):
   `mp3`, `vorbis`, `aac`, `ac3`, `dts`, `lossless`: no libopus, LAME, minimp3
   or lewton), software AV1 its own `av1` crate (no rav1e or rav1d), and every
   still-image codec its own crate (`png`, `jpeg`, `webp`, `imagecodecs`; no
-  `image` crate, no libwebp).
+  `image` crate, no libwebp) — except JPEG XL input, decoded by jxl-rs, the
+  JPEG XL project's own pure-Rust decoder, through `jpegxl`.
   There is no feature that adds libavcodec; the opt-in decode tier that did
   was removed on 2026-10-02 (see
   [`crates/codec/Cargo.toml`](../crates/codec/Cargo.toml)). See also
@@ -62,9 +67,9 @@ is in [decisions.md](decisions.md)):
 
 ## The crates
 
-The workspace is seventeen crates (plus the `examples/yolo` example crate).
-Three carry the transcoder; fourteen underneath them hold shared types and the
-codecs written in Rust here, thirteen of them git submodules.
+The workspace is eighteen crates (plus the `examples/yolo` example crate).
+Three carry the transcoder; fifteen underneath them hold shared types, the
+codecs written in Rust here and the NDI bindings, fourteen of them git submodules.
 
 ```mermaid
 flowchart TD
@@ -104,6 +109,8 @@ flowchart TD
     rivet --> png
     rivet --> jpeg
     rivet --> imagecodecs
+    rivet --> jpegxl
+    rivet --> ndi
     container --> frame
     container --> h26x
     container --> vorbis
@@ -125,6 +132,8 @@ flowchart TD
     png["png (submodule) — PNG/APNG codec"]
     jpeg["jpeg (submodule) — JPEG codec"]
     imagecodecs["imagecodecs (submodule) — GIF/BMP/TIFF codecs"]
+    jpegxl["jpegxl (submodule) — JPEG XL decoding (jxl-rs)"]
+    ndi["ndi (submodule) — NDI discovery, receive, send"]
 ```
 
 | Crate | Responsibility | Reads bytes? | Touches pixels? | Deep-dive |
@@ -132,6 +141,7 @@ flowchart TD
 | [`container`](../crates/container/) | Demux input containers → samples; mux video/audio → MP4 / WebM / CMAF / HLS and bare `.mp3` / `.flac` / `.ogg`; read a source's identifying metadata and write a kept subset. Clean-room, no FFmpeg. | ✅ | ❌ | [container.md](container.md) |
 | [`codec`](../crates/codec/) | Decode samples → frames (H.264 / HEVC / AV1 / VP8 / VP9 / MPEG-1 / MPEG-2 / MPEG-4 Part 2 / ProRes); encode frames → AV1 / H.264 / H.265, and in software VP9 / VP8 / MPEG-2 / MPEG-4 Part 2 / ProRes; colorspace, scaling, tonemap, video filters, audio decode/encode, GPU detection, probe. Hand-rolled GPU FFI. | ❌ | ✅ | [codec-decode.md](codec-decode.md) · [codec-encode.md](codec-encode.md) |
 | [`rivet`](../crates/rivet/) | The configurable job engine, the reactive multi-GPU scheduler, hooks, the still-image path (with its own AVIF / HEIF writer, `avif.rs`), and the CLI / HTTP / IPC front-ends. | — | — | [engine.md](engine.md) |
+| [`ndi`](../crates/ndi/) | Git submodule (package `rivet-ndi`): NDI discovery, receive and send through hand-rolled FFI that loads the NDI runtime at run time; pictures as planar YUV / RGBA. The `rivet` crate's `ndi` feature. | ✅ (network) | ✅ | [ndi.md](ndi.md) |
 | [`frame`](../crates/frame/) | The value types `codec` and `container` share (`StreamInfo`, `VideoFrame`, colour metadata, `EncodedPacket`) and bitstream introspection. Depends on nothing but `bytes`; builds for wasm32. `codec` re-exports it at `codec::frame`. | — | — | [README](../crates/frame/README.md) |
 | [`h26x`](../crates/h26x/) | Git submodule: native H.264 / H.265 decoders and encoders, and the SPS parsers the demuxers use. | — | ✅ | — |
 | [`aac`](../crates/aac/) | Git submodule: the AAC-LC, HE-AAC and HE-AAC v2 encoder and decoder. | — | ✅ | — |
@@ -150,6 +160,7 @@ flowchart TD
 | [`png`](../crates/png/) | Git submodule (library `rpng`): the PNG / APNG decoder and encoder, with its own DEFLATE; still images and the `overlay` filter's PNG. | — | ✅ | [output-spec.md](output-spec.md#11-still-images--modeimage) |
 | [`jpeg`](../crates/jpeg/) | Git submodule: the JPEG decoder and encoder; still images. | — | ✅ | [output-spec.md](output-spec.md#11-still-images--modeimage) |
 | [`webp`](../crates/webp/) | Git submodule (package `rivet-webp`): the WebP decoder and encoder (lossy through `vp8`, lossless, alpha, animation); still images. | — | ✅ | [output-spec.md](output-spec.md#11-still-images--modeimage) |
+| [`jpegxl`](../crates/jpegxl/) | Git submodule (package `rivet-jpegxl`): JPEG XL decoding, a typed wrapper over jxl-rs (the JPEG XL project's decoder, BSD-3-Clause); still-image input. | — | ✅ | [output-spec.md](output-spec.md#11-still-images--modeimage) |
 | [`imagecodecs`](../crates/imagecodecs/) | Git submodule, a cargo workspace of its own (not a member of rivet's): the GIF, BMP and TIFF decoders and encoders (`rivet-gif`, `rivet-bmp`, `rivet-tiff`); still-image input. | — | ✅ | [output-spec.md](output-spec.md#11-still-images--modeimage) |
 
 `container` and `codec` are deliberately generic and depend on nothing rivet-specific — they were extracted so the transcoding core is reusable. `container` no longer depends on `codec` at all (only on `frame`, `h26x` and, for Vorbis packet durations and Ogg pages, `vorbis`), which is what lets it build for wasm32. `rivet` is the application that wires them into jobs, schedules them across GPUs, and exposes them over three interfaces.

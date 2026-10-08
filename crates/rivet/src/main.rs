@@ -167,13 +167,18 @@ struct Cli {
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
-    /// Transcode an input file to AV1.
+    /// Transcode an input file to AV1 — or a live NDI source (`ndi://NAME`),
+    /// or a file out to NDI (`-o ndi://NAME`).
     Transcode {
-        /// Input media file (any supported container/codec).
+        /// Input media file (any supported container/codec), or a live source
+        /// as a URI: `"ndi://STUDIO (Camera 1)"`, any unique part of the
+        /// name, with `?bandwidth=lowest`, `?groups=…`, `?extra-ips=…`,
+        /// `?high-bit-depth` (NDI needs the `ndi` feature).
         input: PathBuf,
         /// Output path: a file (single mode, one rung) or a directory
         /// (single mode multi-rung, or HLS). Defaults to `<input>.av1.mp4`
-        /// for the simple single-rung case.
+        /// for the simple single-rung case. `ndi://NAME` sends the output
+        /// live as an NDI source (one per rung: `NAME (LABEL)`).
         #[arg(short, long)]
         output: Option<PathBuf>,
         /// Output mode.
@@ -415,6 +420,10 @@ enum Command {
         /// Splice: trim the input, keeping until this time (seconds).
         #[arg(long)]
         trim_end: Option<f64>,
+        /// `--duration`, `--start-timeout`, `--idle-timeout`, `--loop`: a
+        /// live job's (an `ndi://` input or output).
+        #[command(flatten)]
+        live: commands::LiveArgs,
     },
     /// Splice: concatenate (and per-clip trim) several inputs into one MP4.
     ///
@@ -424,14 +433,15 @@ enum Command {
     /// `rivet splice -o out.mp4 a.mp4@0-5 b.mp4@10-20 c.mp4`.
     Splice(commands::splice::SpliceArgs),
     /// Still images: AVIF / WebP / JPEG / PNG of an image (JPEG, PNG, WebP,
-    /// AVIF, GIF, TIFF, BMP, HEIC), at several sizes, or stills from a video
+    /// AVIF, GIF, TIFF, BMP, HEIC, JPEG XL), at several sizes, or stills from a video
     /// (needs the `image` feature). E.g.
     /// `rivet image photo.heic -o out --format avif,jpeg --rung 1920x1920,640x640`.
     #[cfg(feature = "image")]
     Image(commands::image::ImageArgs),
     /// Inspect an input file without transcoding it.
     Probe {
-        /// Input media file.
+        /// Input media file, or a live source (`ndi://NAME`): described by
+        /// its first picture and sound.
         input: PathBuf,
         /// Emit machine-readable JSON instead of a human summary.
         #[arg(long)]
@@ -574,6 +584,13 @@ enum Command {
         #[arg(long)]
         stop_on_error: bool,
     },
+    /// NDI: list sources, record a source into a file, or send a file as a
+    /// source (needs the `ndi` feature and, at run time, the NDI runtime).
+    #[cfg(feature = "ndi")]
+    Ndi {
+        #[command(subcommand)]
+        command: commands::ndi::NdiCommand,
+    },
     /// Run the HTTP transcode API server so another app can signal transcodes
     /// over the network (needs the `server` feature).
     #[cfg(feature = "server")]
@@ -675,6 +692,7 @@ fn run() -> Result<()> {
             file,
             trim_start,
             trim_end,
+            live,
             fitting,
         } => commands::transcode::run(commands::transcode::TranscodeArgs {
             input,
@@ -720,6 +738,7 @@ fn run() -> Result<()> {
             codec,
             trim_start,
             trim_end,
+            live,
             fitting,
             file,
         }),
@@ -792,6 +811,8 @@ fn run() -> Result<()> {
             dry_run,
             stop_on_error,
         } => commands::batch::run(&manifest, dry_run, stop_on_error),
+        #[cfg(feature = "ndi")]
+        Command::Ndi { command } => commands::ndi::run(command),
         #[cfg(feature = "server")]
         Command::Serve { addr, jobs } => {
             commands::serve::run(addr, jobs.map(std::num::NonZeroUsize::get))

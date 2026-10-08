@@ -100,7 +100,7 @@ jobs:
       - name: clippy
         run: >-
           cargo clippy --workspace --all-targets --locked
-          --features rivet-transcoder/server,rivet-transcoder/batch,rivet-transcoder/image,rivet-transcoder/thumbnail,rivet-transcoder/ipc,rivet-transcoder/qsv,rivet-transcoder/nvidia,rivet-transcoder/amd,rivet-transcoder/av1-sw-fallback,rivet-transcoder/rav1e-fallback,rivet-transcoder/rav1d-fallback,rivet-transcoder/h26x-fallback,rivet-transcoder/dpir
+          --features rivet-transcoder/server,rivet-transcoder/batch,rivet-transcoder/image,rivet-transcoder/thumbnail,rivet-transcoder/ipc,rivet-transcoder/ndi,rivet-transcoder/qsv,rivet-transcoder/nvidia,rivet-transcoder/amd,rivet-transcoder/av1-sw-fallback,rivet-transcoder/rav1e-fallback,rivet-transcoder/rav1d-fallback,rivet-transcoder/h26x-fallback,rivet-transcoder/dpir
           -- -D warnings
       - name: Compile cache hits
         if: always()

@@ -16,7 +16,7 @@ use container::streaming;
 pub struct MediaInfo {
     /// Detected container label: `"mp4"`, `"mkv"`, `"avi"`, `"ts"`, or `"mp3"`;
     /// for a still image (the `image` feature) its format — `"jpeg"`, `"png"`,
-    /// `"webp"`, `"avif"`, `"gif"`, `"tiff"`, `"bmp"`, `"heic"` — with
+    /// `"webp"`, `"avif"`, `"gif"`, `"tiff"`, `"bmp"`, `"heic"`, `"jxl"` — with
     /// `video_codec` what it is coded with (`"av1"` for AVIF, `"hevc"` for
     /// HEIC) and zero duration and frame rate.
     pub container: String,

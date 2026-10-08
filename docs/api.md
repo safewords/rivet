@@ -211,6 +211,40 @@ job=$(curl -s --data-binary @input.mkv \
 A request that the build can't satisfy (e.g. `color=hdr10` on a build with no
 10-bit hardware encoder) is rejected `400` at submit time.
 
+### Live jobs (`ndi://`)
+
+A JSON `POST /v1/transcode` whose `input.path` or `output.path` is an
+`ndi://` URI is a **live job** (the `ndi` feature; see [ndi.md](ndi.md)): an
+NDI source recorded to a server file or directory (or relayed to another
+`ndi://`), or a server file played out as an NDI stream. The `spec` is the
+same, with four more keys: `duration` (`"90s"`, `"1h30m"`), `start_timeout`,
+`idle_timeout` and `loop`.
+
+- It returns `202` at once with the job id and its `stop` URL; the source is
+  opened and probed by the job, so a source that never appears is the job's
+  failure, not the request's.
+- A live input needs `output.path`. `sync: true` with a live input needs
+  `spec.duration` (it would otherwise never return).
+- `GET /v1/jobs/{id}` reports it `running` with per-rung progress; once it
+  ends, `live` says what it did — `frames`, `seconds`, `frame_rate`,
+  `repeated`, `dropped_early`, `dropped_behind`, and why it `ended`.
+- An HLS package is written live (`EVENT` playlists) and served under
+  `/v1/jobs/{id}/files/` as it grows.
+
+```sh
+curl -X POST localhost:8080/v1/transcode -H 'Content-Type: application/json' -d '{
+  "input":  { "path": "ndi://STUDIO (Camera 1)" },
+  "output": { "path": "/rec/cam1.mp4" },
+  "spec":   { "codec": "h264", "rungs": ["1280x720"], "duration": "1h" } }'
+# 202 {"job_id":"…","status":"queued","stop":"/v1/jobs/…/stop"}
+```
+
+### `POST /v1/jobs/{id}/stop`
+
+Ends a live job: its output is written and it completes as any job does
+(`202`, then poll `GET /v1/jobs/{id}`). `409` for a file job, which ends by
+itself; `404` for an unknown id.
+
 ### `GET /v1/jobs/{id}`
 
 Job status + per-rung progress + the output list.

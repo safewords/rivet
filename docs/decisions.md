@@ -774,7 +774,7 @@ and the audio-only writer in
 
 **Decision.** With the `image` feature, rivet makes still images: of an
 uploaded picture (JPEG, PNG, WebP, AVIF, GIF — its first frame — TIFF, BMP,
-HEIC/HEIF), or stills taken from a video. Output is the web's four picture
+HEIC/HEIF, JPEG XL), or stills taken from a video. Output is the web's four picture
 formats — **AVIF, WebP, JPEG, PNG** — at any number of sizes, each fitted
 exactly as a video rung is (§ [fitting](output-spec.md#fitting-the-source-into-a-rung)),
 but to the pixel rather than to video's even grid. `mode=image` in the
@@ -1001,6 +1001,7 @@ and Vorbis, which replaced the last third-party audio codecs (§37):
 | `crates/jpeg` | [rivet-jpeg](https://github.com/safewords/rivet-jpeg) | ITU-T T.81, T.871, the EXIF / ICC / Adobe APP14 conventions | JPEG in and out (§39) |
 | `crates/webp` | [rivet-webp](https://github.com/safewords/rivet-webp) | RFC 9649, ITU-R BT.601 (lossy frames through rivet-vp8, RFC 6386) | WebP in and out (§39) |
 | `crates/imagecodecs` | [rivet-imagecodecs](https://github.com/safewords/rivet-imagecodecs) | GIF89a, Microsoft's BMP documentation, TIFF 6.0 | GIF, BMP and TIFF in (§39) |
+| `crates/jpegxl` | [rivet-jpegxl](https://github.com/safewords/rivet-jpegxl) | ISO/IEC 18181 — decoded by jxl-rs, not written here (§45) | JPEG XL in |
 
 Each crate's encoder is rivet's encoder for its codec too (§35).
 
@@ -1517,6 +1518,37 @@ conversion (`width / 2` where the pipeline takes `ceil`).
 [`decode/amf_dec.rs`](../crates/codec/src/decode/amf_dec.rs),
 [`decode/nvdec/`](../crates/codec/src/decode/nvdec/mod.rs),
 [codec-decode.md](codec-decode.md), [codec-encode.md](codec-encode.md).
+
+### 45. JPEG XL input is jxl-rs, the one codec rivet did not write
+
+**Decision.** JPEG XL input (`image` feature) is decoded by
+[jxl-rs](https://github.com/libjxl/jxl-rs) — the JPEG XL project's own
+pure-Rust decoder, BSD-3-Clause — through `crates/jpegxl` (rivet-jpegxl, a
+submodule of [safewords/rivet-jpegxl](https://github.com/safewords/rivet-jpegxl)),
+a small typed wrapper in the shape of the other image crates (`probe`,
+`decode`, `frames`, `Info`, `Limits`). Every other codec rivet runs in
+software is its own, written from its specification (§39); this one is not,
+and is named as the exception wherever that is claimed (NOTICE, README,
+architecture).
+
+**Why.** The owner asked for it by name. JPEG XL is a large specification
+(ISO/IEC 18181: VarDCT, modular, patches, splines, noise, XYB), and the
+decoder its own authors maintain in Rust, with no C, no system library and no
+build script, meets every constraint rivet holds a dependency to except "written
+here". It is decode only: rivet writes the web's four picture formats (§28),
+and JPEG XL is not one a browser can be relied on to show.
+
+**How.** The wrapper decodes to 8-bit RGBA for the image path (16-bit and
+float files are brought to 8 bits by the decoder, as every other source is),
+upright (the codestream's orientation applied), tagged with the ICC profile of
+the colour space the pixels are in, which the colour step converts to sRGB
+like any tagged source; an animation gives its first frame. jxl-rs's own
+size check is fed the image path's limit (100 MP), so a file declaring more is
+refused before anything is allocated. `image-decode-deny=jxl` refuses it.
+
+**Revisit when** a JPEG XL decoder of rivet's own is worth writing; the
+wrapper's API is what the image path calls, so the swap would be inside
+`crates/jpegxl`.
 
 ## Inputs
 

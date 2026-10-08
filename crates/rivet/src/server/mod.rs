@@ -191,6 +191,11 @@ pub(super) struct JobHandle {
     pub(super) renditions: Mutex<Vec<crate::fit::FittedRung>>,
     /// The job's hook session; its report is read live into the status.
     pub(super) hooks: Mutex<crate::hooks::Hooks>,
+    /// A live job (an `ndi://` input or output): set by
+    /// `POST /v1/jobs/{id}/stop`, it ends the job with its output written.
+    pub(super) stop: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// A live job's account of itself, once it ends.
+    pub(super) live: Mutex<Option<crate::LiveStats>>,
 }
 
 impl JobHandle {
@@ -206,6 +211,16 @@ impl JobHandle {
             master_playlist: Mutex::new(None),
             renditions: Mutex::new(Vec::new()),
             hooks: Mutex::new(crate::hooks::Hooks::default()),
+            stop: None,
+            live: Mutex::new(None),
+        }
+    }
+
+    /// A live job's handle: one `POST /v1/jobs/{id}/stop` can end.
+    pub(super) fn new_live(id: Uuid) -> Self {
+        Self {
+            stop: Some(Arc::new(std::sync::atomic::AtomicBool::new(false))),
+            ..Self::new(id, "live")
         }
     }
 
@@ -252,10 +267,24 @@ impl JobHandle {
             let report = self.hooks.lock().unwrap().report();
             report.job_id.is_some().then(|| report.to_json())
         };
+        let live = self.live.lock().unwrap().as_ref().map(|l| {
+            json!({
+                "source": l.source,
+                "frames": l.frames,
+                "seconds": l.seconds(),
+                "frame_rate": format!("{}/{}", l.frame_rate.0, l.frame_rate.1),
+                "repeated": l.repeated,
+                "dropped_early": l.dropped_early,
+                "dropped_behind": l.dropped_behind,
+                "ended": l.ended.as_str(),
+            })
+        });
         json!({
             "job_id": self.id.to_string(),
             "mode": self.mode,
             "status": phase.as_str(),
+            "live": live,
+            "stop": self.stop.as_ref().map(|_| format!("/v1/jobs/{}/stop", self.id)),
             "progress": progress,
             "artifacts": artifacts,
             // One per requested rung, in request order: the box asked for,
@@ -406,6 +435,7 @@ pub fn build_router_with(hooks: crate::hooks::Hooks, jobs: Option<usize>) -> Rou
         .route("/v1/probe", post(handlers::probe))
         .route("/v1/transcode", post(handlers::transcode))
         .route("/v1/jobs/{id}", get(handlers::job_status))
+        .route("/v1/jobs/{id}/stop", post(handlers::stop_job))
         .route("/v1/jobs/{id}/artifacts/{label}", get(handlers::artifact))
         .route("/v1/jobs/{id}/files/{*path}", get(handlers::hls_file))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD))

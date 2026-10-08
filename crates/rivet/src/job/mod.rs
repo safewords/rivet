@@ -36,6 +36,9 @@ pub(crate) use audio::audio_unusable;
 #[cfg(test)]
 mod audio_tests;
 mod file_mux;
+mod live;
+#[cfg(test)]
+mod live_tests;
 #[cfg(test)]
 mod lossless_tests;
 #[cfg(test)]
@@ -51,6 +54,9 @@ mod subtitles;
 #[cfg(test)]
 mod tests;
 
+pub use live::{
+    LiveEnd, LiveStats, LiveTarget, check_live_spec, run_live_job, run_live_job_blocking,
+};
 pub use splice::Clip;
 
 use self::audio::{
@@ -71,6 +77,12 @@ pub enum RungArtifact {
     File(Vec<u8>),
     /// An HLS rendition: a directory of CMAF segments + a media playlist.
     HlsRendition { dir: PathBuf, relative_dir: String },
+    /// A file the engine wrote to disk itself: a live job's single-file
+    /// rung, which grows for as long as the source runs and so is never
+    /// held in memory.
+    Written(PathBuf),
+    /// An NDI source the rung was sent to, live, under this name.
+    Ndi { source: String },
 }
 
 /// Result for one completed rung.
@@ -111,6 +123,9 @@ pub struct JobOutput {
     pub elapsed: Duration,
     /// What the spec's hooks said ([`crate::hooks`]); empty with no hooks.
     pub hooks: crate::hooks::HookReport,
+    /// A live job's account of itself (frames repeated and dropped to keep
+    /// in step, why it ended); `None` for a file job.
+    pub live: Option<LiveStats>,
 }
 
 /// Run a transcode job. Async — call from within a Tokio runtime.
@@ -173,6 +188,22 @@ fn artifact_events(out: &JobOutput) -> Vec<crate::hooks::ArtifactEvent> {
                 width: r.width,
                 height: r.height,
                 data: ArtifactData::Bytes(Bytes::copy_from_slice(bytes)),
+            },
+            RungArtifact::Written(path) => ArtifactEvent {
+                kind: ArtifactKind::Video,
+                label: r.label.clone(),
+                media_type: crate::live::media_type_of_path(path).to_string(),
+                width: r.width,
+                height: r.height,
+                data: ArtifactData::File(path.clone()),
+            },
+            RungArtifact::Ndi { source } => ArtifactEvent {
+                kind: ArtifactKind::Video,
+                label: r.label.clone(),
+                media_type: format!("application/x-ndi; source={source}"),
+                width: r.width,
+                height: r.height,
+                data: ArtifactData::Bytes(Bytes::new()),
             },
             RungArtifact::HlsRendition { dir, .. } => ArtifactEvent {
                 kind: ArtifactKind::Rendition,
@@ -287,6 +318,11 @@ async fn run_job_inner(
 ) -> Result<JobOutput> {
     let started = Instant::now();
     spec.validate().context("invalid OutputSpec")?;
+    if !spec.live.is_default() {
+        bail!(
+            "duration / start-timeout / idle-timeout / loop are a live job's: an ndi:// input or output (a file is cut with trim-start / trim-end)"
+        );
+    }
     // Per-rung knobs by ladder position, folded into each rung up front so
     // nothing downstream has to know the ladder's shape.
     if spec.mode == OutputMode::AudioOnly {
@@ -545,6 +581,7 @@ async fn run_job_inner(
         renditions,
         elapsed: started.elapsed(),
         hooks: crate::hooks::HookReport::default(),
+        live: None,
     })
 }
 
@@ -1152,6 +1189,7 @@ async fn run_splice_job_inner(
         renditions,
         elapsed: started.elapsed(),
         hooks: crate::hooks::HookReport::default(),
+        live: None,
     })
 }
 

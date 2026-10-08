@@ -53,7 +53,7 @@ H.265 — pick with `--codec`.
 
 | Argument | Description |
 |----------|-------------|
-| `<INPUT>` | Input media file. Container/codec is auto-detected. |
+| `<INPUT>` | Input media file. Container/codec is auto-detected. Or a live source: `"ndi://NAME"` (see [Live inputs and outputs](#live-inputs-and-outputs-ndi)). |
 
 ### Options
 
@@ -365,6 +365,35 @@ Trims and splices carry them too: `--trim-start`/`--trim-end` clip the cues to
 the kept window and re-base them to zero, and [`rivet splice`](#rivet-splice)
 moves each clip's cues onto the joined timeline and merges tracks by language.
 
+### Live inputs and outputs (NDI)
+
+An `ndi://` URI stands in for a path on either side (the `ndi` feature, and
+the NDI runtime at run time). Every flag above applies — rungs, ladders,
+codecs, quality, colour, filters, audio, `--encode` — and the job runs live:
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `--duration <D>` | until stopped | Stop after this much output: `90`, `90s`, `15m`, `2h`, `1h30m`, `500ms`. |
+| `--start-timeout <D>` | `15s` | How long to wait for a live source to appear and send a picture. |
+| `--idle-timeout <D>` | `10s` | End when no picture comes for this long (`0` waits for ever). |
+| `--loop` | off | A file played out (`-o ndi://NAME`): start again at its end. |
+
+A live job runs until `--duration`, the source ending, or Ctrl+C (a second
+Ctrl+C abandons it); the output is finished properly in every case. Without
+`-o` a live input is written beside you, named after the source.
+`--trim-start` / `--trim-end`, `--decode` and `--metadata-keep` are refused
+for a live source; a file-to-file job refuses the live flags.
+
+```sh
+rivet transcode "ndi://STUDIO (Camera 1)" -o cam1.mp4 --codec h264 --duration 1h
+rivet transcode "ndi://Camera 1?bandwidth=lowest" --mode hls --ladder --codec h264 -o live/
+rivet transcode programme.mkv -o ndi://Playout --loop
+```
+
+The URI's options (`groups`, `extra-ips`, `bandwidth`, `high-bit-depth`), how
+the output keeps in step, live HLS and encode placement are in
+**[ndi.md](ndi.md)**. `rivet probe ndi://NAME` describes a source.
+
 ### Output layout
 
 - **single** — one MP4 per rung. One rung → the `-o` file (faststart AV1 + audio;
@@ -565,10 +594,10 @@ rivet image <INPUT> -o <DIR> [--format avif,jpeg,png] [--rung WxH[:fit]]...
 | `--frames poster` | the default | States the default selection: a still image as it is, one frame 10% into a video. |
 | `--frames-at <SECONDS>` | comma list | A video input: stills at these times. |
 | `--frames-count <N>` | — | A video input: N evenly spaced stills. |
-| `--image-decode-deny <FORMATS>` | e.g. `heic` | Still-image input formats not to decode. |
+| `--image-decode-deny <FORMATS>` | e.g. `heic` | Still-image input formats not to decode (`jpeg`, `png`, `webp`, `avif`, `gif`, `tiff`, `bmp`, `heic`, `jxl`). |
 
 Inputs: JPEG, PNG, WebP (an animation's first frame), AVIF, GIF (first
-frame), TIFF, BMP, HEIC — or a video,
+frame), TIFF, BMP, HEIC, JPEG XL (an animation's first frame) — or a video,
 whose stills `--frames-at` / `--frames-count` pick (one frame 10% in without
 either). Each `--rung` is a box, fitted as a video rung is but to the pixel;
 without one, the output is the picture's own size. Files are `<W>x<H>.<ext>`,
@@ -860,6 +889,25 @@ rivet serve --addr 0.0.0.0:8080 --jobs 2   # at most two at once; the rest wait 
 
 ---
 
+## `rivet ndi`
+
+```
+rivet ndi sources [--wait S] [--groups G] [--extra-ips IPS] [--json]
+```
+
+Lists the NDI sources on the network, each as the `ndi://` URI that names it
+(requires a `--features ndi` build and, at run time, the NDI runtime).
+Receiving and sending are `rivet transcode` with an `ndi://` input or output
+— see [Live inputs and outputs](#live-inputs-and-outputs-ndi) and
+**[ndi.md](ndi.md)**.
+
+```sh
+rivet ndi sources
+rivet ndi sources --json --wait 5
+```
+
+---
+
 ## Environment variables
 
 | Variable | Effect |
@@ -875,4 +923,6 @@ rivet serve --addr 0.0.0.0:8080 --jobs 2   # at most two at once; the rest wait 
 | `DISABLE_NVDEC_<CODEC>` | Skip NVDEC for one family, e.g. `DISABLE_NVDEC_AV1=1`. |
 | `RIVET_AV1_DECODE_THREAD` | `0` makes the software AV1 decoder decode on the caller's thread instead of its own worker, which otherwise runs a few frames ahead so the rest of the pipeline overlaps the decode. |
 | `RIVET_AV1_DECODE_THREADS` | Threads each software AV1 decoder uses for its tiles and post-filters (default: up to four). |
+| `RIVET_NDI_LIB` | `rivet ndi`: the NDI runtime library to load (a full path), before the `NDI_RUNTIME_DIR_V*` directories and the platform's search. |
+| `RIVET_REQUIRE_NDI` | Tests: `1` makes the NDI loopback test fail, rather than skip, without a runtime. |
 | `RIVET_TEST_MEDIA` | Integration tests: directory of real media to run against. |

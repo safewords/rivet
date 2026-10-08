@@ -103,7 +103,7 @@ fn run(input: &[u8], settings: &str) -> (Vec<Produced>, Vec<rivet::fit::FittedRu
         .into_iter()
         .map(|r| match r.artifact {
             RungArtifact::File(bytes) => (r.label, r.width, r.height, bytes),
-            RungArtifact::HlsRendition { .. } => unreachable!("single-file job"),
+            _ => unreachable!("single-file job"),
         })
         .collect();
     (rungs, out.renditions)
@@ -430,7 +430,7 @@ fn an_hls_ladder_is_fitted_too() {
     for r in &out.rungs {
         let (rel, media) = match &r.artifact {
             RungArtifact::HlsRendition { dir, relative_dir } => (relative_dir.clone(), dir.clone()),
-            RungArtifact::File(_) => unreachable!(),
+            _ => unreachable!(),
         };
         // The rendition as a player gets it: the init segment, then every
         // media segment the playlist lists, in order.

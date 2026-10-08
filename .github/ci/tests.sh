@@ -93,7 +93,11 @@ group_codec_tests() {
 # through rivet's own codecs, AVIF through rivet's own AV1 encoder and
 # decoder, stills from a clip made by rivet's own H.264 encoder.
 group_transcoder_lib() {
-  t -p rivet-transcoder --lib --features server,batch,ipc,thumbnail,image --locked
+  t -p rivet-transcoder --lib --features server,batch,ipc,thumbnail,image,ndi --locked
+  # NDI: the FFI layouts and pixel conversions, and the loopback through the
+  # runtime, which says SKIP on a runner without one.
+  t -p rivet-ndi --locked
+  t -p rivet-transcoder --test ndi_loopback --features ndi,batch,server --locked
 }
 
 # End-to-end jobs on synthetic sources. Inputs made by rivet's own encoders
@@ -151,7 +155,7 @@ group_av1() {
 # (its committed corpus), and GIF, BMP and TIFF (crates/imagecodecs, a
 # workspace of its own with its own lock file).
 group_images() {
-  t -p rivet-png -p rivet-jpeg -p rivet-webp --release --locked
+  t -p rivet-png -p rivet-jpeg -p rivet-webp -p rivet-jpegxl --release --locked
   t --manifest-path crates/imagecodecs/Cargo.toml --workspace --release --locked
 }
 
@@ -163,12 +167,12 @@ ALL=(codec-lib codec-tests transcoder-lib transcoder-e2e audio video av1 images)
 declare -A PKGS=(
   [codec-lib]="*"
   [codec-tests]="rivet-codec"
-  [transcoder-lib]="rivet-transcoder"
+  [transcoder-lib]="rivet-transcoder rivet-ndi"
   [transcoder-e2e]="rivet-transcoder"
   [audio]="rivet-aac rivet-ac3 rivet-dts rivet-opus rivet-mp3 rivet-vorbis rivet-lossless"
   [video]="rivet-h26x rivet-prores rivet-vp8 rivet-vp9 rivet-mpeg2 rivet-mpeg4"
   [av1]="rivet-av1"
-  [images]="rivet-png rivet-jpeg rivet-webp @imagecodecs"
+  [images]="rivet-png rivet-jpeg rivet-webp rivet-jpegxl @imagecodecs"
 )
 if [ -n "$AFFECTED_BY" ]; then
   for g in "${ALL[@]}"; do

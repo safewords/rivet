@@ -19,6 +19,8 @@ members = [
     "crates/png",
     "crates/jpeg",
     "crates/webp",
+    "crates/jpegxl",
+    "crates/ndi",
     "crates/codec",
     "crates/container",
     "crates/rivet",
@@ -86,6 +88,11 @@ gif       = { path = "crates/imagecodecs/crates/rivet-gif", version = "0.1.0", p
 bmp       = { path = "crates/imagecodecs/crates/rivet-bmp", version = "0.1.0", package = "rivet-bmp" }
 tiff      = { path = "crates/imagecodecs/crates/rivet-tiff", version = "0.1.0", package = "rivet-tiff" }
 webp      = { path = "crates/webp", version = "0.1.0", package = "rivet-webp" }
+# JPEG XL input (`image` feature): a typed wrapper over jxl-rs, the JPEG XL
+# project's own pure-Rust decoder (BSD-3-Clause); see NOTICE.
+jpegxl    = { path = "crates/jpegxl", version = "0.1.0", package = "rivet-jpegxl" }
+# NDI receive and send (rivet's `ndi` feature); the runtime is loaded at run time.
+ndi       = { path = "crates/ndi", version = "0.1.0", package = "rivet-ndi" }
 codec     = { path = "crates/codec", version = "0.2.0", package = "rivet-codec" }
 container = { path = "crates/container", version = "0.2.0", package = "rivet-container" }
 

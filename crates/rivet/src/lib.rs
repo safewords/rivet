@@ -60,10 +60,14 @@ pub mod hooks;
 pub mod image;
 pub mod job;
 pub mod ladder;
+pub mod live;
 /// Batch manifest DSL (YAML/JSON), opt-in `batch` feature.
 #[cfg(feature = "batch")]
 pub mod manifest;
 pub mod multigpu;
+/// NDI in and out (opt-in `ndi` feature).
+#[cfg(feature = "ndi")]
+pub mod ndi;
 pub mod output_dir;
 pub mod output_guard;
 pub mod per_title;
@@ -89,19 +93,23 @@ pub(crate) mod synth;
 
 // Re-export the component crates so downstream consumers can depend on a
 // single `rivet` crate and still reach the full lower-level API.
+#[cfg(feature = "ndi")]
+pub use ::ndi as ndi_sys;
 pub use codec;
 pub use container;
 
 // Flatten the most common entry points to the crate root.
 pub use gpu_pool::{GpuLease, GpuPool, LeaseKind};
 pub use job::{
-    Clip, JobOutput, RungArtifact, RungOutput, run_job, run_job_blocking, run_job_blocking_owned,
-    run_splice_job, run_splice_job_blocking, single_file_extension, single_file_media_type,
+    Clip, JobOutput, LiveEnd, LiveStats, LiveTarget, RungArtifact, RungOutput, run_job,
+    run_job_blocking, run_job_blocking_owned, run_live_job, run_live_job_blocking, run_splice_job,
+    run_splice_job_blocking, single_file_extension, single_file_media_type,
 };
 pub use ladder::standard_ladder;
 #[cfg(feature = "batch")]
 pub use manifest::{
     BatchReport, Format as ManifestFormat, JobOutcome, JobStatus, Manifest, run_manifest_file,
+    run_manifest_with_stop,
 };
 pub use multigpu::{MultiGpuParams, RungManifest, detect_gpu_pool, run_multigpu_hls};
 pub use probe::{

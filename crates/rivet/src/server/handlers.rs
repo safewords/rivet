@@ -110,6 +110,15 @@ pub(super) async fn transcode(
     let (media, input_path, spec_params, output_path, sync, hook_list) = if is_json {
         let req: TranscodeRequest = serde_json::from_slice(&body)
             .map_err(|e| ApiError::bad_request(anyhow::anyhow!("invalid JSON body: {e}")))?;
+        // A live end — `input.path: ndi://…` or `output.path: ndi://…` — is
+        // the same spec run by the job engine's live path.
+        let live_out = req
+            .output
+            .as_ref()
+            .is_some_and(|o| crate::live::is_live_uri(&o.path));
+        if req.input.live_uri().is_some() || live_out {
+            return live_transcode(state, req).await;
+        }
         let (media, input_path) = read_input(&req.input)?;
         let output_path = match &req.output {
             Some(o) => Some(resolve_path(&o.path, false)?),
@@ -208,6 +217,222 @@ pub(super) async fn transcode(
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({ "job_id": id.to_string(), "status": "queued" })),
+    )
+        .into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Live jobs
+// ---------------------------------------------------------------------------
+
+/// Where a live job's output goes, as the request names it.
+enum LiveOut {
+    Ndi(crate::live::NdiEndpoint),
+    Path(PathBuf),
+}
+
+/// `POST /v1/transcode` with a live end: an `ndi://` input recorded to
+/// `output.path` (a file, a directory, or another `ndi://`), or a file
+/// played out to an `ndi://` output. Returns at once with the job's id; the
+/// job runs until its `duration`, its source ending, or
+/// `POST /v1/jobs/{id}/stop`.
+async fn live_transcode(state: AppState, req: TranscodeRequest) -> Result<Response, ApiError> {
+    let settings = req
+        .spec
+        .into_params()
+        .to_settings()
+        .map_err(ApiError::bad_request)?;
+    let input_uri = req.input.live_uri().map(str::to_string);
+    if let Some(uri) = &input_uri {
+        crate::live::LiveUri::parse(uri).map_err(ApiError::bad_request)?;
+    }
+    let out = match req.output.as_ref().map(|o| o.path.as_str()) {
+        Some(o) if crate::live::is_live_uri(o) => match crate::live::LiveUri::parse(o) {
+            Ok(crate::live::LiveUri::Ndi(e)) => LiveOut::Ndi(e),
+            Err(e) => return Err(ApiError::bad_request(e)),
+        },
+        Some(o) => LiveOut::Path(resolve_path(o, false)?),
+        None => {
+            return Err(ApiError::bad_request(anyhow::anyhow!(
+                "a live input needs `output.path`: a server file or directory, or ndi://NAME"
+            )));
+        }
+    };
+    // A file played out: read now, so a bad path is the request's error.
+    let media = match &input_uri {
+        Some(_) => None,
+        None => Some(read_input(&req.input)?.0),
+    };
+    if req.sync && settings.live.duration.is_none() && input_uri.is_some() {
+        return Err(ApiError::bad_request(anyhow::anyhow!(
+            "sync=true waits for the job to end, and a live input runs until stopped: \
+             give spec.duration, or drop sync and stop it with POST /v1/jobs/{{id}}/stop"
+        )));
+    }
+    let selected = state
+        .hooks
+        .select(&req.hooks)
+        .map_err(ApiError::bad_request)?;
+    let id = Uuid::new_v4();
+    let hooks = if selected.is_empty() {
+        selected
+    } else {
+        selected.session(id.to_string(), crate::hooks::JobKind::Transcode)
+    };
+    let handle = Arc::new(JobHandle::new_live(id));
+    *handle.hooks.lock().unwrap() = hooks.clone();
+    state.jobs.write().unwrap().insert(id, Arc::clone(&handle));
+    let task = run_live_task(
+        Arc::clone(&handle),
+        state.running.clone(),
+        input_uri,
+        media,
+        settings,
+        out,
+        hooks,
+    );
+    if req.sync {
+        task.await;
+        return sync_response(&handle);
+    }
+    tokio::spawn(task);
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "job_id": id.to_string(),
+            "status": "queued",
+            "stop": format!("/v1/jobs/{id}/stop"),
+        })),
+    )
+        .into_response())
+}
+
+async fn run_live_task(
+    handle: Arc<JobHandle>,
+    running: Option<Arc<tokio::sync::Semaphore>>,
+    input_uri: Option<String>,
+    media: Option<Bytes>,
+    settings: crate::TranscodeSettings,
+    out: LiveOut,
+    hooks: crate::hooks::Hooks,
+) {
+    let _slot = match running {
+        Some(running) => match running.acquire_owned().await {
+            Ok(slot) => Some(slot),
+            Err(_) => {
+                *handle.error.lock().unwrap() = Some("the server is shutting down".into());
+                handle.set_phase(Phase::Failed);
+                return;
+            }
+        },
+        None => None,
+    };
+    handle.set_phase(Phase::Running);
+    let fail = |e: anyhow::Error| {
+        *handle.error.lock().unwrap() = Some(format!("{e:#}"));
+        handle.set_phase(if crate::hooks::rejection_of(&e).is_some() {
+            Phase::Rejected
+        } else {
+            Phase::Failed
+        });
+    };
+    // Open and probe the source (blocking: it waits for the first picture),
+    // and build the spec against it, as every surface does.
+    let prepared = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let wait = std::time::Duration::from_secs_f64(settings.live.start_timeout.max(0.0));
+        let (source, info): (Box<dyn crate::live::LiveSource>, crate::MediaInfo) =
+            match (&input_uri, media) {
+                (Some(uri), _) => {
+                    let source = crate::live::open_source(uri, wait)?;
+                    let (info, source) = crate::live::probe_source(source, wait)?;
+                    (Box::new(source), info)
+                }
+                (None, Some(media)) => {
+                    let info = crate::probe::probe_bytes_shared(media.clone())?;
+                    let source = crate::live::FileSource::new("api", media, settings.live.repeat)?;
+                    (Box::new(source), info)
+                }
+                (None, None) => anyhow::bail!("no input"),
+            };
+        let spec = settings.into_spec_for(&info)?;
+        Ok((source, spec))
+    })
+    .await;
+    let (source, spec) = match prepared {
+        Ok(Ok(p)) => p,
+        Ok(Err(e)) => return fail(e),
+        Err(e) => return fail(anyhow::anyhow!("the live job panicked: {e}")),
+    };
+    let target = match out {
+        LiveOut::Ndi(e) => crate::LiveTarget::Ndi(e),
+        LiveOut::Path(p) => {
+            let dir_shaped =
+                matches!(spec.mode, crate::spec::OutputMode::Hls { .. }) || spec.rungs.len() > 1;
+            if dir_shaped {
+                *handle.output_dir.lock().unwrap() = Some(p.clone());
+                crate::LiveTarget::Dir(p)
+            } else {
+                crate::LiveTarget::File(p)
+            }
+        }
+    };
+    let spec = spec.with_hooks(hooks);
+    let sink: Arc<dyn ProgressSink> = Arc::new(RegistrySink {
+        handle: Arc::clone(&handle),
+    });
+    let result = crate::job::run_live_job(source, &spec, target, sink, handle.stop.clone()).await;
+    match result {
+        Ok(out) => {
+            *handle.renditions.lock().unwrap() = out.renditions.clone();
+            *handle.live.lock().unwrap() = out.live.clone();
+            let mut arts = handle.artifacts.lock().unwrap();
+            for r in out.rungs {
+                let output_path = match &r.artifact {
+                    crate::job::RungArtifact::Written(p) => Some(p.display().to_string()),
+                    crate::job::RungArtifact::Ndi { source } => Some(format!("ndi://{source}")),
+                    _ => None,
+                };
+                arts.push(ArtifactEntry {
+                    label: r.label,
+                    width: r.width,
+                    height: r.height,
+                    frames: r.frames,
+                    bytes: r.bytes,
+                    data: None,
+                    output_path,
+                });
+            }
+            drop(arts);
+            if out.master_playlist.is_some() {
+                *handle.master_playlist.lock().unwrap() =
+                    Some(format!("/v1/jobs/{}/files/master.m3u8", handle.id));
+            }
+            handle.set_phase(Phase::Completed);
+        }
+        Err(e) => fail(e),
+    }
+}
+
+/// `POST /v1/jobs/{id}/stop`: end a live job; its output is written and it
+/// completes as any job does.
+pub(super) async fn stop_job(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+) -> Result<Response, ApiError> {
+    let handle = lookup(&state, &id)?;
+    let Some(stop) = &handle.stop else {
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "only a live job (an ndi:// input or output) can be stopped; a file job ends by itself",
+            })),
+        )
+            .into_response());
+    };
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({ "job_id": handle.id.to_string(), "status": "stopping" })),
     )
         .into_response())
 }
@@ -353,7 +578,11 @@ pub(super) async fn run_job_task(
                                 (Some(Bytes::from(bytes)), None)
                             }
                         }
-                        crate::job::RungArtifact::HlsRendition { .. } => (None, None),
+                        crate::job::RungArtifact::HlsRendition { .. }
+                        | crate::job::RungArtifact::Ndi { .. } => (None, None),
+                        crate::job::RungArtifact::Written(path) => {
+                            (None, Some(path.display().to_string()))
+                        }
                     };
                     arts.push(ArtifactEntry {
                         label: r.label,

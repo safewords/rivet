@@ -473,7 +473,7 @@ With the `image` feature, `mode=image` is a separate job:
 `TranscodeSettings::into_image_spec`). It sniffs the input:
 
 - **An image** (JPEG, PNG, WebP — an animation's first frame — AVIF, GIF's
-  first frame, TIFF, BMP, HEIC/HEIF) is decoded in `image::decode`, on the workspace's own codecs — HEIC and AVIF through the same
+  first frame, TIFF, BMP, HEIC/HEIF, JPEG XL) is decoded in `image::decode`, on the workspace's own codecs (JPEG XL on jxl-rs, through `crates/jpegxl`) — HEIC and AVIF through the same
   HEVC / AV1 decoder dispatch as video (`image::heif`). `image-decode-deny`
   refuses a format by name.
 - **A video** gives stills (`FrameSelection`: a poster frame 10% in, N evenly

@@ -183,6 +183,7 @@ pub(super) async fn run(
         renditions: Vec::new(),
         elapsed: started.elapsed(),
         hooks: crate::hooks::HookReport::default(),
+        live: None,
     })
 }
 

@@ -6,7 +6,8 @@
 //! uploader did not mean to publish. This module is that path for stills:
 //!
 //! - **In** ([`SourceFormat`]): what people upload — JPEG, PNG, WebP, AVIF, GIF
-//!   (its first frame), TIFF, BMP, and HEIC/HEIF (what an iPhone takes). Or a
+//!   (its first frame), TIFF, BMP, HEIC/HEIF (what an iPhone takes) and JPEG
+//!   XL (an animation's first frame). Or a
 //!   video, from which [`FrameSelection`] picks the stills.
 //! - **Out** ([`ImageFormat`]): AVIF (AV1, royalty-free, the smallest), WebP
 //!   (lossy or lossless), JPEG and PNG — the formats `<picture>` and `srcset`
@@ -49,13 +50,16 @@
 //! specification and brought in as a submodule: rivet-jpeg, rivet-png, and
 //! rivet-imagecodecs (GIF, BMP, TIFF) for the raster formats; rivet-av1, in
 //! rivet's own HEIF reader and writer ([`crate::avif`]), for AVIF; rivet-h26x
-//! for HEIC; rivet-webp for WebP ([`webp`]). No third-party image codec is in
+//! for HEIC; rivet-webp for WebP ([`webp`]). The one exception is JPEG XL
+//! input: rivet-jpegxl, a wrapper over jxl-rs, the JPEG XL project's own
+//! pure-Rust decoder (decisions §45). No other third-party image codec is in
 //! the dependency tree.
 
 mod colour;
 mod decode;
 mod encode;
 mod heif;
+mod jpegxl;
 mod raster;
 mod scale;
 #[cfg(test)]
@@ -194,10 +198,13 @@ pub enum SourceFormat {
     Bmp,
     /// HEVC in HEIF (`.heic`, `.heif`), decoded by the HEVC decoders.
     Heic,
+    /// JPEG XL (`.jxl`), bare codestream or container; an animation's first
+    /// frame. Decoded by rivet-jpegxl over jxl-rs.
+    JpegXl,
 }
 
 impl SourceFormat {
-    pub const ALL: [SourceFormat; 8] = [
+    pub const ALL: [SourceFormat; 9] = [
         SourceFormat::Jpeg,
         SourceFormat::Png,
         SourceFormat::Webp,
@@ -206,10 +213,11 @@ impl SourceFormat {
         SourceFormat::Tiff,
         SourceFormat::Bmp,
         SourceFormat::Heic,
+        SourceFormat::JpegXl,
     ];
 
     /// The container label [`crate::probe`] reports: `jpeg`, `png`, `webp`,
-    /// `avif`, `gif`, `tiff`, `bmp`, `heic`.
+    /// `avif`, `gif`, `tiff`, `bmp`, `heic`, `jxl`.
     pub fn label(self) -> &'static str {
         match self {
             SourceFormat::Jpeg => "jpeg",
@@ -220,6 +228,7 @@ impl SourceFormat {
             SourceFormat::Tiff => "tiff",
             SourceFormat::Bmp => "bmp",
             SourceFormat::Heic => "heic",
+            SourceFormat::JpegXl => "jxl",
         }
     }
 
@@ -235,7 +244,8 @@ impl SourceFormat {
         }
     }
 
-    /// Read a [`label`](Self::label), or `heif` for HEIC.
+    /// Read a [`label`](Self::label), or `heif` for HEIC, `jpg` for JPEG,
+    /// `jpegxl` / `jpeg-xl` for JPEG XL.
     pub fn parse(s: &str) -> Result<Self> {
         let s = s.trim().to_ascii_lowercase();
         if s == "heif" {
@@ -244,8 +254,11 @@ impl SourceFormat {
         if s == "jpg" {
             return Ok(SourceFormat::Jpeg);
         }
+        if s == "jpegxl" || s == "jpeg-xl" {
+            return Ok(SourceFormat::JpegXl);
+        }
         SourceFormat::ALL.into_iter().find(|f| f.label() == s).with_context(|| {
-            format!("image format must be one of jpeg, png, webp, avif, gif, tiff, bmp, heic (got '{s}')")
+            format!("image format must be one of jpeg, png, webp, avif, gif, tiff, bmp, heic, jxl (got '{s}')")
         })
     }
 
