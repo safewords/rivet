@@ -2136,6 +2136,7 @@ name = "rivet-jpegxl"
 version = "0.1.0"
 dependencies = [
  "jxl",
+ "jxl_transforms",
 ]
 
 [[package]]
